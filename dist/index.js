@@ -1027,6 +1027,7 @@ const assign_1 = __nccwpck_require__(7752);
 const cc_1 = __nccwpck_require__(423);
 const close_1 = __nccwpck_require__(6273);
 const lock_1 = __nccwpck_require__(8886);
+const meow_1 = __nccwpck_require__(8841);
 const milestone_1 = __nccwpck_require__(2771);
 const reopen_1 = __nccwpck_require__(1328);
 const retitle_1 = __nccwpck_require__(7068);
@@ -1080,6 +1081,8 @@ async function handleIssueComment(context = github.context) {
                     return await (0, reopen_1.reopen)(context).catch(normalizeError);
                 case '/milestone':
                     return await (0, milestone_1.milestone)(context).catch(normalizeError);
+                case '/meow':
+                    return await (0, meow_1.meow)(context).catch(normalizeError);
                 case '':
                     return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
                 default:
@@ -1256,6 +1259,170 @@ async function lock(context = github.context) {
     else {
         throw new Error(`commenter is not a collaborator user`);
     }
+}
+
+
+/***/ }),
+
+/***/ 8841:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.meowConfig = void 0;
+exports.meow = meow;
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+const rest_1 = __nccwpck_require__(5772);
+const comments_1 = __nccwpck_require__(2666);
+const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med';
+// a line of exactly /meow, not /meowvie or a mention
+const meowCommand = /^[\t ]*\/meow[\t ]*$/m;
+// bounded so a slow provider cannot stall the runner; exported so tests can shrink the waits
+exports.meowConfig = {
+    timeoutMs: 5_000,
+    maxAttempts: 3,
+    retryDelayMs: 500,
+};
+/**
+ * /meow replies with a random cat image
+ *
+ * @param context - the github actions event context
+ */
+async function meow(context = github.context) {
+    if (!hasMeowCommand(context.payload.comment?.body))
+        return;
+    const token = core.getInput('github-token', { required: true });
+    const octokit = new rest_1.Octokit({ auth: token });
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    // a provider outage degrades to a note; only the github write can fail the action
+    let body;
+    try {
+        const image = await fetchCatImage();
+        body = `![cat](<${image.href}>)`;
+    }
+    catch (error) {
+        core.warning(`Could not fetch a cat image: ${error}`);
+        body = 'The cat API is unavailable right now.';
+    }
+    await (0, comments_1.createComment)(octokit, context, issueNumber, body);
+}
+// hasMeowCommand reports whether the body has a standalone /meow line
+function hasMeowCommand(body) {
+    return typeof body === 'string' && meowCommand.test(body);
+}
+async function fetchCatImage() {
+    const headers = { accept: 'application/json' };
+    const key = core.getInput('cat-api-key', { required: false });
+    if (key !== '') {
+        core.setSecret(key);
+        headers['x-api-key'] = key;
+    }
+    let lastError = new Error('cat api was not reached');
+    for (let attempt = 1; attempt <= exports.meowConfig.maxAttempts; attempt++) {
+        if (attempt > 1)
+            await delay(exports.meowConfig.retryDelayMs);
+        try {
+            const response = await fetch(catApi, {
+                headers,
+                // refuse redirects so the api key cannot leak cross-origin
+                redirect: 'manual',
+                signal: AbortSignal.timeout(exports.meowConfig.timeoutMs),
+            });
+            if (response.ok && response.type !== 'opaqueredirect')
+                return parseCatImage(await response.json());
+            // undici holds the socket until the body is read
+            await cancelResponseBody(response);
+            // retry a 5xx; a 429, a redirect, and other 4xx fall back
+            const error = new Error(`cat api responded with ${response.status || 'a redirect'}`);
+            if (response.status >= 500) {
+                lastError = error;
+                continue;
+            }
+            throw error;
+        }
+        catch (error) {
+            // retry a network failure; a timeout has spent its deadline
+            if (!(error instanceof TypeError))
+                throw error;
+            lastError = error;
+        }
+    }
+    throw lastError;
+}
+async function cancelResponseBody(response) {
+    try {
+        await response.body?.cancel();
+    }
+    catch (error) {
+        core.debug(`could not cancel cat api response body: ${error}`);
+    }
+}
+// parseCatImage validates the response and returns a usable https url
+function parseCatImage(value) {
+    const images = value;
+    if (!Array.isArray(images) || images.length === 0)
+        throw new Error('cat api returned no images');
+    const url = images[0]?.url;
+    if (typeof url !== 'string')
+        throw new Error('cat api returned an invalid image record');
+    if (url.length > 4096)
+        throw new Error('cat api returned an excessively long image url');
+    let image;
+    try {
+        image = new URL(url);
+    }
+    catch {
+        throw new Error('cat api returned an invalid image url');
+    }
+    if (image.protocol !== 'https:'
+        || image.username !== ''
+        || image.password !== '') {
+        throw new Error('cat api returned an unusable image url');
+    }
+    return image;
+}
+function delay(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 
 

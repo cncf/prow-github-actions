@@ -13,6 +13,7 @@ Commands | Policy | Description
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone
 `/retitle some new title` | Collaborators | Renames the issue / PR
+`/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 
 Label Commands | Policy | Description
 --- | --- | ---
@@ -24,6 +25,32 @@ Label Commands | Policy | Description
 `/hold cancel` | anyone | removes the `hold` label
 `/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./automatic-merging.md)
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
+
+## Enabling `/meow`
+
+`/meow` is opt in and calls a third party image provider ([the cat API](https://thecatapi.com)). Anyone who can comment on the repository can invoke it and consume the configured API quota, and the command must be on its own line. It is best effort: if the provider is unavailable it leaves a short note instead of failing the workflow.
+
+```yaml
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  prow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          prow-commands: /meow
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+          cat-api-key: '${{ secrets.CAT_API_KEY }}'
+```
+
+The workflow token needs `issues: write` or `pull-requests: write` to post the response, because a new repository's `GITHUB_TOKEN` often defaults to read only. Grant both when the same workflow handles comments on issues and pull requests.
+
+The `@v2` ref is a floating tag the maintainers move per release. `/meow` ships in the next `v2.x` release, so this example applies once that release is published and the `v2` tag points at it; until then, pin to the release that includes it.
+
+The API key is optional; unauthenticated access is best effort and may be rate limited by the provider. When set, it is provided from a repository secret and registered for runner masking before use, and is never intentionally included in the request URL or a GitHub comment.
 
 ## OWNERS
 
