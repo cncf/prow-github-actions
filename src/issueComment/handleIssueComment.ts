@@ -39,84 +39,52 @@ export async function handleIssueComment(context: Context = github.context): Pro
       if (commentBody.includes(command)) {
         switch (command) {
           case '/assign':
-            return await assign(context).catch(async (e) => {
-              return e
-            })
+            return await assign(context).catch(normalizeError)
 
           case '/cc':
-            return await cc(context).catch(async (e) => {
-              return e
-            })
+            return await cc(context).catch(normalizeError)
 
           case '/uncc':
-            return await uncc(context).catch(async (e) => {
-              return e
-            })
+            return await uncc(context).catch(normalizeError)
 
           case '/unassign':
-            return await unassign(context).catch(async (e) => {
-              return e
-            })
+            return await unassign(context).catch(normalizeError)
 
           case '/approve':
-            return await approve(context).catch(async (e) => {
-              return e
-            })
+            return await approve(context).catch(normalizeError)
 
           case '/retitle':
-            return await retitle(context).catch(async (e) => {
-              return e
-            })
+            return await retitle(context).catch(normalizeError)
 
           case '/remove':
-            return await remove(context).catch(async (e) => {
-              return e
-            })
+            return await remove(context).catch(normalizeError)
 
           case '/area':
-            return await area(context).catch(async (e) => {
-              return e
-            })
+            return await area(context).catch(normalizeError)
 
           case '/kind':
-            return await kind(context).catch(async (e) => {
-              return e
-            })
+            return await kind(context).catch(normalizeError)
 
           case '/hold':
-            return await hold(context).catch(async (e) => {
-              return e
-            })
+            return await hold(context).catch(normalizeError)
 
           case '/priority':
-            return await priority(context).catch(async (e) => {
-              return e
-            })
+            return await priority(context).catch(normalizeError)
 
           case '/lgtm':
-            return await lgtm(context).catch(async (e) => {
-              return e
-            })
+            return await lgtm(context).catch(normalizeError)
 
           case '/close':
-            return await close(context).catch(async (e) => {
-              return e
-            })
+            return await close(context).catch(normalizeError)
 
           case '/lock':
-            return await lock(context).catch(async (e) => {
-              return e
-            })
+            return await lock(context).catch(normalizeError)
 
           case '/reopen':
-            return await reopen(context).catch(async (e) => {
-              return e
-            })
+            return await reopen(context).catch(normalizeError)
 
           case '/milestone':
-            return await milestone(context).catch(async (e) => {
-              return e
-            })
+            return await milestone(context).catch(normalizeError)
 
           case '':
             return new Error(
@@ -141,4 +109,9 @@ export async function handleIssueComment(context: Context = github.context): Pro
     .catch((e) => {
       core.setFailed(`${e}`)
     })
+}
+
+// normalizeError coerces a non-Error rejection so it still fails the Action
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
 }

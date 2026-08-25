@@ -53,7 +53,7 @@ export async function approve(
 
     // Try to reply back that the user is unauthorized
     try {
-      createComment(octokit, context, issueNumber, msg)
+      await createComment(octokit, context, issueNumber, msg)
     }
     catch (commentE) {
       // Log the comment error but continue to throw the original auth error

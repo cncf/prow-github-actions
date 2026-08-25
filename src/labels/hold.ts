@@ -42,5 +42,5 @@ export async function hold(context: Context = github.context): Promise<void> {
     return
   }
 
-  labelIssue(octokit, context, issueNumber, ['hold'])
+  await labelIssue(octokit, context, issueNumber, ['hold'])
 }

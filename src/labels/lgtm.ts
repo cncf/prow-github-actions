@@ -46,7 +46,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
 
     // Try to reply back that the user is unauthorized
     try {
-      createComment(octokit, context, issueNumber, msg)
+      await createComment(octokit, context, issueNumber, msg)
     }
     catch (commentE) {
       // Log the comment error but continue to throw the original auth error
@@ -68,5 +68,5 @@ export async function lgtm(context: Context = github.context): Promise<void> {
     return
   }
 
-  labelIssue(octokit, context, issueNumber, ['lgtm'])
+  await labelIssue(octokit, context, issueNumber, ['lgtm'])
 }

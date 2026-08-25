@@ -1,4 +1,6 @@
 import { Buffer } from 'node:buffer'
+
+import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
@@ -17,6 +19,7 @@ beforeAll(() =>
   }),
 )
 afterEach(() => server.resetHandlers())
+afterEach(() => jest.restoreAllMocks())
 afterAll(() => server.close())
 
 describe('lgtm', () => {
@@ -250,5 +253,41 @@ reviewers:
     expect(await observeReq.body()).toMatchObject({
       labels: ['lgtm'],
     })
+  })
+
+  it('still fails with the authorization error when the reply also fails', async () => {
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(500),
+      ),
+    )
+
+    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const logError = jest.spyOn(core, 'error').mockImplementation(() => {})
+
+    issueCommentEvent.comment.body = '/lgtm'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    await handleIssueComment(commentContext)
+
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining('Could not comment with an auth error'),
+    )
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('not a org member or collaborator'),
+    )
   })
 })
