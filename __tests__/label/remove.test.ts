@@ -14,7 +14,10 @@ beforeAll(() =>
     onUnhandledRequest: 'warn',
   }),
 )
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  jest.restoreAllMocks()
+})
 afterAll(() => server.close())
 
 describe('remove', () => {
@@ -92,5 +95,55 @@ describe('remove', () => {
     const spy = jest.spyOn(core, 'setFailed')
     await handleIssueComment(commentContext)
     expect(spy).toHaveBeenCalled()
+  })
+
+  it('fails the action when a label removal fails', async () => {
+    issueCommentEvent.comment.body = '/remove some-label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
+        utils.mockResponse(500),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('could not remove label some-label'),
+    )
+  })
+
+  it('ignores a label that is already gone', async () => {
+    issueCommentEvent.comment.body = '/remove some-label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })
