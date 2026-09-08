@@ -143,7 +143,11 @@ export async function removeLabels(
       })
     }
     catch (e) {
-      core.debug(`could not remove labels: ${e}`)
+      // a gone label is a benign race; anything else is a real failure
+      if (isNotFound(e))
+        core.debug(`label ${label} was already absent: ${e}`)
+      else
+        throw new Error(`could not remove label ${label}: ${e}`)
     }
   }
 }
@@ -198,4 +202,14 @@ export async function cancelLabel(
   else {
     core.debug(`could not find ${label} to remove`)
   }
+}
+
+// isNotFound reports whether an octokit error is a 404
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && error.status === 404
+  )
 }
