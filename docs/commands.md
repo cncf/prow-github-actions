@@ -23,7 +23,7 @@ Label Commands | Policy | Description
 `/lgtm cancel` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | removes the `lgtm` label
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
-`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./automatic-merging.md)
+`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md). Replaces any existing `priority/*` labels.
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
 ## Enabling `/meow`

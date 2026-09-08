@@ -2313,7 +2313,8 @@ const rest_1 = __nccwpck_require__(5772);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
 /**
- * /priority will add a priority/some-priority label
+ * /priority will add a priority/some-priority label, replacing any existing
+ * priority/* labels so an issue keeps only the newly requested set.
  *
  * @param context - the github actions event context
  */
@@ -2343,6 +2344,20 @@ async function priority(context = github.context) {
     // no arguments after command provided
     if (commentArgs.length === 0) {
         throw new Error(`area: command args missing from body`);
+    }
+    let currentLabels = [];
+    try {
+        currentLabels = await (0, labeling_1.getCurrentLabels)(octokit, context, issueNumber);
+        core.debug(`priority: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const stalePriorityLabels = currentLabels.filter((label) => {
+        return label.startsWith('priority/') && !commentArgs.includes(label);
+    });
+    if (stalePriorityLabels.length > 0) {
+        await (0, labeling_1.removeLabels)(octokit, context, issueNumber, stalePriorityLabels);
     }
     await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }

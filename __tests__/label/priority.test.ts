@@ -2,6 +2,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import issuePayload from '../fixtures/issues/issue.json'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -31,9 +32,10 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
-    )
-
-    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -57,9 +59,10 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
-    )
-
-    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -83,9 +86,10 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
-    )
-
-    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -96,6 +100,50 @@ describe('priority', () => {
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
       labels: ['priority/low', 'priority/high'],
+    })
+  })
+
+  it('replaces an existing priority label with the new one', async () => {
+    issueCommentEvent.comment.body = '/priority high'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({
+      id: 3,
+      node_id: '789',
+      url: 'https://api.github.com/repos/octocat/Hello-World/labels/priority/low',
+      name: 'priority/low',
+      description: '',
+      color: 'f29513',
+      default: true,
+    })
+
+    const observeReqDelete = new utils.ObserveRequest()
+    const observeReqPost = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
+        utils.mockResponse(200, null, observeReqDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReqPost),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    await handleIssueComment(commentContext)
+    await expect(observeReqDelete.called()).resolves.toBe('called')
+    await observeReqPost.called()
+    expect(await observeReqPost.body()).toMatchObject({
+      labels: ['priority/high'],
     })
   })
 })
