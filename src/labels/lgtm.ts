@@ -2,12 +2,12 @@ import type { Context } from '@actions/github/lib/context'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
-import { Octokit } from '@octokit/rest'
 
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { cancelLabel, labelIssue } from '../utils/labeling'
+import { newOctokit } from '../utils/octokit'
 
 /**
  * /lgtm will add the lgtm label.
@@ -18,9 +18,7 @@ import { cancelLabel, labelIssue } from '../utils/labeling'
  */
 export async function lgtm(context: Context = github.context): Promise<void> {
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body

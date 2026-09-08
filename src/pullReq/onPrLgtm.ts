@@ -1,8 +1,8 @@
 import type { Context } from '@actions/github/lib/context'
 
 import * as core from '@actions/core'
-import { Octokit } from '@octokit/rest'
 import { getCurrentLabels, removeLabels } from '../utils/labeling'
+import { newOctokit } from '../utils/octokit'
 
 /**
  * Removes the 'lgtm' label after a pull request event
@@ -11,9 +11,7 @@ import { getCurrentLabels, removeLabels } from '../utils/labeling'
  */
 export async function onPrLgtm(context: Context): Promise<void> {
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const prNumber: number | undefined = context.payload.pull_request?.number
 

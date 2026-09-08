@@ -2,9 +2,8 @@ import type { Context } from '@actions/github/lib/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
-import { Octokit } from '@octokit/rest'
-
 import { createComment } from '../utils/comments'
+import { newOctokit } from '../utils/octokit'
 
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med'
 
@@ -28,7 +27,7 @@ export async function meow(context: Context = github.context): Promise<void> {
     return
 
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({ auth: token })
+  const octokit = newOctokit(token)
 
   const issueNumber: number | undefined = context.payload.issue?.number
   if (issueNumber === undefined) {
