@@ -64,7 +64,7 @@ export async function cronLabelPr(
         return
       }
 
-      if (pr.state === 'locked') {
+      if (pr.locked) {
         return
       }
 

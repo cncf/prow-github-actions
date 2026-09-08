@@ -162,7 +162,7 @@ async function cronLgtm(currentPage, context) {
         if (pr.state === 'closed') {
             return;
         }
-        if (pr.state === 'locked') {
+        if (pr.locked) {
             return;
         }
         try {
@@ -331,7 +331,7 @@ async function cronLabelPr(currentPage, context) {
         if (pr.state === 'closed') {
             return;
         }
-        if (pr.state === 'locked') {
+        if (pr.locked) {
             return;
         }
         await labelPr(pr.number, context, octokit);
