@@ -7,7 +7,7 @@
 * [Automatic PR merger](#automatic-pr-merger)
 * [PR job to remove lgtm label on update](#pr-job-to-remove-lgtm-label-on-update)
 
-### `.prowlabels.yaml`
+## `.prowlabels.yaml`
 
 A `.prowlabels.yaml` file is necessary for most of the labeling commands & jobs:
 
@@ -26,7 +26,7 @@ priority:
   - high
 ```
 
-### Review and Approve Pull Requests
+## Review and Approve Pull Requests
 
 Below is an example of how to use an [OWNERS](./commands.md#owners) file with the Prow action.
 

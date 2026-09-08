@@ -1,6 +1,6 @@
 # Cron jobs
 
-The following jobs are supported through [cron Github workflows]().
+The following jobs are supported through [cron Github workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
 
 Jobs | Description
 --- | ---

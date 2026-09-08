@@ -34,7 +34,7 @@
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^4.11.0",
+    "@antfu/eslint-config": "^9.5.1",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^4.1.11",
