@@ -1,9 +1,9 @@
 import { Buffer } from 'node:buffer'
 
+import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import * as core from '@actions/core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
