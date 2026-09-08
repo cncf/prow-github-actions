@@ -545,15 +545,14 @@ const comments_1 = __nccwpck_require__(2666);
  * @param context - the github actions event context
  */
 async function approve(context = github.context) {
-    var _a, _b, _c;
     core.debug(`starting approve job`);
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
-    const commenterLogin = (_c = context.payload.comment) === null || _c === void 0 ? void 0 : _c.user.login;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterLogin = context.payload.comment?.user.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -606,7 +605,6 @@ async function approve(context = github.context) {
  * @param commenterLogin - the login name of the user who made comment
  */
 async function cancel(octokit, context, issueNumber, commenterLogin) {
-    var _a, _b;
     core.debug(`canceling latest review`);
     let reviews;
     try {
@@ -620,8 +618,8 @@ async function cancel(octokit, context, issueNumber, commenterLogin) {
     }
     let latestReview;
     for (const e of reviews.data) {
-        core.debug(`checking review: ${(_a = e.user) === null || _a === void 0 ? void 0 : _a.login}`);
-        if (((_b = e.user) === null || _b === void 0 ? void 0 : _b.login) === 'github-actions[bot]' && e.state === 'APPROVED') {
+        core.debug(`checking review: ${e.user?.login}`);
+        if (e.user?.login === 'github-actions[bot]' && e.state === 'APPROVED') {
             latestReview = e;
         }
     }
@@ -696,15 +694,14 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function assign(context = github.context) {
-    var _a, _b, _c, _d;
     core.debug(`starting assign job`);
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -821,14 +818,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function cc(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const pullNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const pullNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull number: ${context.payload}`);
     }
@@ -943,13 +939,12 @@ const auth_1 = __nccwpck_require__(6690);
  * @param context - the github actions event context
  */
 async function close(context = github.context) {
-    var _a, _b, _c;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1045,12 +1040,11 @@ const uncc_1 = __nccwpck_require__(6980);
  * @param context - the github context of the current action event
  */
 async function handleIssueComment(context = github.context) {
-    var _a;
     const commandConfig = core
         .getInput('prow-commands', { required: false })
         .replace(/\n/g, ' ')
         .split(' ');
-    const commentBody = (_a = context.payload.comment) === null || _a === void 0 ? void 0 : _a.body;
+    const commentBody = context.payload.comment?.body;
     await Promise.all(commandConfig.map(async (command) => {
         if (commentBody.includes(command)) {
             switch (command) {
@@ -1192,14 +1186,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function lock(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1348,14 +1341,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function milestone(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
-    const commenterId = (_d = (_c = context.payload.comment) === null || _c === void 0 ? void 0 : _c.user) === null || _d === void 0 ? void 0 : _d.login;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1442,13 +1434,12 @@ const auth_1 = __nccwpck_require__(6690);
  * @param context - the github actions event context
  */
 async function reopen(context = github.context) {
-    var _a, _b, _c;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1530,14 +1521,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function retitle(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1623,14 +1613,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function unassign(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1724,14 +1713,13 @@ const command_1 = __nccwpck_require__(7971);
  * @param context - the github actions event context
  */
 async function uncc(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const pullNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commenterId = (_c = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.user) === null || _c === void 0 ? void 0 : _c.login;
-    const commentBody = (_d = context.payload.comment) === null || _d === void 0 ? void 0 : _d.body;
+    const pullNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull number: ${context.payload}`);
     }
@@ -1838,13 +1826,12 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function area(context = github.context) {
-    var _a, _b;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -1924,13 +1911,12 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function hold(context = github.context) {
-    var _a, _b;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -2002,13 +1988,12 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function kind(context = github.context) {
-    var _a, _b;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -2090,14 +2075,13 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function lgtm(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
-    const commenterId = (_d = (_c = context.payload.comment) === null || _c === void 0 ? void 0 : _c.user) === null || _d === void 0 ? void 0 : _d.login;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -2185,13 +2169,12 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function priority(context = github.context) {
-    var _a, _b;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -2270,14 +2253,13 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - the github actions event context
  */
 async function remove(context = github.context) {
-    var _a, _b, _c, _d;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const issueNumber = (_a = context.payload.issue) === null || _a === void 0 ? void 0 : _a.number;
-    const commentBody = (_b = context.payload.comment) === null || _b === void 0 ? void 0 : _b.body;
-    const commenterId = (_d = (_c = context.payload.comment) === null || _c === void 0 ? void 0 : _c.user) === null || _d === void 0 ? void 0 : _d.login;
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -2515,12 +2497,11 @@ const labeling_1 = __nccwpck_require__(7138);
  * @param context - The github actions event context
  */
 async function onPrLgtm(context) {
-    var _a;
     const token = core.getInput('github-token', { required: true });
     const octokit = new rest_1.Octokit({
         auth: token,
     });
-    const prNumber = (_a = context.payload.pull_request) === null || _a === void 0 ? void 0 : _a.number;
+    const prNumber = context.payload.pull_request?.number;
     if (prNumber === undefined) {
         throw new Error(`github context payload missing pr number: ${context.payload}`);
     }
@@ -2645,14 +2626,13 @@ async function checkCollaborator(octokit, context, user) {
  * @param user - the users to check auth on
  */
 async function checkIssueComments(octokit, context, issueNum, user) {
-    var _a;
     try {
         const comments = await octokit.issues.listComments({
             ...context.repo,
             issue_number: issueNum,
         });
         for (const e of comments.data) {
-            if (((_a = e.user) === null || _a === void 0 ? void 0 : _a.login) === user) {
+            if (e.user?.login === user) {
                 return true;
             }
         }
@@ -13393,7 +13373,7 @@ function expand(str, isTop) {
     var isOptions = m.body.indexOf(',') >= 0;
     if (!isSequence && !isOptions) {
       // {a},b}
-      if (m.post.match(/,.*\}/)) {
+      if (m.post.match(/,(?!,).*\}/)) {
         str = m.pre + '{' + m.body + escClose + m.post;
         return expand(str);
       }
@@ -43958,8 +43938,7 @@ exports.unescape = unescape;
 /******/ 	}
 /******/ 	
 /************************************************************************/
-/******/ 	/* webpack/runtime/compat */
-/******/ 	
+/******/ 	/* webpack/runtime/asset-relocator-loader */
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
