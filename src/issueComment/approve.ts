@@ -1,6 +1,5 @@
 import type { Context } from '@actions/github/lib/context'
-import type { Octokit } from '@octokit/rest'
-import type { Endpoints } from '@octokit/types'
+import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
@@ -10,7 +9,7 @@ import { createComment } from '../utils/comments'
 import { newOctokit } from '../utils/octokit'
 
 type PullsListReviewsResponseType
-  = Endpoints['GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews']['response']
+  = RestEndpointMethodTypes['pulls']['listReviews']['response']
 
 /**
  * the /approve command will create a "approve" review

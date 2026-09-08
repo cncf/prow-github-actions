@@ -30,9 +30,7 @@
   "dependencies": {
     "@actions/core": "^1.10.0",
     "@actions/github": "^6.0.0",
-    "@octokit/rest": "^20.0.1",
-    "@octokit/types": "^11.1.0",
-    "@octokit/webhooks": "^12.0.3",
+    "@octokit/rest": "^22.0.1",
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
