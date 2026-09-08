@@ -7,8 +7,8 @@ import { Octokit } from '@octokit/rest'
 
 let jobsDone = 0
 
-type PullsListResponseDataType =
-  Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
+type PullsListResponseDataType
+  = Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
 
 type PullsListResponseItem = PullsListResponseDataType extends (infer Item)[]
   ? Item

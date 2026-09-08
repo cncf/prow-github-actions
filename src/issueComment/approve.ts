@@ -8,8 +8,8 @@ import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 
-type PullsListReviewsResponseType =
-  Endpoints['GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews']['response']
+type PullsListReviewsResponseType
+  = Endpoints['GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews']['response']
 
 /**
  * the /approve command will create a "approve" review
