@@ -37,7 +37,7 @@ const server = setupServer(
 )
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
@@ -115,6 +115,34 @@ describe('cronLgtm', () => {
     })
   })
 
+  it('wont merge a locked PR even if the lgtm label is present', async () => {
+    utils.setupJobsEnv('lgtm')
+
+    const context = new utils.MockContext(pullReqOpenedEvent)
+
+    const lockedPrs = structuredClone(listPullReqs)
+    lockedPrs[0].locked = true
+    lockedPrs[0].labels[0].name = 'lgtm'
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
+        ({ request }) => {
+          const page = new URL(request.url).searchParams.get('page')
+          return utils.mockResponse(200, page === '1' ? lockedPrs : [])({ request })
+        },
+      ),
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+  })
+
   it('wont merge the PR if the hold label is present', async () => {
     utils.setupJobsEnv('lgtm')
 
@@ -133,6 +161,15 @@ describe('cronLgtm', () => {
       default: true,
     })
 
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
     await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 })

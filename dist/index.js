@@ -162,7 +162,7 @@ async function cronLgtm(currentPage, context) {
         if (pr.state === 'closed') {
             return;
         }
-        if (pr.state === 'locked') {
+        if (pr.locked) {
             return;
         }
         try {
@@ -331,7 +331,7 @@ async function cronLabelPr(currentPage, context) {
         if (pr.state === 'closed') {
             return;
         }
-        if (pr.state === 'locked') {
+        if (pr.locked) {
             return;
         }
         await labelPr(pr.number, context, octokit);
@@ -2161,7 +2161,7 @@ async function kind(context = github.context) {
     commentArgs = (0, labeling_1.addPrefix)('kind', commentArgs);
     // no arguments after command provided
     if (commentArgs.length === 0) {
-        throw new Error(`area: command args missing from body`);
+        throw new Error(`kind: command args missing from body`);
     }
     await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
@@ -2342,7 +2342,7 @@ async function priority(context = github.context) {
     commentArgs = (0, labeling_1.addPrefix)('priority', commentArgs);
     // no arguments after command provided
     if (commentArgs.length === 0) {
-        throw new Error(`area: command args missing from body`);
+        throw new Error(`priority: command args missing from body`);
     }
     await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }

@@ -46,7 +46,7 @@ export async function kind(context: Context = github.context): Promise<void> {
 
   // no arguments after command provided
   if (commentArgs.length === 0) {
-    throw new Error(`area: command args missing from body`)
+    throw new Error(`kind: command args missing from body`)
   }
 
   await labelIssue(octokit, context, issueNumber, commentArgs)

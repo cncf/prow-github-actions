@@ -13,7 +13,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
@@ -82,9 +82,52 @@ describe('/milestone', () => {
     expect(spy).toHaveBeenCalled()
   })
 
-  describe('error', () => {
-    it.skip('reply with error message cannot milestone', () => {
-      // TODO
-    })
+  it('does not update the issue when the milestone does not exist', async () => {
+    issueCommentEvent.comment.body = '/milestone does not exist'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/milestones`,
+        utils.mockResponse(200, repoMilestones),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails when no milestone is provided', async () => {
+    issueCommentEvent.comment.body = '/milestone '
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('please provide a milestone to add'),
+    )
   })
 })

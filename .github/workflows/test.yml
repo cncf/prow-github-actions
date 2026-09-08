@@ -16,7 +16,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run lint
-      - run: npm test
+      - run: npm run test:coverage
       - name: Verify committed dist/ matches source
         run: |
           npm run pack

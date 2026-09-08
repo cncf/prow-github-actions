@@ -12,13 +12,10 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
-  vi.restoreAllMocks()
-})
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('hold', () => {
@@ -49,7 +46,8 @@ describe('hold', () => {
     issueCommentEvent.comment.body = '/hold cancel'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
-    issuePayload.labels.push({
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({
       id: 1,
       node_id: '123',
       url: 'https://api.github.com/repos/octocat/Hello-World/labels/lgtm',
@@ -68,13 +66,35 @@ describe('hold', () => {
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issuePayload, observeReqGet),
+        utils.mockResponse(200, payload, observeReqGet),
       ),
     )
 
     await handleIssueComment(commentContext)
     await expect(observeReqDelete.called()).resolves.toBe('called')
     await expect(observeReqGet.called()).resolves.toBe('called')
+  })
+
+  it('does not issue a removal with /hold cancel when hold is absent', async () => {
+    issueCommentEvent.comment.body = '/hold cancel'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReqDelete = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/hold`,
+        utils.mockResponse(200, null, observeReqDelete),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReqDelete.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('fails the action when the hold removal fails', async () => {
