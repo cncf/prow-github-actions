@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
 
@@ -11,13 +12,10 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
-  jest.restoreAllMocks()
-})
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('remove', () => {
@@ -92,9 +90,37 @@ describe('remove', () => {
       ),
     )
 
-    const spy = jest.spyOn(core, 'setFailed')
+    const spy = vi.spyOn(core, 'setFailed')
     await handleIssueComment(commentContext)
     expect(spy).toHaveBeenCalled()
+  })
+
+  it('fails when none of the requested labels are on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove not-present'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/not-present`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('command args missing from body'),
+    )
   })
 
   it('fails the action when a label removal fails', async () => {
@@ -116,7 +142,7 @@ describe('remove', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('could not remove label some-label'),
@@ -142,7 +168,7 @@ describe('remove', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     expect(setFailed).not.toHaveBeenCalled()
   })

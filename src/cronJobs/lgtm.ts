@@ -1,9 +1,10 @@
 import type { Context } from '@actions/github/lib/context'
+import type { Octokit } from '@octokit/rest'
 import type { Endpoints } from '@octokit/types'
-import * as core from '@actions/core'
 
+import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { Octokit } from '@octokit/rest'
+import { newOctokit } from '../utils/octokit'
 
 let jobsDone = 0
 
@@ -29,9 +30,7 @@ export async function cronLgtm(
   core.info(`starting lgtm merger page: ${currentPage}`)
 
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   // Get next batch
   let prs: PullsListResponseDataType
@@ -54,7 +53,7 @@ export async function cronLgtm(
         return
       }
 
-      if (pr.state === 'locked') {
+      if (pr.locked) {
         return
       }
 

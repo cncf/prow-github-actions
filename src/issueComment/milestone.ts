@@ -3,10 +3,9 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
-import { Octokit } from '@octokit/rest'
-
 import { checkCollaborator } from '../utils/auth'
 import { getLineArgs } from '../utils/command'
+import { newOctokit } from '../utils/octokit'
 
 /**
  * /milestone will add the issue to an existing milestone.
@@ -18,9 +17,7 @@ export async function milestone(
   context: Context = github.context,
 ): Promise<void> {
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body

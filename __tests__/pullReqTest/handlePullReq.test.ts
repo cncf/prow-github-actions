@@ -1,4 +1,5 @@
 import * as core from '@actions/core'
+import { expect, it, vi } from 'vitest'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 
 import prCreatedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -6,7 +7,7 @@ import prCreatedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 
 it('ignores the jobs if not setup in environment', async () => {
-  const spy = jest.spyOn(core, 'setFailed')
+  const spy = vi.spyOn(core, 'setFailed')
 
   utils.setupActionsEnv('/assign')
 
