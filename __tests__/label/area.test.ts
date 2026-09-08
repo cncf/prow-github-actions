@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -11,11 +12,10 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
-afterEach(() => jest.restoreAllMocks())
 afterAll(() => server.close())
 
 describe('area', () => {
@@ -101,6 +101,30 @@ describe('area', () => {
     })
   })
 
+  it('fails when no area argument is in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/area not-a-real-label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('area: command args missing from body'),
+    )
+  })
+
   it('fails the action when the label request fails', async () => {
     issueCommentEvent.comment.body = '/area important'
     const commentContext = new utils.MockContext(issueCommentEvent)
@@ -118,7 +142,7 @@ describe('area', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(commentContext)
 

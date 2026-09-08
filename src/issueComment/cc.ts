@@ -1,11 +1,12 @@
 import type { Context } from '@actions/github/lib/context'
+import type { Octokit } from '@octokit/rest'
 import * as core from '@actions/core'
-import * as github from '@actions/github'
 
-import { Octokit } from '@octokit/rest'
+import * as github from '@actions/github'
 
 import { checkCollaborator, getOrgCollabCommentUsers } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
+import { newOctokit } from '../utils/octokit'
 
 /**
  * /cc will request a review from self with no arguments or the users specified
@@ -15,9 +16,7 @@ import { getCommandArgs } from '../utils/command'
  */
 export async function cc(context: Context = github.context): Promise<void> {
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const pullNumber: number | undefined = context.payload.issue?.number
   const commenterId: string = context.payload.comment?.user?.login

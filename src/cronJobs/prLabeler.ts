@@ -6,23 +6,23 @@
  */
 
 import type { Context } from '@actions/github/lib/context'
-import type { Endpoints } from '@octokit/types'
+import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
 import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
-import * as github from '@actions/github'
 
-import { Octokit } from '@octokit/rest'
+import * as github from '@actions/github'
 import * as yaml from 'js-yaml'
 
 import * as minimatch from 'minimatch'
+import { newOctokit } from '../utils/octokit'
 
 // This variable is used to track number of jobs processed
 // while recursing through pages of the github api
 let jobsDone = 0
 
-type PullsListResponseDataType =
-  Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
+type PullsListResponseDataType
+  = RestEndpointMethodTypes['pulls']['list']['response']['data']
 
 /**
  * Inspired by https://github.com/actions/stale
@@ -39,9 +39,7 @@ export async function cronLabelPr(
   core.info(`starting PR labeler page ${currentPage}`)
 
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   // Get next batch
   let prs: PullsListResponseDataType
@@ -64,7 +62,7 @@ export async function cronLabelPr(
         return
       }
 
-      if (pr.state === 'locked') {
+      if (pr.locked) {
         return
       }
 

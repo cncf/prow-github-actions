@@ -1,5 +1,6 @@
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -43,7 +44,7 @@ const server = setupServer(
 )
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
@@ -103,5 +104,36 @@ describe('cronLabelPr', () => {
     expect(await observeReq.body()).toEqual({
       labels: ['tests'],
     })
+  })
+
+  it('does not label a locked PR', async () => {
+    utils.setupJobsEnv('pr-labeler')
+
+    const context = new utils.MockContext(pullReqOpenedEvent)
+
+    const lockedPrs = structuredClone(listPullReqs)
+    lockedPrs[0].locked = true
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
+        ({ request }) => {
+          const page = new URL(request.url).searchParams.get('page')
+          return utils.mockResponse(200, page === '1' ? lockedPrs : [])({ request })
+        },
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/2/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/files`,
+        utils.mockResponse(200, prListFiles),
+      ),
+    )
+
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 })

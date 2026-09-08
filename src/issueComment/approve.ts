@@ -1,15 +1,15 @@
 import type { Context } from '@actions/github/lib/context'
-import type { Endpoints } from '@octokit/types'
-import * as core from '@actions/core'
+import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
+import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { Octokit } from '@octokit/rest'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
+import { newOctokit } from '../utils/octokit'
 
-type PullsListReviewsResponseType =
-  Endpoints['GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews']['response']
+type PullsListReviewsResponseType
+  = RestEndpointMethodTypes['pulls']['listReviews']['response']
 
 /**
  * the /approve command will create a "approve" review
@@ -25,9 +25,7 @@ export async function approve(
 ): Promise<void> {
   core.debug(`starting approve job`)
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body

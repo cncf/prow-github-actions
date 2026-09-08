@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -13,7 +14,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
@@ -55,7 +56,7 @@ describe('utils labeling', () => {
   })
 
   it('can error correctly on malformed label.yaml', async () => {
-    const spy = jest.spyOn(core, 'setFailed')
+    const spy = vi.spyOn(core, 'setFailed')
 
     issueCommentEvent.comment.body = '/area important'
     const commentContext = new utils.MockContext(issueCommentEvent)

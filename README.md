@@ -73,6 +73,7 @@ jobs:
 - [Automatic PR merging](./docs/automatic-merging.md)
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)
+- [Releasing](./docs/releasing.md)
 - [Contributing](./docs/contributing.md)
 
 ---

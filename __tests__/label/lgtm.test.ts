@@ -4,6 +4,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
@@ -15,11 +16,10 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())
-afterEach(() => jest.restoreAllMocks())
 afterAll(() => server.close())
 
 describe('lgtm', () => {
@@ -65,7 +65,8 @@ describe('lgtm', () => {
     issueCommentEvent.comment.body = '/lgtm cancel'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
-    issuePayload.labels.push({
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({
       id: 1,
       node_id: '123',
       url: 'https://api.github.com/repos/octocat/Hello-World/labels/lgtm',
@@ -75,10 +76,43 @@ describe('lgtm', () => {
       default: true,
     })
 
+    const observeReq = new utils.ObserveRequest()
     server.use(
       http.delete(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
-        utils.mockResponse(200),
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    await handleIssueComment(commentContext)
+    await expect(observeReq.called()).resolves.toBe('called')
+  })
+
+  it('does not issue a removal with /lgtm cancel when lgtm is absent', async () => {
+    issueCommentEvent.comment.body = '/lgtm cancel'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
+        utils.mockResponse(200, null, observeReq),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
@@ -98,7 +132,10 @@ describe('lgtm', () => {
       ),
     )
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('adds label if commenter is collaborator', async () => {
@@ -275,8 +312,8 @@ reviewers:
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
-    const logError = jest.spyOn(core, 'error').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
 
     issueCommentEvent.comment.body = '/lgtm'
     const commentContext = new utils.MockContext(issueCommentEvent)

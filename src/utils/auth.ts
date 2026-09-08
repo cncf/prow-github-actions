@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 
 function getErrorDetails(error: unknown): { status: unknown, message: string } {
   if (typeof error === 'object' && error !== null) {

@@ -19,11 +19,11 @@ Label Commands | Policy | Description
 --- | --- | ---
 `/area [label1 label2 ...]` | anyone | adds an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | adds the `lgtm` label. This is used for [automatic PR merging]()
+`/lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md)
 `/lgtm cancel` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | removes the `lgtm` label
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
-`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./automatic-merging.md)
+`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md). Replaces any existing `priority/*` labels.
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
 ## Enabling `/meow`
