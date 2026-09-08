@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@actions/core": "^1.10.0",
-    "@actions/github": "^6.0.0",
+    "@actions/github": "^9.1.1",
     "@octokit/rest": "^22.0.1",
     "minimatch": "^9.0.3"
   },
