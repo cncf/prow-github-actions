@@ -14,6 +14,9 @@ inputs:
   merge-method:
     description: "Strategy for Prow-github-actions to take when merging a pull request using the lgtm cron-job. Can be 'squash', 'rebase', or 'merge'. Defaults to 'merge'"
     required: false
+  cat-api-key:
+    description: 'Optional API key for the /meow image provider (https://thecatapi.com), sent as the x-api-key header. Provide it from a repository secret. The action registers it for runner masking before use and never intentionally includes it in request URLs or GitHub comments.'
+    required: false
 branding:
   color: blue
   icon: anchor
