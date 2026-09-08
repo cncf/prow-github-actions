@@ -1,5 +1,6 @@
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
@@ -127,7 +128,7 @@ describe('/lock', () => {
   })
 
   describe('error', () => {
-    xit('reply with error message cannot lock', () => {
+    it.skip('reply with error message cannot lock', () => {
       // TODO
     })
   })

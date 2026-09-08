@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest'
+
 import { getCommandArgs, getLineArgs } from '../../src/utils/command'
 
 it('handles comments with multiple lines', () => {

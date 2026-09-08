@@ -21,8 +21,10 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "pack": "ncc build",
-    "test": "jest",
+    "test": "vitest run",
     "test-all": "npm run build && npm run pack && npm test",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test"
   },
   "dependencies": {
@@ -35,17 +37,15 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "^4.11.0",
-    "@types/jest": "^29.5.3",
     "@types/js-yaml": "^4.0.5",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.32.0",
-    "jest": "^29.6.2",
-    "jest-circus": "^29.6.2",
     "js-yaml": "^4.1.0",
-    "msw": "~2.10.5",
-    "ts-jest": "^29.1.1",
-    "typescript": "^5.2.2"
+    "msw": "^2.15.0",
+    "typescript": "^5.2.2",
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "undici": "^6.28.1"

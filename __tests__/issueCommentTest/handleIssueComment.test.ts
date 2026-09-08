@@ -1,3 +1,5 @@
+import { expect, it, vi } from 'vitest'
+
 import * as assign from '../../src/issueComment/assign'
 import * as cc from '../../src/issueComment/cc'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
@@ -9,7 +11,7 @@ import * as utils from '../testUtils'
 it('ignores the comment if no command in comment', async () => {
   utils.setupActionsEnv('/assign')
 
-  jest.spyOn(assign, 'assign')
+  vi.spyOn(assign, 'assign')
   const commentContext = new utils.MockContext(issueCommentEvent)
 
   await handleIssueComment(commentContext)
@@ -19,8 +21,8 @@ it('ignores the comment if no command in comment', async () => {
 it('can handle multiple commands in prow-commands config', async () => {
   utils.setupActionsEnv('/assign /unassign')
 
-  jest.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
-  jest.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
 
   issueCommentEvent.comment.body = '/assign'
   const assignContext = new utils.MockContext(issueCommentEvent)
@@ -38,8 +40,8 @@ it('can handle multiple commands in prow-commands config', async () => {
 it('can handle comments with multiple commands', async () => {
   utils.setupActionsEnv('/assign /unassign')
 
-  jest.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
-  jest.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
 
   issueCommentEvent.comment.body
     = '/assign @some-user @other-user\n/unassign @bad-user'
@@ -53,8 +55,8 @@ it('can handle comments with multiple commands', async () => {
 it('handles commands on multiple lines', async () => {
   utils.setupActionsEnv(`/assign\n/unassign`)
 
-  jest.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
-  jest.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
 
   issueCommentEvent.comment.body
     = '/assign @some-user @other-user\n/unassign @bad-user'
@@ -68,9 +70,9 @@ it('handles commands on multiple lines', async () => {
 it('handles commands on both newlines and spaces', async () => {
   utils.setupActionsEnv(`/assign\n/unassign /cc`)
 
-  jest.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
-  jest.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
-  jest.spyOn(cc, 'cc').mockImplementation(() => Promise.resolve())
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(unassign, 'unassign').mockImplementation(() => Promise.resolve())
+  vi.spyOn(cc, 'cc').mockImplementation(() => Promise.resolve())
 
   issueCommentEvent.comment.body
     = '/assign @some-user @other-user\n/unassign @bad-user\n/cc @some-user'

@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
@@ -16,7 +17,7 @@ beforeAll(() =>
 )
 afterEach(() => {
   server.resetHandlers()
-  jest.restoreAllMocks()
+  vi.restoreAllMocks()
 })
 afterAll(() => server.close())
 
@@ -102,7 +103,7 @@ describe('hold', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('could not remove label hold'),

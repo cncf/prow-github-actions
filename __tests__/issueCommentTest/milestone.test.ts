@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -76,13 +77,13 @@ describe('/milestone', () => {
 
     const commentContext = new utils.MockContext(issueCommentEvent)
 
-    const spy = jest.spyOn(core, 'setFailed')
+    const spy = vi.spyOn(core, 'setFailed')
     await handleIssueComment(commentContext)
     expect(spy).toHaveBeenCalled()
   })
 
   describe('error', () => {
-    xit('reply with error message cannot milestone', () => {
+    it.skip('reply with error message cannot milestone', () => {
       // TODO
     })
   })
