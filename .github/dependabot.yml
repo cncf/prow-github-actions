@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # msw >= 2.11 depends on ESM-only packages that Jest 29 cannot load;
+      # lift this once the test runner supports ESM dependencies.
+      - dependency-name: msw
+        versions: ['>=2.11.0']
     groups:
       production-dependencies:
         dependency-type: production
