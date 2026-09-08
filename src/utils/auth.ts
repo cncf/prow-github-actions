@@ -6,6 +6,23 @@ import * as core from '@actions/core'
 
 import yaml from 'js-yaml'
 
+function getErrorDetails(error: unknown): { status: unknown, message: string } {
+  if (typeof error === 'object' && error !== null) {
+    const status = 'status' in error ? error.status : 'unknown'
+    const message
+      = 'message' in error && typeof error.message === 'string'
+        ? error.message
+        : String(error)
+
+    return { status, message }
+  }
+
+  return {
+    status: 'unknown',
+    message: String(error),
+  }
+}
+
 /**
  * checkOrgMember will check to see if the given user is a repo org member
  *
@@ -32,7 +49,16 @@ export async function checkOrgMember(
     return true
   }
   catch (e) {
-    core.debug(`encountered unexpected error: ${e}`)
+    const { status, message } = getErrorDetails(e)
+
+    if (status === 404 || status === 302) {
+      core.debug(`${user} is not an org member: ${message}`)
+      return false
+    }
+
+    core.warning(
+      `encountered unexpected error: status=${status}, message=${message}`,
+    )
     return false
   }
 }
@@ -58,7 +84,18 @@ export async function checkCollaborator(
     return true
   }
   catch (e) {
-    core.debug(`encountered unexpected error: ${e}`)
+    const { status, message } = getErrorDetails(e)
+
+    if (status === 404) {
+      core.debug(
+        `user ${user} is not a collaborator: status=${status}, message=${message}`,
+      )
+      return false
+    }
+
+    core.warning(
+      `encountered unexpected error checking collaborator status: status=${status}, message=${message}`,
+    )
     return false
   }
 }
@@ -93,7 +130,10 @@ export async function checkIssueComments(
     return false
   }
   catch (e) {
-    core.debug(`encountered unexpected error: ${e}`)
+    const { status, message } = getErrorDetails(e)
+    core.warning(
+      `encountered unexpected error checking issue comments: status=${status}, message=${message}`,
+    )
     return false
   }
 }

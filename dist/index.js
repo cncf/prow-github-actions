@@ -2720,6 +2720,19 @@ exports.assertAuthorizedByOwnersOrMembership = assertAuthorizedByOwnersOrMembers
 const node_buffer_1 = __nccwpck_require__(4573);
 const core = __importStar(__nccwpck_require__(7484));
 const js_yaml_1 = __importDefault(__nccwpck_require__(4281));
+function getErrorDetails(error) {
+    if (typeof error === 'object' && error !== null) {
+        const status = 'status' in error ? error.status : 'unknown';
+        const message = 'message' in error && typeof error.message === 'string'
+            ? error.message
+            : String(error);
+        return { status, message };
+    }
+    return {
+        status: 'unknown',
+        message: String(error),
+    };
+}
 /**
  * checkOrgMember will check to see if the given user is a repo org member
  *
@@ -2740,7 +2753,12 @@ async function checkOrgMember(octokit, context, user) {
         return true;
     }
     catch (e) {
-        core.debug(`encountered unexpected error: ${e}`);
+        const { status, message } = getErrorDetails(e);
+        if (status === 404 || status === 302) {
+            core.debug(`${user} is not an org member: ${message}`);
+            return false;
+        }
+        core.warning(`encountered unexpected error: status=${status}, message=${message}`);
         return false;
     }
 }
@@ -2760,7 +2778,12 @@ async function checkCollaborator(octokit, context, user) {
         return true;
     }
     catch (e) {
-        core.debug(`encountered unexpected error: ${e}`);
+        const { status, message } = getErrorDetails(e);
+        if (status === 404) {
+            core.debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
+            return false;
+        }
+        core.warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
         return false;
     }
 }
@@ -2787,7 +2810,8 @@ async function checkIssueComments(octokit, context, issueNum, user) {
         return false;
     }
     catch (e) {
-        core.debug(`encountered unexpected error: ${e}`);
+        const { status, message } = getErrorDetails(e);
+        core.warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
         return false;
     }
 }
