@@ -37,7 +37,7 @@ describe('/meow', () => {
   it('comments with a cat image for a standalone /meow', async () => {
     server.use(
       http.get(catApi, () =>
-        HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])),
+        HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
 
     await handleIssueComment(contextFor('/meow'))
@@ -47,12 +47,12 @@ describe('/meow', () => {
       expect.anything(),
       expect.anything(),
       1,
-      '![cat](<https://cataas.com/cat.jpg>)',
+      '![cat](<https://cdn2.thecatapi.com/images/cat.jpg>)',
     )
   })
 
   it('safely renders a url that contains parentheses', async () => {
-    const url = 'https://example.test/cats/a_(b).jpg'
+    const url = 'https://cdn2.thecatapi.com/images/a_(b).jpg'
     server.use(http.get(catApi, () => HttpResponse.json([{ url }])))
 
     await handleIssueComment(contextFor('/meow'))
@@ -76,7 +76,7 @@ describe('/meow', () => {
   it('matches a standalone /meow once in a CRLF comment', async () => {
     server.use(
       http.get(catApi, () =>
-        HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])),
+        HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
 
     await handleIssueComment(contextFor('/meow\r\n/something-else'))
@@ -91,7 +91,7 @@ describe('/meow', () => {
         calls++
         if (calls === 1)
           return new HttpResponse(null, { status: 503 })
-        return HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])
+        return HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])
       }),
     )
 
@@ -102,7 +102,7 @@ describe('/meow', () => {
       expect.anything(),
       expect.anything(),
       1,
-      '![cat](<https://cataas.com/cat.jpg>)',
+      '![cat](<https://cdn2.thecatapi.com/images/cat.jpg>)',
     )
   })
 
@@ -185,7 +185,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, ({ request }) => {
         seenKey = request.headers.get('x-api-key')
-        return HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])
+        return HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])
       }),
     )
 
@@ -198,7 +198,7 @@ describe('/meow', () => {
   it('fails the action when the github comment write fails', async () => {
     server.use(
       http.get(catApi, () =>
-        HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])),
+        HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
     createComment.mockRejectedValue(new Error('could not add comment: boom'))
     const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -215,7 +215,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, ({ request }) => {
         sentKey = request.headers.has('x-api-key')
-        return HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])
+        return HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])
       }),
     )
 
@@ -250,7 +250,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, ({ request }) => {
         requestedUrl = request.url
-        return HttpResponse.json([{ url: 'https://cataas.com/cat.jpg' }])
+        return HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])
       }),
     )
 
@@ -278,7 +278,7 @@ describe('/meow', () => {
   it('degrades to a note for a non-https image url', async () => {
     server.use(
       http.get(catApi, () =>
-        HttpResponse.json([{ url: 'http://cataas.com/cat.jpg' }])),
+        HttpResponse.json([{ url: 'http://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
     jest.spyOn(core, 'warning').mockImplementation(() => {})
 
@@ -295,12 +295,47 @@ describe('/meow', () => {
   it('degrades to a note for a url that embeds credentials', async () => {
     server.use(
       http.get(catApi, () =>
-        HttpResponse.json([{ url: 'https://user:pass@cataas.com/cat.jpg' }])),
+        HttpResponse.json([{ url: 'https://user:pass@cdn2.thecatapi.com/images/cat.jpg' }])),
     )
     jest.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
+    expect(createComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      1,
+      'The cat API is unavailable right now.',
+    )
+  })
+
+  it('renders an image served from the provider s3 bucket', async () => {
+    const url = 'https://s3.us-west-2.amazonaws.com/cdn2.thecatapi.com/images/cat.jpg'
+    server.use(http.get(catApi, () => HttpResponse.json([{ url }])))
+
+    await handleIssueComment(contextFor('/meow'))
+
+    expect(createComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      1,
+      `![cat](<${url}>)`,
+    )
+  })
+
+  it.each([
+    'https://cataas.com/cat.jpg',
+    'https://s3.us-west-2.amazonaws.com/other-bucket/cat.jpg',
+    'https://cdn2.thecatapi.com.evil.example/cat.jpg',
+  ])('degrades to a note for an image from an unexpected host %p', async (url) => {
+    server.use(http.get(catApi, () => HttpResponse.json([{ url }])))
+    const warning = jest.spyOn(core, 'warning').mockImplementation(() => {})
+
+    await handleIssueComment(contextFor('/meow'))
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected host'),
+    )
     expect(createComment).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -363,7 +398,7 @@ describe('/meow', () => {
   })
 
   it('degrades to a note for an excessively long url', async () => {
-    const longUrl = `https://cataas.com/${'a'.repeat(5000)}.jpg`
+    const longUrl = `https://cdn2.thecatapi.com/images/${'a'.repeat(5000)}.jpg`
     server.use(http.get(catApi, () => HttpResponse.json([{ url: longUrl }])))
     jest.spyOn(core, 'warning').mockImplementation(() => {})
 
@@ -409,7 +444,7 @@ describe('/meow', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(stream, { status: 503 }))
       .mockResolvedValueOnce(
-        Response.json([{ url: 'https://cataas.com/cat.jpg' }]),
+        Response.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }]),
       )
 
     await handleIssueComment(contextFor('/meow'))
@@ -419,7 +454,7 @@ describe('/meow', () => {
       expect.anything(),
       expect.anything(),
       1,
-      '![cat](<https://cataas.com/cat.jpg>)',
+      '![cat](<https://cdn2.thecatapi.com/images/cat.jpg>)',
     )
   })
 

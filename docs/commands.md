@@ -28,7 +28,7 @@ Label Commands | Policy | Description
 
 ## Enabling `/meow`
 
-`/meow` is opt in and calls a third party image provider ([the cat API](https://thecatapi.com)). Anyone who can comment on the repository can invoke it and consume the configured API quota, and the command must be on its own line. It is best effort: if the provider is unavailable it leaves a short note instead of failing the workflow.
+`/meow` is opt in and calls a third party image provider ([the cat API](https://thecatapi.com)). Anyone who can comment on the repository can invoke it and consume the configured API quota, so enable it only on repositories where that is acceptable. The command must be on its own line. It is best effort: if the provider is unavailable it leaves a short note instead of failing the workflow. Only images served from the provider's own CDN are rendered.
 
 ```yaml
 permissions:
@@ -47,8 +47,6 @@ jobs:
 ```
 
 The workflow token needs `issues: write` or `pull-requests: write` to post the response, because a new repository's `GITHUB_TOKEN` often defaults to read only. Grant both when the same workflow handles comments on issues and pull requests.
-
-The `@v2` ref is a floating tag the maintainers move per release. `/meow` ships in the next `v2.x` release, so this example applies once that release is published and the `v2` tag points at it; until then, pin to the release that includes it.
 
 The API key is optional; unauthenticated access is best effort and may be rate limited by the provider. When set, it is provided from a repository secret and registered for runner masking before use, and is never intentionally included in the request URL or a GitHub comment.
 

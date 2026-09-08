@@ -141,7 +141,20 @@ function parseCatImage(value: unknown): URL {
     throw new Error('cat api returned an unusable image url')
   }
 
+  if (!isTrustedImageSource(image))
+    throw new Error('cat api returned an image from an unexpected host')
+
   return image
+}
+
+// only render images the provider actually serves; a compromised or spoofed
+// api response must not be able to embed an arbitrary third-party url
+function isTrustedImageSource(image: URL): boolean {
+  if (image.hostname === 'cdn2.thecatapi.com')
+    return true
+
+  return image.hostname === 's3.us-west-2.amazonaws.com'
+    && image.pathname.startsWith('/cdn2.thecatapi.com/')
 }
 
 function delay(ms: number): Promise<void> {
