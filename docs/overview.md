@@ -20,3 +20,4 @@ that can be run with specific [Github "events"](https://docs.github.com/en/actio
   - [Available cron jobs](./cron-jobs.md)
 - [Jobs to run on PR update](./pr-jobs.md)
 - [Examples](./examples.md)
+- [Releasing](./releasing.md)
