@@ -101,6 +101,30 @@ describe('area', () => {
     })
   })
 
+  it('fails when no area argument is in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/area not-a-real-label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('area: command args missing from body'),
+    )
+  })
+
   it('fails the action when the label request fails', async () => {
     issueCommentEvent.comment.body = '/area important'
     const commentContext = new utils.MockContext(issueCommentEvent)

@@ -1,6 +1,7 @@
+import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueListComments from '../fixtures/issues/assign/issueListComments.json'
@@ -226,6 +227,66 @@ describe('/uncc', () => {
     expect(await observeReq.body()).toMatchObject({
       reviewers: ['some-user'],
     })
+  })
+
+  it('does not uncc another user when commenter is not authorized', async () => {
+    issueCommentEvent.comment.body = '/uncc @some-user'
+
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/requested_reviewers`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('does not self uncc when commenter is not a collaborator', async () => {
+    issueCommentEvent.comment.body = '/uncc'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/requested_reviewers`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('uncc user if they have previously commented', async () => {

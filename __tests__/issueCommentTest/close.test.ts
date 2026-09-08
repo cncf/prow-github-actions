@@ -1,6 +1,7 @@
+import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
@@ -49,9 +50,29 @@ describe('/close', () => {
     })
   })
 
-  describe('error', () => {
-    it.skip('reply with error message cannot close', () => {
-      // TODO
-    })
+  it('does not close the issue when commenter is not a collaborator', async () => {
+    issueCommentEvent.comment.body = '/close'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })

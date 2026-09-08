@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer'
+import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
@@ -220,6 +221,49 @@ reviewers:
     expect(await observeReq.body()).toMatchObject({
       message: `Canceled through prow-github-actions by @some-user`,
     })
+  })
+
+  it('fails /approve cancel when the bot has no approved review', async () => {
+    const reviews = structuredClone(pullReqListReviews)
+    reviews[0].state = 'COMMENTED'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, reviews),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/approve cancel'
+    issueCommentEventAssign.comment.user.login = 'some-user'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('no latest review found to cancel'),
+    )
   })
 
   it('removes approval with the /approve cancel command if commenter is collaborator', async () => {

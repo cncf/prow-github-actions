@@ -1,6 +1,7 @@
+import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueAssignedResp from '../fixtures/issues/assign/issueAssignedResponse.json'
@@ -237,6 +238,76 @@ describe('/assign', () => {
     expect(await observeReq.body()).toMatchObject({
       assignees: ['some-user'],
     })
+  })
+
+  it('fails when no requested user is authorized', async () => {
+    issueCommentEventAssign.comment.body = '/assign @some-user'
+
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/assignees`,
+        utils.mockResponse(201, issueAssignedResp, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('no authorized users found'),
+    )
+  })
+
+  it('does not self assign when commenter is not authorized', async () => {
+    issueCommentEventAssign.comment.body = '/assign'
+
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/assignees`,
+        utils.mockResponse(201, issueAssignedResp, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('assigns user if they have previously commented', async () => {

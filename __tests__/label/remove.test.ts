@@ -95,6 +95,34 @@ describe('remove', () => {
     expect(spy).toHaveBeenCalled()
   })
 
+  it('fails when none of the requested labels are on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove not-present'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/not-present`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('command args missing from body'),
+    )
+  })
+
   it('fails the action when a label removal fails', async () => {
     issueCommentEvent.comment.body = '/remove some-label'
     const commentContext = new utils.MockContext(issueCommentEvent)

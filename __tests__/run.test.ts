@@ -3,7 +3,9 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { handleCronJobs } from '../src/cronJobs/handleCronJob'
 import { handleIssueComment } from '../src/issueComment/handleIssueComment'
+import { handlePullReq } from '../src/pullReq/handlePullReq'
 import { run } from '../src/run'
 
 vi.mock('../src/issueComment/handleIssueComment', () => ({
@@ -19,6 +21,8 @@ vi.mock('../src/cronJobs/handleCronJob', () => ({
 const mockedHandle = handleIssueComment as MockedFunction<
   typeof handleIssueComment
 >
+const mockedHandlePullReq = handlePullReq as MockedFunction<typeof handlePullReq>
+const mockedHandleCronJobs = handleCronJobs as MockedFunction<typeof handleCronJobs>
 
 describe('run', () => {
   beforeEach(() => {
@@ -46,6 +50,52 @@ describe('run', () => {
     releaseHandler()
     await running
     expect(resolved).toBe(true)
+  })
+
+  it('dispatches issue_comment to handleIssueComment', async () => {
+    mockedHandle.mockResolvedValue()
+
+    await run()
+
+    expect(mockedHandle).toHaveBeenCalledTimes(1)
+    expect(mockedHandlePullReq).not.toHaveBeenCalled()
+    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
+  })
+
+  it('dispatches pull_request to handlePullReq', async () => {
+    github.context.eventName = 'pull_request'
+    mockedHandlePullReq.mockResolvedValue()
+
+    await run()
+
+    expect(mockedHandlePullReq).toHaveBeenCalledTimes(1)
+    expect(mockedHandle).not.toHaveBeenCalled()
+    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
+  })
+
+  it('dispatches schedule to handleCronJobs', async () => {
+    github.context.eventName = 'schedule'
+    mockedHandleCronJobs.mockResolvedValue()
+
+    await run()
+
+    expect(mockedHandleCronJobs).toHaveBeenCalledTimes(1)
+    expect(mockedHandle).not.toHaveBeenCalled()
+    expect(mockedHandlePullReq).not.toHaveBeenCalled()
+  })
+
+  it('logs an error for an unsupported event without failing', async () => {
+    github.context.eventName = 'push'
+    const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await expect(run()).resolves.toBeUndefined()
+
+    expect(logError).toHaveBeenCalledWith('push not yet supported')
+    expect(setFailed).not.toHaveBeenCalled()
+    expect(mockedHandle).not.toHaveBeenCalled()
+    expect(mockedHandlePullReq).not.toHaveBeenCalled()
+    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
   })
 
   it('reports a dispatched handler rejection through setFailed', async () => {
