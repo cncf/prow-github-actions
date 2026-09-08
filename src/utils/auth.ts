@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 
 /**
  * checkOrgMember will check to see if the given user is a repo org member
