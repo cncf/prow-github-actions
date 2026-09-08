@@ -49,5 +49,5 @@ export async function area(context: Context = github.context): Promise<void> {
     throw new Error(`area: command args missing from body`)
   }
 
-  labelIssue(octokit, context, issueNumber, commentArgs)
+  await labelIssue(octokit, context, issueNumber, commentArgs)
 }

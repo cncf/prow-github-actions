@@ -564,7 +564,7 @@ async function approve(context = github.context) {
         core.error(msg);
         // Try to reply back that the user is unauthorized
         try {
-            (0, comments_1.createComment)(octokit, context, issueNumber, msg);
+            await (0, comments_1.createComment)(octokit, context, issueNumber, msg);
         }
         catch (commentE) {
             // Log the comment error but continue to throw the original auth error
@@ -1049,69 +1049,37 @@ async function handleIssueComment(context = github.context) {
         if (commentBody.includes(command)) {
             switch (command) {
                 case '/assign':
-                    return await (0, assign_1.assign)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, assign_1.assign)(context).catch(normalizeError);
                 case '/cc':
-                    return await (0, cc_1.cc)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, cc_1.cc)(context).catch(normalizeError);
                 case '/uncc':
-                    return await (0, uncc_1.uncc)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, uncc_1.uncc)(context).catch(normalizeError);
                 case '/unassign':
-                    return await (0, unassign_1.unassign)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, unassign_1.unassign)(context).catch(normalizeError);
                 case '/approve':
-                    return await (0, approve_1.approve)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, approve_1.approve)(context).catch(normalizeError);
                 case '/retitle':
-                    return await (0, retitle_1.retitle)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, retitle_1.retitle)(context).catch(normalizeError);
                 case '/remove':
-                    return await (0, remove_1.remove)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, remove_1.remove)(context).catch(normalizeError);
                 case '/area':
-                    return await (0, area_1.area)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, area_1.area)(context).catch(normalizeError);
                 case '/kind':
-                    return await (0, kind_1.kind)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, kind_1.kind)(context).catch(normalizeError);
                 case '/hold':
-                    return await (0, hold_1.hold)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, hold_1.hold)(context).catch(normalizeError);
                 case '/priority':
-                    return await (0, priority_1.priority)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, priority_1.priority)(context).catch(normalizeError);
                 case '/lgtm':
-                    return await (0, lgtm_1.lgtm)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, lgtm_1.lgtm)(context).catch(normalizeError);
                 case '/close':
-                    return await (0, close_1.close)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, close_1.close)(context).catch(normalizeError);
                 case '/lock':
-                    return await (0, lock_1.lock)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, lock_1.lock)(context).catch(normalizeError);
                 case '/reopen':
-                    return await (0, reopen_1.reopen)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, reopen_1.reopen)(context).catch(normalizeError);
                 case '/milestone':
-                    return await (0, milestone_1.milestone)(context).catch(async (e) => {
-                        return e;
-                    });
+                    return await (0, milestone_1.milestone)(context).catch(normalizeError);
                 case '':
                     return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
                 default:
@@ -1129,6 +1097,10 @@ async function handleIssueComment(context = github.context) {
         .catch((e) => {
         core.setFailed(`${e}`);
     });
+}
+// normalizeError coerces a non-Error rejection so it still fails the Action
+function normalizeError(error) {
+    return error instanceof Error ? error : new Error(String(error));
 }
 
 
@@ -1852,7 +1824,7 @@ async function area(context = github.context) {
     if (commentArgs.length === 0) {
         throw new Error(`area: command args missing from body`);
     }
-    (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
 
 
@@ -1931,7 +1903,7 @@ async function hold(context = github.context) {
         }
         return;
     }
-    (0, labeling_1.labelIssue)(octokit, context, issueNumber, ['hold']);
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, ['hold']);
 }
 
 
@@ -2014,7 +1986,7 @@ async function kind(context = github.context) {
     if (commentArgs.length === 0) {
         throw new Error(`area: command args missing from body`);
     }
-    (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
 
 
@@ -2093,7 +2065,7 @@ async function lgtm(context = github.context) {
         core.error(msg);
         // Try to reply back that the user is unauthorized
         try {
-            (0, comments_1.createComment)(octokit, context, issueNumber, msg);
+            await (0, comments_1.createComment)(octokit, context, issueNumber, msg);
         }
         catch (commentE) {
             // Log the comment error but continue to throw the original auth error
@@ -2112,7 +2084,7 @@ async function lgtm(context = github.context) {
         }
         return;
     }
-    (0, labeling_1.labelIssue)(octokit, context, issueNumber, ['lgtm']);
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, ['lgtm']);
 }
 
 
@@ -2195,7 +2167,7 @@ async function priority(context = github.context) {
     if (commentArgs.length === 0) {
         throw new Error(`area: command args missing from body`);
     }
-    (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
 
 
@@ -2293,77 +2265,6 @@ async function remove(context = github.context) {
     }
     await (0, labeling_1.removeLabels)(octokit, context, issueNumber, toRemove);
 }
-
-
-/***/ }),
-
-/***/ 5915:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
-const handleCronJob_1 = __nccwpck_require__(1300);
-const handleIssueComment_1 = __nccwpck_require__(1311);
-const handlePullReq_1 = __nccwpck_require__(8730);
-async function run() {
-    try {
-        switch (github.context.eventName) {
-            case 'issue_comment':
-                (0, handleIssueComment_1.handleIssueComment)();
-                break;
-            case 'pull_request':
-                (0, handlePullReq_1.handlePullReq)();
-                break;
-            case 'schedule':
-                (0, handleCronJob_1.handleCronJobs)();
-                break;
-            default:
-                core.error(`${github.context.eventName} not yet supported`);
-                break;
-        }
-    }
-    catch (error) {
-        if (error instanceof Error)
-            core.setFailed(error.message);
-    }
-}
-run();
 
 
 /***/ }),
@@ -2515,6 +2416,76 @@ async function onPrLgtm(context) {
     }
     if (currentLabels.includes('lgtm')) {
         await (0, labeling_1.removeLabels)(octokit, context, prNumber, ['lgtm']);
+    }
+}
+
+
+/***/ }),
+
+/***/ 8065:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.run = run;
+const core = __importStar(__nccwpck_require__(7484));
+const github = __importStar(__nccwpck_require__(3228));
+const handleCronJob_1 = __nccwpck_require__(1300);
+const handleIssueComment_1 = __nccwpck_require__(1311);
+const handlePullReq_1 = __nccwpck_require__(8730);
+async function run() {
+    try {
+        switch (github.context.eventName) {
+            case 'issue_comment':
+                await (0, handleIssueComment_1.handleIssueComment)();
+                break;
+            case 'pull_request':
+                await (0, handlePullReq_1.handlePullReq)();
+                break;
+            case 'schedule':
+                await (0, handleCronJob_1.handleCronJobs)();
+                break;
+            default:
+                core.error(`${github.context.eventName} not yet supported`);
+                break;
+        }
+    }
+    catch (error) {
+        core.setFailed(error instanceof Error ? error.message : String(error));
     }
 }
 
@@ -43957,12 +43928,18 @@ exports.unescape = unescape;
 /******/ 	if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = __dirname + "/";
 /******/ 	
 /************************************************************************/
-/******/ 	
-/******/ 	// startup
-/******/ 	// Load entry module and return exports
-/******/ 	// This entry module is referenced by other modules so it can't be inlined
-/******/ 	var __webpack_exports__ = __nccwpck_require__(5915);
-/******/ 	module.exports = __webpack_exports__;
-/******/ 	
+var __webpack_exports__ = {};
+// This entry need to be wrapped in an IIFE because it need to be in strict mode.
+(() => {
+"use strict";
+var exports = __webpack_exports__;
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const run_1 = __nccwpck_require__(8065);
+void (0, run_1.run)();
+
+})();
+
+module.exports = __webpack_exports__;
 /******/ })()
 ;
