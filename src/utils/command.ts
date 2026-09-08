@@ -7,7 +7,7 @@
  */
 export function getLineArgs(command: string, body: string): string {
   let toReturn = ''
-  const lineArray = body.split('\n')
+  const lineArray = splitLines(body)
 
   for (const iterator of lineArray) {
     if (iterator.includes(command)) {
@@ -27,7 +27,7 @@ export function getLineArgs(command: string, body: string): string {
  */
 export function getCommandArgs(command: string, body: string): string[] {
   const toReturn = []
-  const lineArray = body.split('\n')
+  const lineArray = splitLines(body)
   let bodyArray
 
   for (const iterator of lineArray) {
@@ -53,6 +53,11 @@ export function getCommandArgs(command: string, body: string): string[] {
   }
 
   return stripAtSign(toReturn)
+}
+
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body: string): string[] {
+  return body.replace(/\r\n?/g, '\n').split('\n')
 }
 
 /**

@@ -2792,7 +2792,7 @@ exports.getCommandArgs = getCommandArgs;
  */
 function getLineArgs(command, body) {
     let toReturn = '';
-    const lineArray = body.split('\n');
+    const lineArray = splitLines(body);
     for (const iterator of lineArray) {
         if (iterator.includes(command)) {
             toReturn = iterator.replace(`${command} `, '');
@@ -2809,7 +2809,7 @@ function getLineArgs(command, body) {
  */
 function getCommandArgs(command, body) {
     const toReturn = [];
-    const lineArray = body.split('\n');
+    const lineArray = splitLines(body);
     let bodyArray;
     for (const iterator of lineArray) {
         if (iterator.includes(command)) {
@@ -2830,6 +2830,10 @@ function getCommandArgs(command, body) {
         i++;
     }
     return stripAtSign(toReturn);
+}
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body) {
+    return body.replace(/\r\n?/g, '\n').split('\n');
 }
 /**
  * stripAtSign will remove a leading '@' sign from the arguments array
