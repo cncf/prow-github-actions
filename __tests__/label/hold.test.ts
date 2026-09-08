@@ -12,13 +12,10 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
-  vi.restoreAllMocks()
-})
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('hold', () => {

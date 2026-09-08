@@ -14,10 +14,7 @@ const catApi = 'https://api.thecatapi.com/v1/images/search'
 
 const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
-afterEach(() => {
-  server.resetHandlers()
-  vi.restoreAllMocks()
-})
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 function contextFor(body: string) {

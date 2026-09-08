@@ -44,7 +44,7 @@ const server = setupServer(
 )
 beforeAll(() =>
   server.listen({
-    onUnhandledRequest: 'warn',
+    onUnhandledRequest: 'error',
   }),
 )
 afterEach(() => server.resetHandlers())

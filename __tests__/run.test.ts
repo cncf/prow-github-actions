@@ -1,7 +1,7 @@
 import type { MockedFunction } from 'vitest'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../src/issueComment/handleIssueComment'
 import { run } from '../src/run'
@@ -25,8 +25,6 @@ describe('run', () => {
     vi.resetAllMocks()
     github.context.eventName = 'issue_comment'
   })
-
-  afterEach(() => vi.restoreAllMocks())
 
   it('does not resolve until the dispatched handler settles', async () => {
     let releaseHandler!: () => void
