@@ -1,12 +1,13 @@
 import type { Context } from '@actions/github/lib/context'
+import type { Octokit } from '@octokit/rest'
+
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
-import { Octokit } from '@octokit/rest'
-
 import { checkCommenterAuth, getOrgCollabCommentUsers } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
+import { newOctokit } from '../utils/octokit'
 
 /**
  * /assign will self assign with no argument
@@ -18,9 +19,7 @@ export async function assign(context: Context = github.context): Promise<void> {
   core.debug(`starting assign job`)
 
   const token = core.getInput('github-token', { required: true })
-  const octokit = new Octokit({
-    auth: token,
-  })
+  const octokit = newOctokit(token)
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commenterId: string = context.payload.comment?.user?.login

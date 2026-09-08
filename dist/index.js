@@ -129,7 +129,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.cronLgtm = cronLgtm;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
+const octokit_1 = __nccwpck_require__(7995);
 let jobsDone = 0;
 /**
  * Inspired by https://github.com/actions/stale
@@ -142,9 +142,7 @@ let jobsDone = 0;
 async function cronLgtm(currentPage, context) {
     core.info(`starting lgtm merger page: ${currentPage}`);
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     // Get next batch
     let prs;
     try {
@@ -294,9 +292,9 @@ exports.sendLabels = sendLabels;
 const node_buffer_1 = __nccwpck_require__(4573);
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const yaml = __importStar(__nccwpck_require__(4281));
 const minimatch = __importStar(__nccwpck_require__(6507));
+const octokit_1 = __nccwpck_require__(7995);
 // This variable is used to track number of jobs processed
 // while recursing through pages of the github api
 let jobsDone = 0;
@@ -311,9 +309,7 @@ let jobsDone = 0;
 async function cronLabelPr(currentPage, context) {
     core.info(`starting PR labeler page ${currentPage}`);
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     // Get next batch
     let prs;
     try {
@@ -531,10 +527,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.approve = approve;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
 const comments_1 = __nccwpck_require__(2666);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * the /approve command will create a "approve" review
  * from the github-actions bot
@@ -547,9 +543,7 @@ const comments_1 = __nccwpck_require__(2666);
 async function approve(context = github.context) {
     core.debug(`starting approve job`);
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterLogin = context.payload.comment?.user.login;
@@ -684,9 +678,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.assign = assign;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /assign will self assign with no argument
  * or assign the users in the argument list
@@ -696,9 +690,7 @@ const command_1 = __nccwpck_require__(7971);
 async function assign(context = github.context) {
     core.debug(`starting assign job`);
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -808,9 +800,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.cc = cc;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /cc will request a review from self with no arguments or the users specified
  * or assign the users in the argument list
@@ -819,9 +811,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function cc(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const pullNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -931,8 +921,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.close = close;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /close will close the issue / PR
  *
@@ -940,9 +930,7 @@ const auth_1 = __nccwpck_require__(6690);
  */
 async function close(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
@@ -1151,9 +1139,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.lock = lock;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /lock will lock the issue / PR.
  * No more comments will be permitted
@@ -1162,9 +1150,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function lock(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -1307,8 +1293,8 @@ exports.meowConfig = void 0;
 exports.meow = meow;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const comments_1 = __nccwpck_require__(2666);
+const octokit_1 = __nccwpck_require__(7995);
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med';
 // a line of exactly /meow, not /meowvie or a mention
 const meowCommand = /^[\t ]*\/meow[\t ]*$/m;
@@ -1327,7 +1313,7 @@ async function meow(context = github.context) {
     if (!hasMeowCommand(context.payload.comment?.body))
         return;
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({ auth: token });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
@@ -1480,9 +1466,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.milestone = milestone;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /milestone will add the issue to an existing milestone.
  * Note that the command should have an argument with the milestone to add
@@ -1491,9 +1477,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function milestone(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -1575,8 +1559,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.reopen = reopen;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /reopen will reopen the issue / PR. May be called after /close
  *
@@ -1584,9 +1568,7 @@ const auth_1 = __nccwpck_require__(6690);
  */
 async function reopen(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
@@ -1660,9 +1642,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.retitle = retitle;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /retitle will "rename" the issue / PR.
  * Note - it is expected that the command has an argument with the new title
@@ -1671,9 +1653,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function retitle(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -1753,9 +1733,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.unassign = unassign;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /unassign will remove the assignment for argument users (or self)
  *
@@ -1763,9 +1743,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function unassign(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -1853,9 +1831,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uncc = uncc;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /uncc will remove the review request for argument users (or self)
  *
@@ -1863,9 +1841,7 @@ const command_1 = __nccwpck_require__(7971);
  */
 async function uncc(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const pullNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -1966,9 +1942,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.area = area;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /area will add an area/some-area label
  *
@@ -1976,9 +1952,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function area(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
@@ -2049,9 +2023,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.hold = hold;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /hold will add the hold label
  * Note - the hold label will block automatic merging if the lgtm
@@ -2061,9 +2035,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function hold(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
@@ -2128,9 +2100,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.kind = kind;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /kind will add a kind/some-kind label
  *
@@ -2138,9 +2110,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function kind(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
@@ -2211,11 +2181,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.lgtm = lgtm;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
 const comments_1 = __nccwpck_require__(2666);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /lgtm will add the lgtm label.
  * Note - this label is used to indicate automatic merging
@@ -2225,9 +2195,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function lgtm(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -2309,9 +2277,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.priority = priority;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /priority will add a priority/some-priority label
  *
@@ -2319,9 +2287,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function priority(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
@@ -2392,10 +2358,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.remove = remove;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const rest_1 = __nccwpck_require__(5772);
 const auth_1 = __nccwpck_require__(6690);
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * /remove will remove a label based on the command argument
  *
@@ -2403,9 +2369,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function remove(context = github.context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -2567,8 +2531,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.onPrLgtm = onPrLgtm;
 const core = __importStar(__nccwpck_require__(7484));
-const rest_1 = __nccwpck_require__(5772);
 const labeling_1 = __nccwpck_require__(7138);
+const octokit_1 = __nccwpck_require__(7995);
 /**
  * Removes the 'lgtm' label after a pull request event
  *
@@ -2576,9 +2540,7 @@ const labeling_1 = __nccwpck_require__(7138);
  */
 async function onPrLgtm(context) {
     const token = core.getInput('github-token', { required: true });
-    const octokit = new rest_1.Octokit({
-        auth: token,
-    });
+    const octokit = (0, octokit_1.newOctokit)(token);
     const prNumber = context.payload.pull_request?.number;
     if (prNumber === undefined) {
         throw new Error(`github context payload missing pr number: ${context.payload}`);
@@ -3243,6 +3205,29 @@ function isNotFound(error) {
         && error !== null
         && 'status' in error
         && error.status === 404);
+}
+
+
+/***/ }),
+
+/***/ 7995:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.newOctokit = newOctokit;
+const node_process_1 = __importDefault(__nccwpck_require__(1708));
+const rest_1 = __nccwpck_require__(5772);
+// GITHUB_API_URL is set by the runner and differs on GitHub Enterprise Server
+function newOctokit(token) {
+    return new rest_1.Octokit({
+        auth: token,
+        baseUrl: node_process_1.default.env.GITHUB_API_URL || 'https://api.github.com',
+    });
 }
 
 
@@ -46389,6 +46374,14 @@ module.exports = require("node:net");
 
 "use strict";
 module.exports = require("node:perf_hooks");
+
+/***/ }),
+
+/***/ 1708:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:process");
 
 /***/ }),
 
