@@ -149,6 +149,87 @@ describe('priority', () => {
     })
   })
 
+  it('does not remove a priority label that is already the requested one', async () => {
+    issueCommentEvent.comment.body = '/priority high'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({
+      id: 3,
+      node_id: '789',
+      url: 'https://api.github.com/repos/octocat/Hello-World/labels/priority/high',
+      name: 'priority/high',
+      description: '',
+      color: 'f29513',
+      default: true,
+    })
+
+    const observeReqDelete = new utils.ObserveRequest()
+    const observeReqPost = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Fhigh`,
+        utils.mockResponse(200, null, observeReqDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReqPost),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    await handleIssueComment(commentContext)
+    await expect(observeReqDelete.notCalled()).resolves.toBe('not called')
+    await observeReqPost.called()
+    expect(await observeReqPost.body()).toMatchObject({
+      labels: ['priority/high'],
+    })
+  })
+
+  it('fails the action when the stale priority removal fails', async () => {
+    issueCommentEvent.comment.body = '/priority high'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({
+      id: 3,
+      node_id: '789',
+      url: 'https://api.github.com/repos/octocat/Hello-World/labels/priority/low',
+      name: 'priority/low',
+      description: '',
+      color: 'f29513',
+      default: true,
+    })
+
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
+        utils.mockResponse(500),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('could not remove label priority/low'),
+    )
+  })
+
   it('fails when no priority argument is in .prowlabels.yaml', async () => {
     issueCommentEvent.comment.body = '/priority not-a-real-label'
     const commentContext = new utils.MockContext(issueCommentEvent)
