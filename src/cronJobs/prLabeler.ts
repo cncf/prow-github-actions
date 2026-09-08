@@ -21,8 +21,8 @@ import * as minimatch from 'minimatch'
 // while recursing through pages of the github api
 let jobsDone = 0
 
-type PullsListResponseDataType =
-  Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
+type PullsListResponseDataType
+  = Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
 
 /**
  * Inspired by https://github.com/actions/stale
