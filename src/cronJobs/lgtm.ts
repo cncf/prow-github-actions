@@ -1,6 +1,5 @@
 import type { Context } from '@actions/github/lib/context'
-import type { Octokit } from '@octokit/rest'
-import type { Endpoints } from '@octokit/types'
+import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
@@ -9,7 +8,7 @@ import { newOctokit } from '../utils/octokit'
 let jobsDone = 0
 
 type PullsListResponseDataType
-  = Endpoints['GET /repos/{owner}/{repo}/pulls']['response']['data']
+  = RestEndpointMethodTypes['pulls']['list']['response']['data']
 
 type PullsListResponseItem = PullsListResponseDataType extends (infer Item)[]
   ? Item
