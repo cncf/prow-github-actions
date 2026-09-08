@@ -1,30 +1,32 @@
+import type { MockedFunction } from 'vitest'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../src/issueComment/handleIssueComment'
 import { run } from '../src/run'
 
-jest.mock('../src/issueComment/handleIssueComment', () => ({
-  handleIssueComment: jest.fn(),
+vi.mock('../src/issueComment/handleIssueComment', () => ({
+  handleIssueComment: vi.fn(),
 }))
-jest.mock('../src/pullReq/handlePullReq', () => ({
-  handlePullReq: jest.fn(),
+vi.mock('../src/pullReq/handlePullReq', () => ({
+  handlePullReq: vi.fn(),
 }))
-jest.mock('../src/cronJobs/handleCronJob', () => ({
-  handleCronJobs: jest.fn(),
+vi.mock('../src/cronJobs/handleCronJob', () => ({
+  handleCronJobs: vi.fn(),
 }))
 
-const mockedHandle = handleIssueComment as jest.MockedFunction<
+const mockedHandle = handleIssueComment as MockedFunction<
   typeof handleIssueComment
 >
 
 describe('run', () => {
   beforeEach(() => {
-    jest.resetAllMocks()
+    vi.resetAllMocks()
     github.context.eventName = 'issue_comment'
   })
 
-  afterEach(() => jest.restoreAllMocks())
+  afterEach(() => vi.restoreAllMocks())
 
   it('does not resolve until the dispatched handler settles', async () => {
     let releaseHandler!: () => void
@@ -50,7 +52,7 @@ describe('run', () => {
 
   it('reports a dispatched handler rejection through setFailed', async () => {
     mockedHandle.mockRejectedValue(new Error('handler blew up'))
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await run()
 

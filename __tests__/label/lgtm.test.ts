@@ -4,6 +4,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
@@ -19,7 +20,7 @@ beforeAll(() =>
   }),
 )
 afterEach(() => server.resetHandlers())
-afterEach(() => jest.restoreAllMocks())
+afterEach(() => vi.restoreAllMocks())
 afterAll(() => server.close())
 
 describe('lgtm', () => {
@@ -275,8 +276,8 @@ reviewers:
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
-    const logError = jest.spyOn(core, 'error').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
 
     issueCommentEvent.comment.body = '/lgtm'
     const commentContext = new utils.MockContext(issueCommentEvent)

@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -15,7 +16,7 @@ beforeAll(() =>
   }),
 )
 afterEach(() => server.resetHandlers())
-afterEach(() => jest.restoreAllMocks())
+afterEach(() => vi.restoreAllMocks())
 afterAll(() => server.close())
 
 describe('area', () => {
@@ -118,7 +119,7 @@ describe('area', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(commentContext)
 

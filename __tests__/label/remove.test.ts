@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
 
@@ -16,7 +17,7 @@ beforeAll(() =>
 )
 afterEach(() => {
   server.resetHandlers()
-  jest.restoreAllMocks()
+  vi.restoreAllMocks()
 })
 afterAll(() => server.close())
 
@@ -92,7 +93,7 @@ describe('remove', () => {
       ),
     )
 
-    const spy = jest.spyOn(core, 'setFailed')
+    const spy = vi.spyOn(core, 'setFailed')
     await handleIssueComment(commentContext)
     expect(spy).toHaveBeenCalled()
   })
@@ -116,7 +117,7 @@ describe('remove', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('could not remove label some-label'),
@@ -142,7 +143,7 @@ describe('remove', () => {
       ),
     )
 
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     expect(setFailed).not.toHaveBeenCalled()
   })

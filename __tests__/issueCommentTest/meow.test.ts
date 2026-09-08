@@ -1,6 +1,8 @@
+import type { MockInstance } from 'vitest'
 import * as core from '@actions/core'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { meowConfig } from '../../src/issueComment/meow'
@@ -14,7 +16,7 @@ const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => {
   server.resetHandlers()
-  jest.restoreAllMocks()
+  vi.restoreAllMocks()
 })
 afterAll(() => server.close())
 
@@ -24,14 +26,14 @@ function contextFor(body: string) {
 }
 
 describe('/meow', () => {
-  let createComment: jest.SpiedFunction<typeof comments.createComment>
+  let createComment: MockInstance<typeof comments.createComment>
 
   beforeEach(() => {
     utils.setupActionsEnv('/meow')
     meowConfig.timeoutMs = 10_000
     meowConfig.retryDelayMs = 0
     meowConfig.maxAttempts = 3
-    createComment = jest.spyOn(comments, 'createComment').mockResolvedValue()
+    createComment = vi.spyOn(comments, 'createComment').mockResolvedValue()
   })
 
   it('comments with a cat image for a standalone /meow', async () => {
@@ -114,7 +116,7 @@ describe('/meow', () => {
         return new HttpResponse(null, { status: 500 })
       }),
     )
-    const warning = jest.spyOn(core, 'warning').mockImplementation(() => {})
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -130,7 +132,7 @@ describe('/meow', () => {
 
   it('degrades to a note on a network error', async () => {
     server.use(http.get(catApi, () => HttpResponse.error()))
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -151,7 +153,7 @@ describe('/meow', () => {
         return new Promise(() => {})
       }),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -166,7 +168,7 @@ describe('/meow', () => {
 
   it('degrades to a note when the response has no usable url', async () => {
     server.use(http.get(catApi, () => HttpResponse.json([])))
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -180,7 +182,7 @@ describe('/meow', () => {
 
   it('sends the api key header only when configured', async () => {
     process.env['INPUT_CAT-API-KEY'] = 'secret-key'
-    const setSecret = jest.spyOn(core, 'setSecret').mockImplementation(() => {})
+    const setSecret = vi.spyOn(core, 'setSecret').mockImplementation(() => {})
     let seenKey: string | null = null
     server.use(
       http.get(catApi, ({ request }) => {
@@ -201,7 +203,7 @@ describe('/meow', () => {
         HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
     createComment.mockRejectedValue(new Error('could not add comment: boom'))
-    const setFailed = jest.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -232,7 +234,7 @@ describe('/meow', () => {
         return new HttpResponse(null, { status: 400 })
       }),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -268,7 +270,7 @@ describe('/meow', () => {
         return HttpResponse.error()
       }),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -280,7 +282,7 @@ describe('/meow', () => {
       http.get(catApi, () =>
         HttpResponse.json([{ url: 'http://cdn2.thecatapi.com/images/cat.jpg' }])),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -297,7 +299,7 @@ describe('/meow', () => {
       http.get(catApi, () =>
         HttpResponse.json([{ url: 'https://user:pass@cdn2.thecatapi.com/images/cat.jpg' }])),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -329,7 +331,7 @@ describe('/meow', () => {
     'https://cdn2.thecatapi.com.evil.example/cat.jpg',
   ])('degrades to a note for an image from an unexpected host %p', async (url) => {
     server.use(http.get(catApi, () => HttpResponse.json([{ url }])))
-    const warning = jest.spyOn(core, 'warning').mockImplementation(() => {})
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -355,7 +357,7 @@ describe('/meow', () => {
           headers: { location: 'https://redirect.example/cat' },
         })),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -369,7 +371,7 @@ describe('/meow', () => {
 
   it('degrades to a note when the first item has no url', async () => {
     server.use(http.get(catApi, () => HttpResponse.json([{}])))
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -385,7 +387,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, () => HttpResponse.json([{ url: 'not a url' }])),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -400,7 +402,7 @@ describe('/meow', () => {
   it('degrades to a note for an excessively long url', async () => {
     const longUrl = `https://cdn2.thecatapi.com/images/${'a'.repeat(5000)}.jpg`
     server.use(http.get(catApi, () => HttpResponse.json([{ url: longUrl }])))
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -420,7 +422,7 @@ describe('/meow', () => {
         return new HttpResponse(null, { status: 429 })
       }),
     )
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
@@ -440,7 +442,7 @@ describe('/meow', () => {
         cancelled = true
       },
     })
-    jest
+    vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(stream, { status: 503 }))
       .mockResolvedValueOnce(
@@ -465,10 +467,10 @@ describe('/meow', () => {
         cancelled = true
       },
     })
-    jest
+    vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(stream, { status: 400 }))
-    jest.spyOn(core, 'warning').mockImplementation(() => {})
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
 
     await handleIssueComment(contextFor('/meow'))
 
