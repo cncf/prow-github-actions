@@ -134,6 +134,6 @@ describe('cronLabelPr', () => {
     )
 
     await expect(handleCronJobs(context)).resolves.not.toThrow()
-    expect(observeReq.ref).toBeNull()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 })

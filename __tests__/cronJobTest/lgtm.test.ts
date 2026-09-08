@@ -140,7 +140,7 @@ describe('cronLgtm', () => {
     )
 
     await expect(handleCronJobs(context)).resolves.not.toThrow()
-    expect(observeReq.ref).toBeNull()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 
   it('wont merge the PR if the hold label is present', async () => {
@@ -161,6 +161,15 @@ describe('cronLgtm', () => {
       default: true,
     })
 
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
     await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 })
