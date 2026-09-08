@@ -35,7 +35,9 @@ priority:
 ```
 
 With the command `/priority low`,
-the issue or PR will be labeled with `priority/low`
+the issue or PR will be labeled with `priority/low`.
+A later `/priority` command replaces any existing `priority/*` labels
+instead of stacking them.
 
 ## Automatic PR labels
 
