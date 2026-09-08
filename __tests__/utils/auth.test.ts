@@ -19,11 +19,12 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
-beforeAll(() =>
+beforeAll(() => {
+  utils.setupActionsEnv()
   server.listen({
     onUnhandledRequest: 'error',
-  }),
-)
+  })
+})
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 

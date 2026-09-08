@@ -12,16 +12,19 @@ export const MockContext = class extends Context {
   }
 }
 
-function clearInputEnv() {
+// Drop action inputs and the runner-provided GITHUB_* variables so that tests
+// are hermetic when they run inside GitHub Actions (github.context reads
+// GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
+function clearActionEnv() {
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith('INPUT_')) {
+    if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]
     }
   }
 }
 
 export function setupActionsEnv(command: string = '') {
-  clearInputEnv()
+  clearActionEnv()
 
   // set the neccessary env variables expected by the action:
   // https://help.github.com/en/github/automating-your-workflow-with-github-actions/workflow-syntax-for-github-actions#jobsjob_idstepswith
@@ -30,7 +33,7 @@ export function setupActionsEnv(command: string = '') {
 }
 
 export function setupJobsEnv(arg: string = '') {
-  clearInputEnv()
+  clearActionEnv()
 
   // set the neccessary env variables expected by the action:
   // https://help.github.com/en/github/automating-your-workflow-with-github-actions/workflow-syntax-for-github-actions#jobsjob_idstepswith
