@@ -1,9 +1,10 @@
 import { Buffer } from 'node:buffer'
 
+import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   assertAuthorizedByOwnersOrMembership,
@@ -54,15 +55,34 @@ describe('checkOrgMember', () => {
     await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(true)
   })
 
-  it.each([404, 500])('is false when the org membership check returns %i', async (status) => {
-    server.use(
-      http.get(
-        `${utils.api}/orgs/Codertocat/members/some-user`,
-        utils.mockResponse(status),
-      ),
-    )
+  it.each([404, 302])('does not warn when org membership check returns %i', async (status) => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({
+      status,
+      message: 'Not a member',
+    })
 
     await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(warningSpy).not.toHaveBeenCalled()
+  })
+
+  it('warns when org membership check returns an unexpected error', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({
+      status: 500,
+      message: 'Internal Server Error',
+    })
+
+    await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('status=500'),
+    )
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('message=Internal Server Error'),
+    )
   })
 
   it('is false when the payload has no repository', async () => {
@@ -84,15 +104,35 @@ describe('checkCollaborator', () => {
     await expect(checkCollaborator(octokit, context, 'some-user')).resolves.toBe(true)
   })
 
-  it.each([404, 500])('is false when the collaborator check returns %i', async (status) => {
+  it('does not warn when collaborator check returns 404', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
     server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
-        utils.mockResponse(status),
+        utils.mockResponse(404),
       ),
     )
 
     await expect(checkCollaborator(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(warningSpy).not.toHaveBeenCalled()
+  })
+
+  it('warns when collaborator check returns an unexpected error', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(500),
+      ),
+    )
+
+    await expect(checkCollaborator(octokit, context, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('status=500'),
+    )
   })
 })
 
@@ -119,7 +159,9 @@ describe('checkIssueComments', () => {
     await expect(checkIssueComments(octokit, context, 1, 'nobody')).resolves.toBe(false)
   })
 
-  it('is false when listing comments fails', async () => {
+  it('warns when listing comments fails', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
     server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
@@ -128,6 +170,10 @@ describe('checkIssueComments', () => {
     )
 
     await expect(checkIssueComments(octokit, context, 1, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining('status=500'),
+    )
   })
 })
 
