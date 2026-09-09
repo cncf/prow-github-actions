@@ -3,12 +3,13 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
-import { getCommandArgs } from '../utils/command'
+import { getCommandArgs, hasCommand } from '../utils/command'
 import { cancelLabel, labelIssue } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
 /**
- * /hold will add the hold label
+ * /hold will add the hold label.
+ * /hold cancel, /unhold and /remove-hold remove it.
  * Note - the hold label will block automatic merging if the lgtm
  * is also present
  *
@@ -27,10 +28,11 @@ export async function hold(context: Context = github.context): Promise<void> {
     )
   }
 
-  const commentArgs: string[] = getCommandArgs('/hold', commentBody)
+  const cancel = hasCommand('/unhold', commentBody)
+    || hasCommand('/remove-hold', commentBody)
+    || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody)[0] === 'cancel')
 
-  // check if canceling last review
-  if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+  if (cancel) {
     try {
       await cancelLabel(octokit, context, issueNumber, 'hold')
     }

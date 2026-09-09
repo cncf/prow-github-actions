@@ -1,11 +1,13 @@
 import * as core from '@actions/core'
 import { expect, it, vi } from 'vitest'
 
+import * as approve from '../../src/issueComment/approve'
 import * as assign from '../../src/issueComment/assign'
 import * as cc from '../../src/issueComment/cc'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import * as unassign from '../../src/issueComment/unassign'
 import * as hold from '../../src/labels/hold'
+import * as lgtm from '../../src/labels/lgtm'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
 import * as utils from '../testUtils'
@@ -154,4 +156,82 @@ it('fails for an unsupported command in prow-commands', async () => {
   expect(setFailed).toHaveBeenCalledWith(
     expect.stringContaining('could not execute /not-a-command'),
   )
+})
+
+it('dispatches /remove-lgtm once to lgtm when /lgtm is configured', async () => {
+  utils.setupActionsEnv('/lgtm')
+
+  vi.spyOn(lgtm, 'lgtm').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/remove-lgtm'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(lgtm.lgtm).toHaveBeenCalledTimes(1)
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it.each(['/unhold', '/remove-hold'])('dispatches %s once to hold when /hold is configured', async (body) => {
+  utils.setupActionsEnv('/hold')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = body
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).toHaveBeenCalledTimes(1)
+})
+
+it('dispatches /remove-approve once to approve when /approve is configured', async () => {
+  utils.setupActionsEnv('/approve')
+
+  vi.spyOn(approve, 'approve').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/remove-approve'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(approve.approve).toHaveBeenCalledTimes(1)
+})
+
+it('accepts an alias in prow-commands and resolves it to the base command', async () => {
+  utils.setupActionsEnv('/unhold')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/unhold'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).toHaveBeenCalledTimes(1)
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('runs a command once when both it and an alias are configured', async () => {
+  utils.setupActionsEnv('/hold /unhold /remove-hold')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/hold'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).toHaveBeenCalledTimes(1)
+})
+
+it('does not dispatch an alias whose base command is not configured', async () => {
+  utils.setupActionsEnv('/assign')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/unhold'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).not.toHaveBeenCalled()
+  expect(assign.assign).not.toHaveBeenCalled()
 })

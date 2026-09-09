@@ -1,9 +1,13 @@
 # Prow github actions commands
 
+A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command.
+
 Commands | Policy | Description
 --- | --- | ---
 `/approve` | [OWNERS](#owners) if present, otherwise Org members & Collaborators | approve all the files for the current PR
+`/approve no-issue` | [OWNERS](#owners) if present, otherwise Org members & Collaborators | same as `/approve`; accepted for Prow compatibility
 `/approve cancel` | [OWNERS](#owners) if present, otherwise Org member & Collaborators | removes your approval on this pull-request
+`/remove-approve` | [OWNERS](#owners) if present, otherwise Org member & Collaborators | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Target be an Org Member, Collaborator, or have previously commented.
@@ -21,8 +25,10 @@ Label Commands | Policy | Description
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md)
 `/lgtm cancel` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | removes the `lgtm` label
+`/remove-lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
+`/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
 `/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md). Replaces any existing `priority/*` labels.
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 

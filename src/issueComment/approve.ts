@@ -4,7 +4,7 @@ import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs } from '../utils/command'
+import { getCommandArgs, hasCommand } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { newOctokit } from '../utils/octokit'
 
@@ -15,8 +15,9 @@ type PullsListReviewsResponseType
  * the /approve command will create a "approve" review
  * from the github-actions bot
  *
- * If the argument 'cancel' is provided to the /approve command
- * the last review will be removed
+ * If the argument 'cancel' is provided to the /approve command,
+ * or /remove-approve is used, the last review will be removed.
+ * The Prow argument 'no-issue' is accepted and behaves like a plain /approve.
  *
  * @param context - the github actions event context
  */
@@ -60,10 +61,10 @@ export async function approve(
     throw e
   }
 
-  const commentArgs: string[] = getCommandArgs('/approve', commentBody)
+  const isCancel = hasCommand('/remove-approve', commentBody)
+    || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody)[0] === 'cancel')
 
-  // check if canceling last review
-  if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+  if (isCancel) {
     try {
       await cancel(octokit, context, issueNumber, commenterLogin)
     }

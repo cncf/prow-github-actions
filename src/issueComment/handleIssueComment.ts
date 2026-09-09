@@ -22,6 +22,26 @@ import { retitle } from './retitle'
 import { unassign } from './unassign'
 import { uncc } from './uncc'
 
+// Prow-style spellings that are handled by the canonical command's module
+const commandAliases: Record<string, string[]> = {
+  '/lgtm': ['/remove-lgtm'],
+  '/approve': ['/remove-approve'],
+  '/hold': ['/unhold', '/remove-hold'],
+}
+
+function canonicalCommand(name: string): string {
+  for (const [command, aliases] of Object.entries(commandAliases)) {
+    if (aliases.includes(name)) {
+      return command
+    }
+  }
+  return name
+}
+
+function commandForms(command: string): string[] {
+  return [command, ...(commandAliases[command] ?? [])]
+}
+
 /**
  * This Method handles any issue comments
  * Note that the github api considers PRs issues
@@ -30,10 +50,13 @@ import { uncc } from './uncc'
  * @param context - the github context of the current action event
  */
 export async function handleIssueComment(context: Context = github.context): Promise<void> {
-  const commandConfig = core
-    .getInput('prow-commands', { required: false })
-    .split(/\s+/)
-    .filter(command => command !== '')
+  const commandConfig = [...new Set(
+    core
+      .getInput('prow-commands', { required: false })
+      .split(/\s+/)
+      .filter(command => command !== '')
+      .map(canonicalCommand),
+  )]
   const commentBody: string = context.payload.comment?.body
 
   if (commandConfig.length === 0) {
@@ -45,7 +68,7 @@ export async function handleIssueComment(context: Context = github.context): Pro
 
   await Promise.all(
     commandConfig.map(async (command) => {
-      if (hasCommand(command, commentBody)) {
+      if (commandForms(command).some(form => hasCommand(form, commentBody))) {
         switch (command) {
           case '/assign':
             return await assign(context).catch(normalizeError)
