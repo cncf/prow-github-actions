@@ -388,6 +388,105 @@ reviewers:
     })
   })
 
+  it('approves with /approve no-issue if commenter is an approver in OWNERS', async () => {
+    const owners = Buffer.from(
+      `
+    approvers:
+    - Codertocat
+        `,
+    ).toString('base64')
+
+    const contentResponse = {
+      type: 'file',
+      encoding: 'base64',
+      size: 4096,
+      name: 'OWNERS',
+      path: 'OWNERS',
+      content: owners,
+    }
+    const observeMembers = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(200, contentResponse),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204, null, observeMembers),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/approve no-issue'
+    issueCommentEventAssign.comment.user.login = 'Codertocat'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({
+      event: 'APPROVE',
+    })
+    await expect(observeMembers.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails /remove-approve when the bot has no approved review', async () => {
+    const reviews = structuredClone(pullReqListReviews)
+    reviews[0].state = 'COMMENTED'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, reviews),
+      ),
+    )
+
+    const observeDismiss = new utils.ObserveRequest()
+    const observeCreate = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeDismiss),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeCreate),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/remove-approve'
+    issueCommentEventAssign.comment.user.login = 'some-user'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDismiss.notCalled()).resolves.toBe('not called')
+    await expect(observeCreate.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('no latest review found to cancel'),
+    )
+  })
+
   it.each([
     ['/approve\n/approve cancel'],
     ['/approve cancel\n/approve'],

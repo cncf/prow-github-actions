@@ -1,6 +1,6 @@
 # Prow github actions commands
 
-A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command.
+A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`. When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins; a `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
 
 Commands | Policy | Description
 --- | --- | ---

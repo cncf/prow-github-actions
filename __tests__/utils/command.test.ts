@@ -66,6 +66,21 @@ describe('hasCommand', () => {
     expect(hasCommand('/a.b', '/a.b')).toBe(true)
     expect(hasCommand('/a.b', '/axb')).toBe(false)
   })
+
+  it('does not match a command that is a prefix of another word', () => {
+    expect(hasCommand('/label', '/labels foo')).toBe(false)
+    expect(hasCommand('/label', '/label foo')).toBe(true)
+    expect(hasCommand('/kind', '/kind/foo')).toBe(false)
+    expect(hasCommand('/kind', '/kind foo')).toBe(true)
+  })
+
+  // #66 fenced code blocks are not stripped yet; flip this when that lands
+  it('currently matches a command inside a fenced code block', () => {
+    const body = 'try this:\n```\n/kind bug\n```\n'
+
+    expect(hasCommand('/kind', body)).toBe(true)
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+  })
 })
 
 describe('anchored argument parsing', () => {

@@ -383,4 +383,47 @@ describe('priority', () => {
     })
     expect(setFailed).not.toHaveBeenCalled()
   })
+
+  it('removes then re-adds when /priority high low and /remove-priority high share a comment', async () => {
+    issueCommentEvent.comment.body = '/priority high low\n/remove-priority high'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/high' })
+
+    const mutations: string[] = []
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        async ({ request }) => {
+          mutations.push(`DELETE ${new URL(request.url).pathname.split('/labels/')[1]}`)
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        async ({ request }) => {
+          const body = await request.json() as { labels: string[] }
+          mutations.push(`POST ${body.labels.join(',')}`)
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(mutations).toEqual([
+      'DELETE priority%2Fhigh',
+      'POST priority/high,priority/low',
+    ])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
 })
