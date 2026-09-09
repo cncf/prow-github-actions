@@ -2166,6 +2166,7 @@ exports.prefixedLabelCommands = [
     { command: '/area', prefix: 'area', allowlistKey: 'area' },
     { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
     { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
+    { command: '/label', prefix: '', allowlistKey: 'labels' },
 ];
 /**
  * removeCommandFor returns the Prow-style removal spelling of a label command
@@ -3136,12 +3137,16 @@ async function removeLabels(octokit, context, issueNum, labels) {
     }
 }
 /**
- * addPrefix will add the associated prefix to the arguments array
+ * addPrefix will add the associated prefix to the arguments array.
+ * An empty prefix returns the args unchanged rather than '/arg'
  *
  * @param prefix - the prefix to add to the args
  * @param args - the strings to add the prefix to
  */
 function addPrefix(prefix, args) {
+    if (prefix === '') {
+        return [...args];
+    }
     const toReturn = [];
     for (const arg of args) {
         toReturn.push(`${prefix}/${arg}`);

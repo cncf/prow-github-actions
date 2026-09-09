@@ -5,6 +5,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import { addPrefix } from '../../src/utils/labeling'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -75,5 +76,13 @@ describe('utils labeling', () => {
     await handleIssueComment(commentContext)
 
     expect(spy).toHaveBeenCalled()
+  })
+
+  it('addPrefix joins a prefix with a slash', () => {
+    expect(addPrefix('kind', ['bug', 'cleanup'])).toEqual(['kind/bug', 'kind/cleanup'])
+  })
+
+  it('addPrefix leaves args unchanged for an empty prefix', () => {
+    expect(addPrefix('', ['good-first-issue'])).toEqual(['good-first-issue'])
   })
 })

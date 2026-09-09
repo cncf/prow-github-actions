@@ -34,6 +34,8 @@ Label Commands | Policy | Description
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
 `/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md). Exclusive: replaces any existing `priority/*` labels.
 `/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
+`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md). Label names containing spaces are not supported
+`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
 The `/remove-<prefix>` commands are enabled together with their base command and only remove values listed in `.prowlabels.yaml`, so anyone may use them without being able to strip `lgtm`, `hold` or `approved`. Use `/remove` for arbitrary labels.

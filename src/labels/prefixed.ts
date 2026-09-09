@@ -21,6 +21,7 @@ export const prefixedLabelCommands: PrefixedLabelCommand[] = [
   { command: '/area', prefix: 'area', allowlistKey: 'area' },
   { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
   { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
+  { command: '/label', prefix: '', allowlistKey: 'labels' },
 ]
 
 /**

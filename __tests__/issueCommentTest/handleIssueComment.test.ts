@@ -237,7 +237,7 @@ it('does not dispatch an alias whose base command is not configured', async () =
   expect(assign.assign).not.toHaveBeenCalled()
 })
 
-it.each(['/area', '/kind', '/priority'])('dispatches /remove-%s to the remove path only when %s is configured', async (command) => {
+it.each(['/area', '/kind', '/priority', '/label'])('dispatches /remove-%s to the remove path only when %s is configured', async (command) => {
   utils.setupActionsEnv(command)
 
   const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())

@@ -39,11 +39,24 @@ the issue or PR will be labeled with `priority/low`.
 A later `/priority` command replaces any existing `priority/*` labels
 instead of stacking them.
 
+## Plain labels
+
+```yaml
+labels:
+  - good-first-issue
+  - help-wanted
+```
+
+With the command `/label good-first-issue`,
+the issue or PR will be labeled with `good-first-issue` as written, with no prefix.
+Values are split on spaces, so label names containing spaces cannot be listed here.
+
 ## Removing labels
 
 Every prefixed command has a `/remove-` form that takes the same values:
 `/remove-area bug` removes `area/bug`, `/remove-kind cleanup` removes
-`kind/cleanup` and `/remove-priority low` removes `priority/low`.
+`kind/cleanup`, `/remove-priority low` removes `priority/low` and
+`/remove-label help-wanted` removes `help-wanted`.
 Only values listed under the matching key in `.prowlabels.yaml` are
 removed, so these commands can be used by anyone without exposing
 labels such as `lgtm`, `hold` or `approved`. A value that is not on
