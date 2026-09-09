@@ -9,3 +9,7 @@ kind:
 priority:
   - low
   - high
+
+labels:
+  - documentation
+  - question

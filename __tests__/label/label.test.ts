@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
@@ -27,13 +28,13 @@ function issueWithLabels(...names: string[]) {
   return payload
 }
 
-describe('kind', () => {
+describe('label', () => {
   beforeEach(() => {
-    utils.setupActionsEnv('/kind')
+    utils.setupActionsEnv('/label')
   })
 
-  it('labels the issue with the kind label', async () => {
-    issueCommentEvent.comment.body = '/kind cleanup'
+  it('labels the issue with an allowlisted label as-is', async () => {
+    issueCommentEvent.comment.body = '/label good-first-issue'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeReq = new utils.ObserveRequest()
@@ -42,9 +43,6 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
-    )
-
-    server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -54,12 +52,12 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
-      labels: ['kind/cleanup'],
+      labels: ['good-first-issue'],
     })
   })
 
-  it('handles multiple kind labels', async () => {
-    issueCommentEvent.comment.body = '/kind cleanup failing-test'
+  it('handles multiple labels and drops values not in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/label good-first-issue lgtm help-wanted'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeReq = new utils.ObserveRequest()
@@ -68,9 +66,6 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
-    )
-
-    server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -80,38 +75,12 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
-      labels: ['kind/cleanup', 'kind/failing-test'],
+      labels: ['good-first-issue', 'help-wanted'],
     })
   })
 
-  it('only adds kind labels for files in .prowlabels.yaml', async () => {
-    issueCommentEvent.comment.body = '/kind cleanup bad failing-test'
-    const commentContext = new utils.MockContext(issueCommentEvent)
-
-    const observeReq = new utils.ObserveRequest()
-    server.use(
-      http.post(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
-        utils.mockResponse(200, null, observeReq),
-      ),
-    )
-
-    server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
-        utils.mockResponse(200, labelFileContents),
-      ),
-    )
-
-    await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      labels: ['kind/cleanup', 'kind/failing-test'],
-    })
-  })
-
-  it('fails when no kind argument is in .prowlabels.yaml', async () => {
-    issueCommentEvent.comment.body = '/kind not-a-real-label'
+  it('fails when no label argument is in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/label lgtm'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeReq = new utils.ObserveRequest()
@@ -130,19 +99,46 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('kind: command args missing from body'),
+      expect.stringContaining('label: command args missing from body'),
     )
   })
 
-  it('removes a kind label with /remove-kind', async () => {
-    issueCommentEvent.comment.body = '/remove-kind cleanup'
+  it('fails when .prowlabels.yaml has no labels key', async () => {
+    issueCommentEvent.comment.body = '/label good-first-issue'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const withoutLabels = structuredClone(labelFileContents)
+    withoutLabels.content = Buffer.from('kind:\n  - cleanup\n').toString('base64')
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, withoutLabels),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining(`labels: yaml malformed, expected 'labels' top level key`),
+    )
+  })
+
+  it('removes an allowlisted label with /remove-label', async () => {
+    issueCommentEvent.comment.body = '/remove-label help-wanted'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeDelete = new utils.ObserveRequest()
     const observePost = new utils.ObserveRequest()
     server.use(
       http.delete(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/kind%2Fcleanup`,
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/help-wanted`,
         utils.mockResponse(200, null, observeDelete),
       ),
       http.post(
@@ -151,7 +147,7 @@ describe('kind', () => {
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issueWithLabels('kind/cleanup')),
+        utils.mockResponse(200, issueWithLabels('help-wanted')),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
@@ -166,19 +162,19 @@ describe('kind', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('fails /remove-kind for a value not in .prowlabels.yaml', async () => {
-    issueCommentEvent.comment.body = '/remove-kind not-a-real-label'
+  it('refuses /remove-label for a label not in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/remove-label lgtm'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeDelete = new utils.ObserveRequest()
     server.use(
       http.delete(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/kind%2Fnot-a-real-label`,
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
         utils.mockResponse(200, null, observeDelete),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issueWithLabels('kind/not-a-real-label')),
+        utils.mockResponse(200, issueWithLabels('lgtm')),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
@@ -190,18 +186,18 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('remove-kind: command args missing from body'),
+      expect.stringContaining('remove-label: command args missing from body'),
     )
   })
 
-  it('does not call the api when the kind label is not on the issue', async () => {
-    issueCommentEvent.comment.body = '/remove-kind cleanup'
+  it('does not call the api when the label is not on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove-label help-wanted'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeDelete = new utils.ObserveRequest()
     server.use(
       http.delete(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/kind%2Fcleanup`,
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/help-wanted`,
         utils.mockResponse(200, null, observeDelete),
       ),
       http.get(
@@ -220,41 +216,15 @@ describe('kind', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('fails the action when the /remove-kind request fails', async () => {
-    issueCommentEvent.comment.body = '/remove-kind cleanup'
-    const commentContext = new utils.MockContext(issueCommentEvent)
-
-    server.use(
-      http.delete(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/kind%2Fcleanup`,
-        utils.mockResponse(500),
-      ),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issueWithLabels('kind/cleanup')),
-      ),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
-        utils.mockResponse(200, labelFileContents),
-      ),
-    )
-
-    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
-    await handleIssueComment(commentContext)
-    expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('could not remove label kind/cleanup'),
-    )
-  })
-
-  it('handles /kind and /remove-kind in the same comment', async () => {
-    issueCommentEvent.comment.body = '/kind failing-test\n/remove-kind cleanup'
+  it('handles /label and /remove-label in the same comment', async () => {
+    issueCommentEvent.comment.body = '/label good-first-issue\n/remove-label help-wanted'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const observeDelete = new utils.ObserveRequest()
     const observePost = new utils.ObserveRequest()
     server.use(
       http.delete(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/kind%2Fcleanup`,
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/help-wanted`,
         utils.mockResponse(200, null, observeDelete),
       ),
       http.post(
@@ -263,7 +233,7 @@ describe('kind', () => {
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issueWithLabels('kind/cleanup')),
+        utils.mockResponse(200, issueWithLabels('help-wanted')),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
@@ -276,7 +246,7 @@ describe('kind', () => {
     await expect(observeDelete.called()).resolves.toBe('called')
     await observePost.called()
     expect(await observePost.body()).toMatchObject({
-      labels: ['kind/failing-test'],
+      labels: ['good-first-issue'],
     })
     expect(setFailed).not.toHaveBeenCalled()
   })

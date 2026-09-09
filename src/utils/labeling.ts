@@ -153,12 +153,17 @@ export async function removeLabels(
 }
 
 /**
- * addPrefix will add the associated prefix to the arguments array
+ * addPrefix will add the associated prefix to the arguments array.
+ * An empty prefix returns the args unchanged rather than '/arg'
  *
  * @param prefix - the prefix to add to the args
  * @param args - the strings to add the prefix to
  */
 export function addPrefix(prefix: string, args: string[]): string[] {
+  if (prefix === '') {
+    return [...args]
+  }
+
   const toReturn: string[] = []
 
   for (const arg of args) {

@@ -253,4 +253,134 @@ describe('priority', () => {
       expect.stringContaining('priority: command args missing from body'),
     )
   })
+
+  it('removes a priority label with /remove-priority', async () => {
+    issueCommentEvent.comment.body = '/remove-priority low'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/low' })
+
+    const observeDelete = new utils.ObserveRequest()
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observePost),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.called()).resolves.toBe('called')
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails /remove-priority for a value not in .prowlabels.yaml', async () => {
+    issueCommentEvent.comment.body = '/remove-priority mid'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/mid' })
+
+    const observeDelete = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Fmid`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('remove-priority: command args missing from body'),
+    )
+  })
+
+  it('does not call the api when the priority label is not on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove-priority low'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeDelete = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('handles /priority and /remove-priority in the same comment', async () => {
+    issueCommentEvent.comment.body = '/priority high\n/remove-priority low'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/low' })
+
+    const observeDelete = new utils.ObserveRequest()
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observePost),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.called()).resolves.toBe('called')
+    await observePost.called()
+    expect(await observePost.body()).toMatchObject({
+      labels: ['priority/high'],
+    })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
 })

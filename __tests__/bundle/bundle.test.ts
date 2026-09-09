@@ -76,6 +76,50 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /remove-kind removes a prefixed label when /kind is configured', async () => {
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'kind/cleanup' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/kind%2Fcleanup`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/remove-kind cleanup'),
+      inputs: { ...token, 'prow-commands': '/kind' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requestsMatching('POST', /./)).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/contents/.prowlabels.yaml`,
+      `GET ${repo}/issues/1`,
+      `DELETE ${repo}/issues/1/labels/kind%2Fcleanup`,
+    ])
+  })
+
+  it('issue_comment /label adds an allowlisted label verbatim', async () => {
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/label good-first-issue'),
+      inputs: { ...token, 'prow-commands': '/label' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ labels: ['good-first-issue'] })
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/contents/.prowlabels.yaml`,
+      `POST ${repo}/issues/1/labels`,
+    ])
+  })
+
   it('issue_comment /assign self-assigns an org member', async () => {
     gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })

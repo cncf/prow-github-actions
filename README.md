@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v2
         with:
-          prow-commands: /assign /unassign /approve /retitle /area /kind /priority /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc
+          prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 

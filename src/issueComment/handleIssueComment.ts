@@ -1,13 +1,12 @@
 import type { Context } from '@actions/github/lib/context'
+import type { PrefixedLabelCommand } from '../labels/prefixed'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
-import { area } from '../labels/area'
 import { hold } from '../labels/hold'
-import { kind } from '../labels/kind'
 import { lgtm } from '../labels/lgtm'
-import { priority } from '../labels/priority'
+import { addPrefixedLabels, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
 import { remove } from '../labels/remove'
 import { hasCommand } from '../utils/command'
 import { approve } from './approve'
@@ -27,6 +26,9 @@ const commandAliases: Record<string, string[]> = {
   '/lgtm': ['/remove-lgtm'],
   '/approve': ['/remove-approve'],
   '/hold': ['/unhold', '/remove-hold'],
+  ...Object.fromEntries(
+    prefixedLabelCommands.map(cmd => [cmd.command, [removeCommandFor(cmd.command)]]),
+  ),
 }
 
 function canonicalCommand(name: string): string {
@@ -69,6 +71,11 @@ export async function handleIssueComment(context: Context = github.context): Pro
   await Promise.all(
     commandConfig.map(async (command) => {
       if (commandForms(command).some(form => hasCommand(form, commentBody))) {
+        const prefixed = prefixedLabelCommands.find(cmd => cmd.command === command)
+        if (prefixed) {
+          return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError)
+        }
+
         switch (command) {
           case '/assign':
             return await assign(context).catch(normalizeError)
@@ -91,17 +98,8 @@ export async function handleIssueComment(context: Context = github.context): Pro
           case '/remove':
             return await remove(context).catch(normalizeError)
 
-          case '/area':
-            return await area(context).catch(normalizeError)
-
-          case '/kind':
-            return await kind(context).catch(normalizeError)
-
           case '/hold':
             return await hold(context).catch(normalizeError)
-
-          case '/priority':
-            return await priority(context).catch(normalizeError)
 
           case '/lgtm':
             return await lgtm(context).catch(normalizeError)
@@ -139,6 +137,16 @@ export async function handleIssueComment(context: Context = github.context): Pro
     .catch((e) => {
       core.setFailed(`${e}`)
     })
+}
+
+// a body may carry both '/kind bug' and '/remove-kind cleanup'; removals go first
+async function prefixedLabels(context: Context, cmd: PrefixedLabelCommand, body: string): Promise<void> {
+  if (hasCommand(removeCommandFor(cmd.command), body)) {
+    await removePrefixedLabels(context, cmd)
+  }
+  if (hasCommand(cmd.command, body)) {
+    await addPrefixedLabels(context, cmd)
+  }
 }
 
 // normalizeError coerces a non-Error rejection so it still fails the Action
