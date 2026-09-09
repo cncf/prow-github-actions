@@ -66,6 +66,21 @@ describe('hasCommand', () => {
     expect(hasCommand('/a.b', '/a.b')).toBe(true)
     expect(hasCommand('/a.b', '/axb')).toBe(false)
   })
+
+  it('does not match a command that is a prefix of another word', () => {
+    expect(hasCommand('/label', '/labels foo')).toBe(false)
+    expect(hasCommand('/label', '/label foo')).toBe(true)
+    expect(hasCommand('/kind', '/kind/foo')).toBe(false)
+    expect(hasCommand('/kind', '/kind foo')).toBe(true)
+  })
+
+  // #66 fenced code blocks are not stripped yet; flip this when that lands
+  it('currently matches a command inside a fenced code block', () => {
+    const body = 'try this:\n```\n/kind bug\n```\n'
+
+    expect(hasCommand('/kind', body)).toBe(true)
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+  })
 })
 
 describe('anchored argument parsing', () => {
@@ -86,14 +101,87 @@ describe('anchored argument parsing', () => {
     expect(getLineArgs('/milestone', '  /milestone v1.2')).toBe('v1.2')
   })
 
-  it('uses the last matching line', () => {
+  it('collects arguments from every matching line', () => {
     const body = '/lgtm cancel\nchanged my mind\n/lgtm'
 
-    expect(getCommandArgs('/lgtm', body)).toMatchObject([])
+    expect(getCommandArgs('/lgtm', body)).toEqual(['cancel'])
   })
 
   it('returns no arguments for a bare command', () => {
     expect(getCommandArgs('/lgtm', '/lgtm')).toMatchObject([])
+  })
+})
+
+describe('repeated command lines', () => {
+  it('concatenates arguments in order of appearance', () => {
+    const body = '/kind bug\nsome context\n/kind cleanup'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug', 'cleanup'])
+  })
+
+  it('de-duplicates repeated arguments', () => {
+    const body = '/assign @a @b\n/assign b @c\n/assign a'
+
+    expect(getCommandArgs('/assign', body)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('does not collect arguments from a longer command sharing the prefix', () => {
+    const body = '/kind bug\n/remove-kind cleanup'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+    expect(getCommandArgs('/remove-kind', body)).toEqual(['cleanup'])
+  })
+
+  it('keeps getLineArgs single valued with the last line winning', () => {
+    const body = '/milestone v1.0\n/milestone v2.0'
+
+    expect(getLineArgs('/milestone', body)).toBe('v2.0')
+  })
+})
+
+// the matcher accepts any whitespace after the command, so the tokenizer must too
+describe('whitespace between command and arguments', () => {
+  it('splits arguments on a tab', () => {
+    expect(hasCommand('/kind', '/kind\tbug')).toBe(true)
+    expect(getCommandArgs('/kind', '/kind\tbug')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind\tbug\tcleanup')).toEqual(['bug', 'cleanup'])
+  })
+
+  it('does not leak an empty argument for multiple spaces', () => {
+    expect(getCommandArgs('/kind', '/kind  bug')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind   bug    cleanup')).toEqual(['bug', 'cleanup'])
+  })
+
+  it('tolerates a non-breaking space before the command', () => {
+    expect(hasCommand('/kind', '\u00A0/kind bug')).toBe(true)
+    expect(getCommandArgs('/kind', '\u00A0/kind bug')).toEqual(['bug'])
+  })
+
+  it('splits arguments on a non-breaking space', () => {
+    expect(hasCommand('/kind', '/kind\u00A0bug')).toBe(true)
+    expect(getCommandArgs('/kind', '/kind\u00A0bug')).toEqual(['bug'])
+  })
+
+  it('ignores trailing whitespace on the line', () => {
+    expect(getCommandArgs('/kind', '/kind bug   ')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind bug\t')).toEqual(['bug'])
+    expect(getCommandArgs('/lgtm', '/lgtm   ')).toEqual([])
+  })
+
+  it('handles CRLF endings with tabs and extra spaces', () => {
+    const body = '/kind\tbug\r\n/area  important \r\n'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+    expect(getCommandArgs('/area', body)).toEqual(['important'])
+  })
+
+  it('still strips a leading @ from tab separated arguments', () => {
+    expect(getCommandArgs('/assign', '/assign\t@some-user  @other-user')).toEqual(['some-user', 'other-user'])
+  })
+
+  it('applies the same tokenization to getLineArgs', () => {
+    expect(getLineArgs('/milestone', '/milestone\tv1.2')).toBe('v1.2')
+    expect(getLineArgs('/milestone', '\u00A0/milestone v1.2  ')).toBe('v1.2')
   })
 })
 

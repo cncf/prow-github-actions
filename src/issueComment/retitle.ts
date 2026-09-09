@@ -3,7 +3,7 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 
 import { checkCollaborator } from '../utils/auth'
-import { getCommandArgs } from '../utils/command'
+import { getLineArgs } from '../utils/command'
 import { newOctokit } from '../utils/octokit'
 
 /**
@@ -28,10 +28,10 @@ export async function retitle(
     )
   }
 
-  const commentArgs: string[] = getCommandArgs('/retitle', commentBody)
+  const title: string = getLineArgs('/retitle', commentBody)
 
   // no arguments after command provided. Can't retitle!
-  if (commentArgs.length === 0) {
+  if (title === '') {
     return
   }
 
@@ -50,7 +50,7 @@ export async function retitle(
       await octokit.issues.update({
         ...context.repo,
         issue_number: issueNumber,
-        title: commentArgs.join(' '),
+        title,
       })
     }
     catch (e) {

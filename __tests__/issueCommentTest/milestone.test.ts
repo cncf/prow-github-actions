@@ -166,6 +166,43 @@ describe('/milestone', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('still sends the clear when the issue has no milestone', async () => {
+    const payload = structuredClone(issueCommentEvent) as typeof issueCommentEvent & { issue: { milestone: unknown } }
+    payload.comment.body = '/milestone clear'
+    payload.issue.milestone = null
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    const observeList = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/milestones`,
+        utils.mockResponse(200, repoMilestones, observeList),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(payload)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      milestone: null,
+    })
+    await expect(observeList.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('does not clear the milestone when commenter is not a collaborator', async () => {
     issueCommentEvent.comment.body = '/milestone clear'
 

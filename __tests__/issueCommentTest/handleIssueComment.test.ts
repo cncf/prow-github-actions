@@ -223,6 +223,41 @@ it('runs a command once when both it and an alias are configured', async () => {
   expect(hold.hold).toHaveBeenCalledTimes(1)
 })
 
+it('listing only /remove-kind also enables /kind', async () => {
+  utils.setupActionsEnv('/remove-kind')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/kind cleanup'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).toHaveBeenCalledTimes(1)
+  expect(add.mock.calls[0][1]).toMatchObject({ command: '/kind' })
+  expect(remove).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['/remove-lgtm', '/lgtm', lgtm, 'lgtm'],
+  ['/unhold', '/hold', hold, 'hold'],
+  ['/remove-approve', '/approve', approve, 'approve'],
+] as const)('listing only %s also enables %s', async (alias, base, mod, fn) => {
+  utils.setupActionsEnv(alias)
+
+  const spy = vi.spyOn(mod, fn).mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = base
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
 it('does not dispatch an alias whose base command is not configured', async () => {
   utils.setupActionsEnv('/assign')
 
@@ -284,4 +319,20 @@ it('does not dispatch /remove-kind when /kind is not configured', async () => {
   await handleIssueComment(context)
   expect(add).not.toHaveBeenCalled()
   expect(remove).not.toHaveBeenCalled()
+})
+
+it.each(['/area', '/kind', '/priority', '/label'])('ignores a lone /remove-%s alias when %s is not configured', async (command) => {
+  utils.setupActionsEnv(command === '/kind' ? '/area' : '/kind')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = `${prefixed.removeCommandFor(command)} x`
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).not.toHaveBeenCalled()
+  expect(remove).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
 })

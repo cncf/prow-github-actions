@@ -184,6 +184,28 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /milestone clear unsets the milestone for a collaborator', async () => {
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+    gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/milestone clear'),
+      inputs: { ...token, 'prow-commands': '/milestone' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const patches = gh.requestsMatching('PATCH', /\/issues\/1$/)
+    expect(patches).toHaveLength(1)
+    expect(patches[0].body).toEqual({ milestone: null })
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/collaborators/Codertocat`,
+      `PATCH ${repo}/issues/1`,
+    ])
+  })
+
   it('issue_comment /unhold removes the hold label when /hold is configured', async () => {
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/hold`, { status: 200, body: [] })

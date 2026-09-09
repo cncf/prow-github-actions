@@ -7,51 +7,50 @@
  * @param body - the full body of the comment
  */
 export function hasCommand(command: string, body: string): boolean {
-  return findCommandLine(command, body) !== undefined
+  return findCommandArgs(command, body).length > 0
 }
 
 /**
- * getLineArgs will return the trimmed text following the command on its line
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
  * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 export function getLineArgs(command: string, body: string): string {
-  const line = findCommandLine(command, body)
-  if (line === undefined) {
-    return ''
-  }
-
-  return line.trim().slice(command.length).trim()
+  return findCommandArgs(command, body).at(-1) ?? ''
 }
 
 /**
- * getCommandArgs will return an array of the arguments associated with a command
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
  * Ex return: [`some-user', 'some-other-user']
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 export function getCommandArgs(command: string, body: string): string[] {
-  const line = findCommandLine(command, body)
+  const rests = findCommandArgs(command, body)
 
-  if (line === undefined) {
+  if (rests.length === 0) {
     throw new Error(`command ${command} missing from body`)
   }
 
-  const args = line.trim().split(' ').slice(1)
+  const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean))
 
-  return stripAtSign(args)
+  return [...new Set(stripAtSign(args))]
 }
 
-function findCommandLine(command: string, body: string): string | undefined {
+function findCommandArgs(command: string, body: string): string[] {
   const pattern = commandPattern(command)
-  let found: string | undefined
+  const found: string[] = []
 
   for (const line of splitLines(body)) {
-    if (pattern.test(line)) {
-      found = line
+    const match = pattern.exec(line)
+    if (match) {
+      found.push((match[1] ?? '').trim())
     }
   }
 
@@ -61,7 +60,8 @@ function findCommandLine(command: string, body: string): string | undefined {
 function commandPattern(command: string): RegExp {
   // escape regex metacharacters so a command is matched literally
   const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`^\\s*${escaped}(\\s|$)`)
+  // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+  return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`)
 }
 
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings

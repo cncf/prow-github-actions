@@ -170,6 +170,51 @@ describe('/assign', () => {
     })
   })
 
+  it('assigns users from every /assign line in the comment', async () => {
+    issueCommentEventAssign.comment.body = '/assign @some-user\nplease also take a look\n/assign @other-user'
+
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/other-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/other-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/assignees`,
+        utils.mockResponse(201, issueAssignedResp, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      assignees: ['some-user', 'other-user'],
+    })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('assigns user if they are an org member', async () => {
     issueCommentEventAssign.comment.body = '/assign @some-user'
 

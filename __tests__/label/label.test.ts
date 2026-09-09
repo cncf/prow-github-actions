@@ -216,6 +216,69 @@ describe('label', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('adds an allowlisted label containing a slash verbatim', async () => {
+    issueCommentEvent.comment.body = '/label tide/merge-method-squash'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const withSlash = structuredClone(labelFileContents)
+    withSlash.content = Buffer.from('labels:\n  - tide/merge-method-squash\n').toString('base64')
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, withSlash),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      labels: ['tide/merge-method-squash'],
+    })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('removes an allowlisted label containing a slash with /remove-label', async () => {
+    issueCommentEvent.comment.body = '/remove-label tide/merge-method-squash'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const withSlash = structuredClone(labelFileContents)
+    withSlash.content = Buffer.from('labels:\n  - tide/merge-method-squash\n').toString('base64')
+
+    const observeDelete = new utils.ObserveRequest()
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/tide%2Fmerge-method-squash`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observePost),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issueWithLabels('tide/merge-method-squash')),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, withSlash),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.called()).resolves.toBe('called')
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('handles /label and /remove-label in the same comment', async () => {
     issueCommentEvent.comment.body = '/label good-first-issue\n/remove-label help-wanted'
     const commentContext = new utils.MockContext(issueCommentEvent)

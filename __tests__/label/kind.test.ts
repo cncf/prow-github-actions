@@ -84,6 +84,31 @@ describe('kind', () => {
     })
   })
 
+  it('applies every /kind line in the comment', async () => {
+    issueCommentEvent.comment.body = '/kind cleanup\nsome context\n/kind failing-test'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      labels: ['kind/cleanup', 'kind/failing-test'],
+    })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('only adds kind labels for files in .prowlabels.yaml', async () => {
     issueCommentEvent.comment.body = '/kind cleanup bad failing-test'
     const commentContext = new utils.MockContext(issueCommentEvent)
@@ -278,6 +303,79 @@ describe('kind', () => {
     expect(await observePost.body()).toMatchObject({
       labels: ['kind/failing-test'],
     })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('still posts /kind when the label is already on the issue and never deletes', async () => {
+    issueCommentEvent.comment.body = '/kind cleanup'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const mutations: string[] = []
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        async ({ request }) => {
+          mutations.push(`DELETE ${new URL(request.url).pathname.split('/labels/')[1]}`)
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        async ({ request }) => {
+          const body = await request.json() as { labels: string[] }
+          mutations.push(`POST ${body.labels.join(',')}`)
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issueWithLabels('kind/cleanup')),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(mutations).toEqual(['POST kind/cleanup'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('deletes exactly the requested kind label when several are on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove-kind cleanup'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const mutations: string[] = []
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        async ({ request }) => {
+          mutations.push(`DELETE ${new URL(request.url).pathname.split('/labels/')[1]}`)
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        async () => {
+          mutations.push('POST')
+          return new Response(null, { status: 200 })
+        },
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issueWithLabels('kind/cleanup', 'kind/failing-test')),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(mutations).toEqual(['DELETE kind%2Fcleanup'])
     expect(setFailed).not.toHaveBeenCalled()
   })
 })

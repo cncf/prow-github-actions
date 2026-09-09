@@ -50,6 +50,33 @@ describe('/retitle', () => {
     })
   })
 
+  it('keeps repeated words and uses the last /retitle line', async () => {
+    issueCommentEvent.comment.body = '/retitle first attempt\n/retitle fix the bug in the parser'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      title: 'fix the bug in the parser',
+    })
+  })
+
   it('does not retitle when commenter is not a collaborator', async () => {
     issueCommentEvent.comment.body = '/retitle much better title'
 
