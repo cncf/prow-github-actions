@@ -60,7 +60,7 @@ export async function remove(context: Context = github.context): Promise<void> {
 
   // no arguments after command provided
   if (toRemove.length === 0) {
-    throw new Error(`area: command args missing from body`)
+    throw new Error(`remove: command args missing from body`)
   }
 
   await removeLabels(octokit, context, issueNumber, toRemove)

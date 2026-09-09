@@ -1005,11 +1005,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handleIssueComment = handleIssueComment;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
-const area_1 = __nccwpck_require__(2377);
 const hold_1 = __nccwpck_require__(6933);
-const kind_1 = __nccwpck_require__(8794);
 const lgtm_1 = __nccwpck_require__(8858);
-const priority_1 = __nccwpck_require__(5656);
+const prefixed_1 = __nccwpck_require__(3433);
 const remove_1 = __nccwpck_require__(8540);
 const command_1 = __nccwpck_require__(7971);
 const approve_1 = __nccwpck_require__(7912);
@@ -1060,6 +1058,10 @@ async function handleIssueComment(context = github.context) {
     }
     await Promise.all(commandConfig.map(async (command) => {
         if (commandForms(command).some(form => (0, command_1.hasCommand)(form, commentBody))) {
+            const prefixed = prefixed_1.prefixedLabelCommands.find(cmd => cmd.command === command);
+            if (prefixed) {
+                return await (0, prefixed_1.addPrefixedLabels)(context, prefixed).catch(normalizeError);
+            }
             switch (command) {
                 case '/assign':
                     return await (0, assign_1.assign)(context).catch(normalizeError);
@@ -1075,14 +1077,8 @@ async function handleIssueComment(context = github.context) {
                     return await (0, retitle_1.retitle)(context).catch(normalizeError);
                 case '/remove':
                     return await (0, remove_1.remove)(context).catch(normalizeError);
-                case '/area':
-                    return await (0, area_1.area)(context).catch(normalizeError);
-                case '/kind':
-                    return await (0, kind_1.kind)(context).catch(normalizeError);
                 case '/hold':
                     return await (0, hold_1.hold)(context).catch(normalizeError);
-                case '/priority':
-                    return await (0, priority_1.priority)(context).catch(normalizeError);
                 case '/lgtm':
                     return await (0, lgtm_1.lgtm)(context).catch(normalizeError);
                 case '/close':
@@ -1933,87 +1929,6 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 /***/ }),
 
-/***/ 2377:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.area = area;
-const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
-const command_1 = __nccwpck_require__(7971);
-const labeling_1 = __nccwpck_require__(7138);
-const octokit_1 = __nccwpck_require__(7995);
-/**
- * /area will add an area/some-area label
- *
- * @param context - the github actions event context
- */
-async function area(context = github.context) {
-    const token = core.getInput('github-token', { required: true });
-    const octokit = (0, octokit_1.newOctokit)(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    let commentArgs = (0, command_1.getCommandArgs)('/area', commentBody);
-    let areaLabels = [];
-    try {
-        areaLabels = await (0, labeling_1.getArgumentLabels)(octokit, context, 'area');
-        core.debug(`area: found labels ${areaLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from yaml: ${e}`);
-    }
-    commentArgs = commentArgs.filter((e) => {
-        return areaLabels.includes(e);
-    });
-    commentArgs = (0, labeling_1.addPrefix)('area', commentArgs);
-    // no arguments after command provided
-    if (commentArgs.length === 0) {
-        throw new Error(`area: command args missing from body`);
-    }
-    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
-}
-
-
-/***/ }),
-
 /***/ 6933:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -2088,87 +2003,6 @@ async function hold(context = github.context) {
         return;
     }
     await (0, labeling_1.labelIssue)(octokit, context, issueNumber, ['hold']);
-}
-
-
-/***/ }),
-
-/***/ 8794:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.kind = kind;
-const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
-const command_1 = __nccwpck_require__(7971);
-const labeling_1 = __nccwpck_require__(7138);
-const octokit_1 = __nccwpck_require__(7995);
-/**
- * /kind will add a kind/some-kind label
- *
- * @param context - the github actions event context
- */
-async function kind(context = github.context) {
-    const token = core.getInput('github-token', { required: true });
-    const octokit = (0, octokit_1.newOctokit)(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    let commentArgs = (0, command_1.getCommandArgs)('/kind', commentBody);
-    let kindLabels = [];
-    try {
-        kindLabels = await (0, labeling_1.getArgumentLabels)(octokit, context, 'kind');
-        core.debug(`kind: found labels ${kindLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from yaml: ${e}`);
-    }
-    commentArgs = commentArgs.filter((e) => {
-        return kindLabels.includes(e);
-    });
-    commentArgs = (0, labeling_1.addPrefix)('kind', commentArgs);
-    // no arguments after command provided
-    if (commentArgs.length === 0) {
-        throw new Error(`kind: command args missing from body`);
-    }
-    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
 
 
@@ -2271,7 +2105,7 @@ async function lgtm(context = github.context) {
 
 /***/ }),
 
-/***/ 5656:
+/***/ 3433:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -2310,58 +2144,87 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.priority = priority;
+exports.prefixedLabelCommands = void 0;
+exports.removeCommandFor = removeCommandFor;
+exports.addPrefixedLabels = addPrefixedLabels;
 const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
 const octokit_1 = __nccwpck_require__(7995);
+exports.prefixedLabelCommands = [
+    { command: '/area', prefix: 'area', allowlistKey: 'area' },
+    { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
+    { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
+];
 /**
- * /priority will add a priority/some-priority label, replacing any existing
- * priority/* labels so an issue keeps only the newly requested set.
+ * removeCommandFor returns the Prow-style removal spelling of a label command
+ * Ex: '/kind' -> '/remove-kind'
+ *
+ * @param command - the add form of the command
+ */
+function removeCommandFor(command) {
+    return `/remove-${command.slice(1)}`;
+}
+/**
+ * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
+ * that is both in the comment and in the .prowlabels.yaml allowlist.
+ * When the command is exclusive, existing '<prefix>/*' labels that were not
+ * requested are removed first.
  *
  * @param context - the github actions event context
+ * @param cmd - the command definition
  */
-async function priority(context = github.context) {
+async function addPrefixedLabels(context, cmd) {
     const token = core.getInput('github-token', { required: true });
     const octokit = (0, octokit_1.newOctokit)(token);
-    const issueNumber = context.payload.issue?.number;
+    const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
+    const labels = await requestedLabels(octokit, context, cmd, cmd.command, commentBody);
+    if (cmd.exclusive) {
+        const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
+        const stale = currentLabels.filter((label) => {
+            return label.startsWith(`${cmd.prefix}/`) && !labels.includes(label);
+        });
+        if (stale.length > 0) {
+            await (0, labeling_1.removeLabels)(octokit, context, issueNumber, stale);
+        }
+    }
+    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, labels);
+}
+function requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
-    let commentArgs = (0, command_1.getCommandArgs)('/priority', commentBody);
-    let priorityLabels = [];
+    return issueNumber;
+}
+async function requestedLabels(octokit, context, cmd, command, commentBody) {
+    const name = command.slice(1);
+    const args = (0, command_1.getCommandArgs)(command, commentBody);
+    let allowed = [];
     try {
-        priorityLabels = await (0, labeling_1.getArgumentLabels)(octokit, context, 'priority');
-        core.debug(`priority: found labels ${priorityLabels}`);
+        allowed = await (0, labeling_1.getArgumentLabels)(octokit, context, cmd.allowlistKey);
+        core.debug(`${name}: found labels ${allowed}`);
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
     }
-    commentArgs = commentArgs.filter((e) => {
-        return priorityLabels.includes(e);
-    });
-    commentArgs = (0, labeling_1.addPrefix)('priority', commentArgs);
+    const labels = (0, labeling_1.addPrefix)(cmd.prefix, args.filter(arg => allowed.includes(arg)));
     // no arguments after command provided
-    if (commentArgs.length === 0) {
-        throw new Error(`priority: command args missing from body`);
+    if (labels.length === 0) {
+        throw new Error(`${name}: command args missing from body`);
     }
-    let currentLabels = [];
+    return labels;
+}
+async function currentIssueLabels(octokit, context, issueNumber, command) {
     try {
-        currentLabels = await (0, labeling_1.getCurrentLabels)(octokit, context, issueNumber);
-        core.debug(`priority: found labels for issue ${currentLabels}`);
+        const currentLabels = await (0, labeling_1.getCurrentLabels)(octokit, context, issueNumber);
+        core.debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
+        return currentLabels;
     }
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
     }
-    const stalePriorityLabels = currentLabels.filter((label) => {
-        return label.startsWith('priority/') && !commentArgs.includes(label);
-    });
-    if (stalePriorityLabels.length > 0) {
-        await (0, labeling_1.removeLabels)(octokit, context, issueNumber, stalePriorityLabels);
-    }
-    await (0, labeling_1.labelIssue)(octokit, context, issueNumber, commentArgs);
 }
 
 
@@ -2453,7 +2316,7 @@ async function remove(context = github.context) {
     });
     // no arguments after command provided
     if (toRemove.length === 0) {
-        throw new Error(`area: command args missing from body`);
+        throw new Error(`remove: command args missing from body`);
     }
     await (0, labeling_1.removeLabels)(octokit, context, issueNumber, toRemove);
 }
