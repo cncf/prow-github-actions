@@ -15,7 +15,8 @@ Commands | Policy | Description
 `/close` | Collaborators | closes the issue / PR
 `/reopen` | Collaborators | reopens a closed issue / PR
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason
-`/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone
+`/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. An unknown title fails the run with the list of available milestones
+`/milestone clear` | Collaborators | Removes the issue / PR from its milestone
 `/retitle some new title` | Collaborators | Renames the issue / PR
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 
