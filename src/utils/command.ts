@@ -7,45 +7,50 @@
  * @param body - the full body of the comment
  */
 export function hasCommand(command: string, body: string): boolean {
-  return findCommandArgs(command, body) !== undefined
+  return findCommandArgs(command, body).length > 0
 }
 
 /**
- * getLineArgs will return the trimmed text following the command on its line
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
  * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 export function getLineArgs(command: string, body: string): string {
-  return findCommandArgs(command, body) ?? ''
+  return findCommandArgs(command, body).at(-1) ?? ''
 }
 
 /**
- * getCommandArgs will return an array of the arguments associated with a command
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
  * Ex return: [`some-user', 'some-other-user']
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 export function getCommandArgs(command: string, body: string): string[] {
-  const rest = findCommandArgs(command, body)
+  const rests = findCommandArgs(command, body)
 
-  if (rest === undefined) {
+  if (rests.length === 0) {
     throw new Error(`command ${command} missing from body`)
   }
 
-  return stripAtSign(rest.split(/\s+/).filter(Boolean))
+  const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean))
+
+  return [...new Set(stripAtSign(args))]
 }
 
-function findCommandArgs(command: string, body: string): string | undefined {
+function findCommandArgs(command: string, body: string): string[] {
   const pattern = commandPattern(command)
-  let found: string | undefined
+  const found: string[] = []
 
   for (const line of splitLines(body)) {
     const match = pattern.exec(line)
     if (match) {
-      found = (match[1] ?? '').trim()
+      found.push((match[1] ?? '').trim())
     }
   }
 

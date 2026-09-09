@@ -388,6 +388,53 @@ reviewers:
     })
   })
 
+  it.each([
+    ['/approve\n/approve cancel'],
+    ['/approve cancel\n/approve'],
+  ])('cancel wins when a comment carries both /approve and /approve cancel: %j', async (body) => {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, pullReqListReviews),
+      ),
+    )
+
+    const observeDismiss = new utils.ObserveRequest()
+    const observeCreate = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeDismiss),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeCreate),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = body
+    issueCommentEventAssign.comment.user.login = 'some-user'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDismiss.called()).resolves.toBe('called')
+    await expect(observeCreate.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('removes approval with the /approve cancel command if commenter is collaborator', async () => {
     server.use(
       http.get(

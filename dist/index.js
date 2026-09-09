@@ -568,7 +568,7 @@ async function approve(context = github.context) {
         throw e;
     }
     const isCancel = (0, command_1.hasCommand)('/remove-approve', commentBody)
-        || ((0, command_1.hasCommand)('/approve', commentBody) && (0, command_1.getCommandArgs)('/approve', commentBody)[0] === 'cancel');
+        || ((0, command_1.hasCommand)('/approve', commentBody) && (0, command_1.getCommandArgs)('/approve', commentBody).includes('cancel'));
     if (isCancel) {
         try {
             await cancel(octokit, context, issueNumber, commenterLogin);
@@ -1699,9 +1699,9 @@ async function retitle(context = github.context) {
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
-    const commentArgs = (0, command_1.getCommandArgs)('/retitle', commentBody);
+    const title = (0, command_1.getLineArgs)('/retitle', commentBody);
     // no arguments after command provided. Can't retitle!
-    if (commentArgs.length === 0) {
+    if (title === '') {
         return;
     }
     // Only users who:
@@ -1718,7 +1718,7 @@ async function retitle(context = github.context) {
             await octokit.issues.update({
                 ...context.repo,
                 issue_number: issueNumber,
-                title: commentArgs.join(' '),
+                title,
             });
         }
         catch (e) {
@@ -2002,7 +2002,7 @@ async function hold(context = github.context) {
     }
     const cancel = (0, command_1.hasCommand)('/unhold', commentBody)
         || (0, command_1.hasCommand)('/remove-hold', commentBody)
-        || ((0, command_1.hasCommand)('/hold', commentBody) && (0, command_1.getCommandArgs)('/hold', commentBody)[0] === 'cancel');
+        || ((0, command_1.hasCommand)('/hold', commentBody) && (0, command_1.getCommandArgs)('/hold', commentBody).includes('cancel'));
     if (cancel) {
         try {
             await (0, labeling_1.cancelLabel)(octokit, context, issueNumber, 'hold');
@@ -2099,7 +2099,7 @@ async function lgtm(context = github.context) {
         throw e;
     }
     const cancel = (0, command_1.hasCommand)('/remove-lgtm', commentBody)
-        || ((0, command_1.hasCommand)('/lgtm', commentBody) && (0, command_1.getCommandArgs)('/lgtm', commentBody)[0] === 'cancel');
+        || ((0, command_1.hasCommand)('/lgtm', commentBody) && (0, command_1.getCommandArgs)('/lgtm', commentBody).includes('cancel'));
     if (cancel) {
         try {
             await (0, labeling_1.cancelLabel)(octokit, context, issueNumber, 'lgtm');
@@ -2874,39 +2874,43 @@ exports.getCommandArgs = getCommandArgs;
  * @param body - the full body of the comment
  */
 function hasCommand(command, body) {
-    return findCommandArgs(command, body) !== undefined;
+    return findCommandArgs(command, body).length > 0;
 }
 /**
- * getLineArgs will return the trimmed text following the command on its line
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
  * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 function getLineArgs(command, body) {
-    return findCommandArgs(command, body) ?? '';
+    return findCommandArgs(command, body).at(-1) ?? '';
 }
 /**
- * getCommandArgs will return an array of the arguments associated with a command
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
  * Ex return: [`some-user', 'some-other-user']
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 function getCommandArgs(command, body) {
-    const rest = findCommandArgs(command, body);
-    if (rest === undefined) {
+    const rests = findCommandArgs(command, body);
+    if (rests.length === 0) {
         throw new Error(`command ${command} missing from body`);
     }
-    return stripAtSign(rest.split(/\s+/).filter(Boolean));
+    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
+    return [...new Set(stripAtSign(args))];
 }
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
-    let found;
+    const found = [];
     for (const line of splitLines(body)) {
         const match = pattern.exec(line);
         if (match) {
-            found = (match[1] ?? '').trim();
+            found.push((match[1] ?? '').trim());
         }
     }
     return found;

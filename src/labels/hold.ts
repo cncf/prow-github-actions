@@ -30,7 +30,7 @@ export async function hold(context: Context = github.context): Promise<void> {
 
   const cancel = hasCommand('/unhold', commentBody)
     || hasCommand('/remove-hold', commentBody)
-    || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody)[0] === 'cancel')
+    || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody).includes('cancel'))
 
   if (cancel) {
     try {

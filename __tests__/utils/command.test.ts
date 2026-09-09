@@ -86,14 +86,41 @@ describe('anchored argument parsing', () => {
     expect(getLineArgs('/milestone', '  /milestone v1.2')).toBe('v1.2')
   })
 
-  it('uses the last matching line', () => {
+  it('collects arguments from every matching line', () => {
     const body = '/lgtm cancel\nchanged my mind\n/lgtm'
 
-    expect(getCommandArgs('/lgtm', body)).toMatchObject([])
+    expect(getCommandArgs('/lgtm', body)).toEqual(['cancel'])
   })
 
   it('returns no arguments for a bare command', () => {
     expect(getCommandArgs('/lgtm', '/lgtm')).toMatchObject([])
+  })
+})
+
+describe('repeated command lines', () => {
+  it('concatenates arguments in order of appearance', () => {
+    const body = '/kind bug\nsome context\n/kind cleanup'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug', 'cleanup'])
+  })
+
+  it('de-duplicates repeated arguments', () => {
+    const body = '/assign @a @b\n/assign b @c\n/assign a'
+
+    expect(getCommandArgs('/assign', body)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('does not collect arguments from a longer command sharing the prefix', () => {
+    const body = '/kind bug\n/remove-kind cleanup'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+    expect(getCommandArgs('/remove-kind', body)).toEqual(['cleanup'])
+  })
+
+  it('keeps getLineArgs single valued with the last line winning', () => {
+    const body = '/milestone v1.0\n/milestone v2.0'
+
+    expect(getLineArgs('/milestone', body)).toBe('v2.0')
   })
 })
 

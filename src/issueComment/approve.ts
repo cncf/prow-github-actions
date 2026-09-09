@@ -62,7 +62,7 @@ export async function approve(
   }
 
   const isCancel = hasCommand('/remove-approve', commentBody)
-    || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody)[0] === 'cancel')
+    || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody).includes('cancel'))
 
   if (isCancel) {
     try {

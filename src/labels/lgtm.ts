@@ -55,7 +55,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
   }
 
   const cancel = hasCommand('/remove-lgtm', commentBody)
-    || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody)[0] === 'cancel')
+    || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody).includes('cancel'))
 
   if (cancel) {
     try {

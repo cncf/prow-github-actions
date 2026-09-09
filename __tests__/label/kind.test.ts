@@ -84,6 +84,31 @@ describe('kind', () => {
     })
   })
 
+  it('applies every /kind line in the comment', async () => {
+    issueCommentEvent.comment.body = '/kind cleanup\nsome context\n/kind failing-test'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, labelFileContents),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      labels: ['kind/cleanup', 'kind/failing-test'],
+    })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('only adds kind labels for files in .prowlabels.yaml', async () => {
     issueCommentEvent.comment.body = '/kind cleanup bad failing-test'
     const commentContext = new utils.MockContext(issueCommentEvent)
