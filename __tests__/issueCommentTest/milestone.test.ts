@@ -113,7 +113,7 @@ describe('/milestone', () => {
   })
 
   it('fails when no milestone is provided', async () => {
-    issueCommentEvent.comment.body = '/milestone '
+    issueCommentEvent.comment.body = '/milestone'
 
     server.use(
       http.get(

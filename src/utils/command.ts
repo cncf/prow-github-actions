@@ -1,21 +1,29 @@
 /**
- * getLineArgs will return the line entire line associated with a given command
- * Ex return: '/assign some-user some-other-user'
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+export function hasCommand(command: string, body: string): boolean {
+  return findCommandLine(command, body) !== undefined
+}
+
+/**
+ * getLineArgs will return the trimmed text following the command on its line
+ * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 export function getLineArgs(command: string, body: string): string {
-  let toReturn = ''
-  const lineArray = splitLines(body)
-
-  for (const iterator of lineArray) {
-    if (iterator.includes(command)) {
-      toReturn = iterator.replace(`${command} `, '')
-    }
+  const line = findCommandLine(command, body)
+  if (line === undefined) {
+    return ''
   }
 
-  return toReturn
+  return line.trim().slice(command.length).trim()
 }
 
 /**
@@ -26,33 +34,34 @@ export function getLineArgs(command: string, body: string): string {
  * @param body - the full body of the comment
  */
 export function getCommandArgs(command: string, body: string): string[] {
-  const toReturn = []
-  const lineArray = splitLines(body)
-  let bodyArray
+  const line = findCommandLine(command, body)
 
-  for (const iterator of lineArray) {
-    if (iterator.includes(command)) {
-      bodyArray = iterator.split(' ')
-    }
-  }
-
-  if (bodyArray === undefined) {
+  if (line === undefined) {
     throw new Error(`command ${command} missing from body`)
   }
 
-  let i = 0
-  while (bodyArray[i] !== command && i < bodyArray.length) {
-    i++
+  const args = line.trim().split(' ').slice(1)
+
+  return stripAtSign(args)
+}
+
+function findCommandLine(command: string, body: string): string | undefined {
+  const pattern = commandPattern(command)
+  let found: string | undefined
+
+  for (const line of splitLines(body)) {
+    if (pattern.test(line)) {
+      found = line
+    }
   }
 
-  // advance the index to the next as we've found the command
-  i++
-  while (bodyArray[i] !== '\n' && i < bodyArray.length) {
-    toReturn.push(bodyArray[i])
-    i++
-  }
+  return found
+}
 
-  return stripAtSign(toReturn)
+function commandPattern(command: string): RegExp {
+  // escape regex metacharacters so a command is matched literally
+  const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`^\\s*${escaped}(\\s|$)`)
 }
 
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings

@@ -9,6 +9,7 @@ import { kind } from '../labels/kind'
 import { lgtm } from '../labels/lgtm'
 import { priority } from '../labels/priority'
 import { remove } from '../labels/remove'
+import { hasCommand } from '../utils/command'
 import { approve } from './approve'
 import { assign } from './assign'
 import { cc } from './cc'
@@ -31,13 +32,20 @@ import { uncc } from './uncc'
 export async function handleIssueComment(context: Context = github.context): Promise<void> {
   const commandConfig = core
     .getInput('prow-commands', { required: false })
-    .replace(/\n/g, ' ')
-    .split(' ')
+    .split(/\s+/)
+    .filter(command => command !== '')
   const commentBody: string = context.payload.comment?.body
+
+  if (commandConfig.length === 0) {
+    core.setFailed(
+      `please provide a list of space delimited commands / jobs to run. None found`,
+    )
+    return
+  }
 
   await Promise.all(
     commandConfig.map(async (command) => {
-      if (commentBody.includes(command)) {
+      if (hasCommand(command, commentBody)) {
         switch (command) {
           case '/assign':
             return await assign(context).catch(normalizeError)
@@ -89,11 +97,6 @@ export async function handleIssueComment(context: Context = github.context): Pro
 
           case '/meow':
             return await meow(context).catch(normalizeError)
-
-          case '':
-            return new Error(
-              `please provide a list of space delimited commands / jobs to run. None found`,
-            )
 
           default:
             return new Error(

@@ -1010,6 +1010,7 @@ const kind_1 = __nccwpck_require__(8794);
 const lgtm_1 = __nccwpck_require__(8858);
 const priority_1 = __nccwpck_require__(5656);
 const remove_1 = __nccwpck_require__(8540);
+const command_1 = __nccwpck_require__(7971);
 const approve_1 = __nccwpck_require__(7912);
 const assign_1 = __nccwpck_require__(5371);
 const cc_1 = __nccwpck_require__(423);
@@ -1031,11 +1032,15 @@ const uncc_1 = __nccwpck_require__(6980);
 async function handleIssueComment(context = github.context) {
     const commandConfig = core
         .getInput('prow-commands', { required: false })
-        .replace(/\n/g, ' ')
-        .split(' ');
+        .split(/\s+/)
+        .filter(command => command !== '');
     const commentBody = context.payload.comment?.body;
+    if (commandConfig.length === 0) {
+        core.setFailed(`please provide a list of space delimited commands / jobs to run. None found`);
+        return;
+    }
     await Promise.all(commandConfig.map(async (command) => {
-        if (commentBody.includes(command)) {
+        if ((0, command_1.hasCommand)(command, commentBody)) {
             switch (command) {
                 case '/assign':
                     return await (0, assign_1.assign)(context).catch(normalizeError);
@@ -1071,8 +1076,6 @@ async function handleIssueComment(context = github.context) {
                     return await (0, milestone_1.milestone)(context).catch(normalizeError);
                 case '/meow':
                     return await (0, meow_1.meow)(context).catch(normalizeError);
-                case '':
-                    return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
                 default:
                     return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
             }
@@ -2927,24 +2930,33 @@ function isInOwnersFile(ownersContents, role, username) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.hasCommand = hasCommand;
 exports.getLineArgs = getLineArgs;
 exports.getCommandArgs = getCommandArgs;
 /**
- * getLineArgs will return the line entire line associated with a given command
- * Ex return: '/assign some-user some-other-user'
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandLine(command, body) !== undefined;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line
+ * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 function getLineArgs(command, body) {
-    let toReturn = '';
-    const lineArray = splitLines(body);
-    for (const iterator of lineArray) {
-        if (iterator.includes(command)) {
-            toReturn = iterator.replace(`${command} `, '');
-        }
+    const line = findCommandLine(command, body);
+    if (line === undefined) {
+        return '';
     }
-    return toReturn;
+    return line.trim().slice(command.length).trim();
 }
 /**
  * getCommandArgs will return an array of the arguments associated with a command
@@ -2954,28 +2966,27 @@ function getLineArgs(command, body) {
  * @param body - the full body of the comment
  */
 function getCommandArgs(command, body) {
-    const toReturn = [];
-    const lineArray = splitLines(body);
-    let bodyArray;
-    for (const iterator of lineArray) {
-        if (iterator.includes(command)) {
-            bodyArray = iterator.split(' ');
-        }
-    }
-    if (bodyArray === undefined) {
+    const line = findCommandLine(command, body);
+    if (line === undefined) {
         throw new Error(`command ${command} missing from body`);
     }
-    let i = 0;
-    while (bodyArray[i] !== command && i < bodyArray.length) {
-        i++;
+    const args = line.trim().split(' ').slice(1);
+    return stripAtSign(args);
+}
+function findCommandLine(command, body) {
+    const pattern = commandPattern(command);
+    let found;
+    for (const line of splitLines(body)) {
+        if (pattern.test(line)) {
+            found = line;
+        }
     }
-    // advance the index to the next as we've found the command
-    i++;
-    while (bodyArray[i] !== '\n' && i < bodyArray.length) {
-        toReturn.push(bodyArray[i]);
-        i++;
-    }
-    return stripAtSign(toReturn);
+    return found;
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^\\s*${escaped}(\\s|$)`);
 }
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings
 function splitLines(body) {
