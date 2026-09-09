@@ -140,6 +140,25 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /unhold removes the hold label when /hold is configured', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/hold`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/unhold'),
+      inputs: { ...token, 'prow-commands': '/hold' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/issues/1`,
+      `DELETE ${repo}/issues/1/labels/hold`,
+    ])
+  })
+
   it('pull_request lgtm job removes the lgtm label on a new push', async () => {
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })

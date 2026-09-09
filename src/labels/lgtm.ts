@@ -4,13 +4,14 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs } from '../utils/command'
+import { getCommandArgs, hasCommand } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { cancelLabel, labelIssue } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
 /**
  * /lgtm will add the lgtm label.
+ * /lgtm cancel and /remove-lgtm remove it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
  *
@@ -53,10 +54,10 @@ export async function lgtm(context: Context = github.context): Promise<void> {
     throw e
   }
 
-  const commentArgs: string[] = getCommandArgs('/lgtm', commentBody)
+  const cancel = hasCommand('/remove-lgtm', commentBody)
+    || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody)[0] === 'cancel')
 
-  // check if canceling last review
-  if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+  if (cancel) {
     try {
       await cancelLabel(octokit, context, issueNumber, 'lgtm')
     }

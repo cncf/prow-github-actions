@@ -535,8 +535,9 @@ const octokit_1 = __nccwpck_require__(7995);
  * the /approve command will create a "approve" review
  * from the github-actions bot
  *
- * If the argument 'cancel' is provided to the /approve command
- * the last review will be removed
+ * If the argument 'cancel' is provided to the /approve command,
+ * or /remove-approve is used, the last review will be removed.
+ * The Prow argument 'no-issue' is accepted and behaves like a plain /approve.
  *
  * @param context - the github actions event context
  */
@@ -566,9 +567,9 @@ async function approve(context = github.context) {
         }
         throw e;
     }
-    const commentArgs = (0, command_1.getCommandArgs)('/approve', commentBody);
-    // check if canceling last review
-    if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+    const isCancel = (0, command_1.hasCommand)('/remove-approve', commentBody)
+        || ((0, command_1.hasCommand)('/approve', commentBody) && (0, command_1.getCommandArgs)('/approve', commentBody)[0] === 'cancel');
+    if (isCancel) {
         try {
             await cancel(octokit, context, issueNumber, commenterLogin);
         }
@@ -1010,6 +1011,7 @@ const kind_1 = __nccwpck_require__(8794);
 const lgtm_1 = __nccwpck_require__(8858);
 const priority_1 = __nccwpck_require__(5656);
 const remove_1 = __nccwpck_require__(8540);
+const command_1 = __nccwpck_require__(7971);
 const approve_1 = __nccwpck_require__(7912);
 const assign_1 = __nccwpck_require__(5371);
 const cc_1 = __nccwpck_require__(423);
@@ -1021,6 +1023,23 @@ const reopen_1 = __nccwpck_require__(1328);
 const retitle_1 = __nccwpck_require__(7068);
 const unassign_1 = __nccwpck_require__(5647);
 const uncc_1 = __nccwpck_require__(6980);
+// Prow-style spellings that are handled by the canonical command's module
+const commandAliases = {
+    '/lgtm': ['/remove-lgtm'],
+    '/approve': ['/remove-approve'],
+    '/hold': ['/unhold', '/remove-hold'],
+};
+function canonicalCommand(name) {
+    for (const [command, aliases] of Object.entries(commandAliases)) {
+        if (aliases.includes(name)) {
+            return command;
+        }
+    }
+    return name;
+}
+function commandForms(command) {
+    return [command, ...(commandAliases[command] ?? [])];
+}
 /**
  * This Method handles any issue comments
  * Note that the github api considers PRs issues
@@ -1029,13 +1048,18 @@ const uncc_1 = __nccwpck_require__(6980);
  * @param context - the github context of the current action event
  */
 async function handleIssueComment(context = github.context) {
-    const commandConfig = core
-        .getInput('prow-commands', { required: false })
-        .replace(/\n/g, ' ')
-        .split(' ');
+    const commandConfig = [...new Set(core
+            .getInput('prow-commands', { required: false })
+            .split(/\s+/)
+            .filter(command => command !== '')
+            .map(canonicalCommand))];
     const commentBody = context.payload.comment?.body;
+    if (commandConfig.length === 0) {
+        core.setFailed(`please provide a list of space delimited commands / jobs to run. None found`);
+        return;
+    }
     await Promise.all(commandConfig.map(async (command) => {
-        if (commentBody.includes(command)) {
+        if (commandForms(command).some(form => (0, command_1.hasCommand)(form, commentBody))) {
             switch (command) {
                 case '/assign':
                     return await (0, assign_1.assign)(context).catch(normalizeError);
@@ -1071,8 +1095,6 @@ async function handleIssueComment(context = github.context) {
                     return await (0, milestone_1.milestone)(context).catch(normalizeError);
                 case '/meow':
                     return await (0, meow_1.meow)(context).catch(normalizeError);
-                case '':
-                    return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
                 default:
                     return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
             }
@@ -1471,7 +1493,8 @@ const command_1 = __nccwpck_require__(7971);
 const octokit_1 = __nccwpck_require__(7995);
 /**
  * /milestone will add the issue to an existing milestone.
- * Note that the command should have an argument with the milestone to add
+ * Note that the command should have an argument with the milestone to add.
+ * /milestone clear removes the issue from its milestone.
  *
  * @param context - the github actions event context
  */
@@ -1500,18 +1523,28 @@ async function milestone(context = github.context) {
     if (milestoneToAdd === '') {
         throw new Error(`please provide a milestone to add`);
     }
+    if (milestoneToAdd === 'clear') {
+        await octokit.issues.update({
+            ...context.repo,
+            issue_number: issueNumber,
+            milestone: null,
+        });
+        return;
+    }
     const ms = await octokit.issues.listMilestones({
         ...context.repo,
     });
-    for (const m of ms.data) {
-        if (m.title === milestoneToAdd) {
-            await octokit.issues.update({
-                ...context.repo,
-                issue_number: issueNumber,
-                milestone: m.number,
-            });
-        }
+    const match = ms.data.find(m => m.title === milestoneToAdd);
+    if (match === undefined) {
+        const titles = ms.data.map(m => m.title);
+        const available = titles.length === 0 ? 'none' : titles.join(', ');
+        throw new Error(`milestone "${milestoneToAdd}" not found. Available milestones: ${available}`);
     }
+    await octokit.issues.update({
+        ...context.repo,
+        issue_number: issueNumber,
+        milestone: match.number,
+    });
 }
 
 
@@ -2027,7 +2060,8 @@ const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
 const octokit_1 = __nccwpck_require__(7995);
 /**
- * /hold will add the hold label
+ * /hold will add the hold label.
+ * /hold cancel, /unhold and /remove-hold remove it.
  * Note - the hold label will block automatic merging if the lgtm
  * is also present
  *
@@ -2041,9 +2075,10 @@ async function hold(context = github.context) {
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
-    const commentArgs = (0, command_1.getCommandArgs)('/hold', commentBody);
-    // check if canceling last review
-    if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+    const cancel = (0, command_1.hasCommand)('/unhold', commentBody)
+        || (0, command_1.hasCommand)('/remove-hold', commentBody)
+        || ((0, command_1.hasCommand)('/hold', commentBody) && (0, command_1.getCommandArgs)('/hold', commentBody)[0] === 'cancel');
+    if (cancel) {
         try {
             await (0, labeling_1.cancelLabel)(octokit, context, issueNumber, 'hold');
         }
@@ -2188,6 +2223,7 @@ const labeling_1 = __nccwpck_require__(7138);
 const octokit_1 = __nccwpck_require__(7995);
 /**
  * /lgtm will add the lgtm label.
+ * /lgtm cancel and /remove-lgtm remove it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
  *
@@ -2218,9 +2254,9 @@ async function lgtm(context = github.context) {
         }
         throw e;
     }
-    const commentArgs = (0, command_1.getCommandArgs)('/lgtm', commentBody);
-    // check if canceling last review
-    if (commentArgs.length !== 0 && commentArgs[0] === 'cancel') {
+    const cancel = (0, command_1.hasCommand)('/remove-lgtm', commentBody)
+        || ((0, command_1.hasCommand)('/lgtm', commentBody) && (0, command_1.getCommandArgs)('/lgtm', commentBody)[0] === 'cancel');
+    if (cancel) {
         try {
             await (0, labeling_1.cancelLabel)(octokit, context, issueNumber, 'lgtm');
         }
@@ -2927,24 +2963,33 @@ function isInOwnersFile(ownersContents, role, username) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.hasCommand = hasCommand;
 exports.getLineArgs = getLineArgs;
 exports.getCommandArgs = getCommandArgs;
 /**
- * getLineArgs will return the line entire line associated with a given command
- * Ex return: '/assign some-user some-other-user'
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandLine(command, body) !== undefined;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line
+ * Ex return: 'some-user some-other-user'
  *
  * @param command - the given command to get arguments for. Ex: '/assign'
  * @param body - the full body of the comment
  */
 function getLineArgs(command, body) {
-    let toReturn = '';
-    const lineArray = splitLines(body);
-    for (const iterator of lineArray) {
-        if (iterator.includes(command)) {
-            toReturn = iterator.replace(`${command} `, '');
-        }
+    const line = findCommandLine(command, body);
+    if (line === undefined) {
+        return '';
     }
-    return toReturn;
+    return line.trim().slice(command.length).trim();
 }
 /**
  * getCommandArgs will return an array of the arguments associated with a command
@@ -2954,28 +2999,27 @@ function getLineArgs(command, body) {
  * @param body - the full body of the comment
  */
 function getCommandArgs(command, body) {
-    const toReturn = [];
-    const lineArray = splitLines(body);
-    let bodyArray;
-    for (const iterator of lineArray) {
-        if (iterator.includes(command)) {
-            bodyArray = iterator.split(' ');
-        }
-    }
-    if (bodyArray === undefined) {
+    const line = findCommandLine(command, body);
+    if (line === undefined) {
         throw new Error(`command ${command} missing from body`);
     }
-    let i = 0;
-    while (bodyArray[i] !== command && i < bodyArray.length) {
-        i++;
+    const args = line.trim().split(' ').slice(1);
+    return stripAtSign(args);
+}
+function findCommandLine(command, body) {
+    const pattern = commandPattern(command);
+    let found;
+    for (const line of splitLines(body)) {
+        if (pattern.test(line)) {
+            found = line;
+        }
     }
-    // advance the index to the next as we've found the command
-    i++;
-    while (bodyArray[i] !== '\n' && i < bodyArray.length) {
-        toReturn.push(bodyArray[i]);
-        i++;
-    }
-    return stripAtSign(toReturn);
+    return found;
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^\\s*${escaped}(\\s|$)`);
 }
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings
 function splitLines(body) {

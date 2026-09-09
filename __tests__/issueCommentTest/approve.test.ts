@@ -266,6 +266,128 @@ reviewers:
     )
   })
 
+  it('removes approval with /remove-approve if commenter is collaborator', async () => {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, pullReqListReviews),
+      ),
+    )
+
+    const observeDismiss = new utils.ObserveRequest()
+    const observeCreate = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeDismiss),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeCreate),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/remove-approve'
+    issueCommentEventAssign.comment.user.login = 'some-user'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeDismiss.called()
+    expect(await observeDismiss.body()).toMatchObject({
+      message: `Canceled through prow-github-actions by @some-user`,
+    })
+    await expect(observeCreate.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails /remove-approve for a commenter who is not an approver', async () => {
+    const wantErr = `Codertocat is not a org member or collaborator`
+
+    const observeComment = new utils.ObserveRequest()
+    const observeDismiss = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(200, null, observeComment),
+      ),
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeDismiss),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/remove-approve'
+    issueCommentEventAssign.comment.user.login = 'Codertocat'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeComment.called()
+    expect(await observeComment.body().then(body => body.body)).toContain(wantErr)
+    await expect(observeDismiss.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
+  })
+
+  it('approves with /approve no-issue if commenter is an org member', async () => {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/approve no-issue'
+    issueCommentEventAssign.comment.user.login = 'Codertocat'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({
+      event: 'APPROVE',
+    })
+  })
+
   it('removes approval with the /approve cancel command if commenter is collaborator', async () => {
     server.use(
       http.get(

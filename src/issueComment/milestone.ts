@@ -9,7 +9,8 @@ import { newOctokit } from '../utils/octokit'
 
 /**
  * /milestone will add the issue to an existing milestone.
- * Note that the command should have an argument with the milestone to add
+ * Note that the command should have an argument with the milestone to add.
+ * /milestone clear removes the issue from its milestone.
  *
  * @param context - the github actions event context
  */
@@ -51,17 +52,32 @@ export async function milestone(
     throw new Error(`please provide a milestone to add`)
   }
 
+  if (milestoneToAdd === 'clear') {
+    await octokit.issues.update({
+      ...context.repo,
+      issue_number: issueNumber,
+      milestone: null,
+    })
+    return
+  }
+
   const ms = await octokit.issues.listMilestones({
     ...context.repo,
   })
 
-  for (const m of ms.data) {
-    if (m.title === milestoneToAdd) {
-      await octokit.issues.update({
-        ...context.repo,
-        issue_number: issueNumber,
-        milestone: m.number,
-      })
-    }
+  const match = ms.data.find(m => m.title === milestoneToAdd)
+
+  if (match === undefined) {
+    const titles = ms.data.map(m => m.title)
+    const available = titles.length === 0 ? 'none' : titles.join(', ')
+    throw new Error(
+      `milestone "${milestoneToAdd}" not found. Available milestones: ${available}`,
+    )
   }
+
+  await octokit.issues.update({
+    ...context.repo,
+    issue_number: issueNumber,
+    milestone: match.number,
+  })
 }

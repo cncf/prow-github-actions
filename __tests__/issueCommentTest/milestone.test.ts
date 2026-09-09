@@ -82,7 +82,7 @@ describe('/milestone', () => {
     expect(spy).toHaveBeenCalled()
   })
 
-  it('does not update the issue when the milestone does not exist', async () => {
+  it('fails and lists the available milestones when the milestone does not exist', async () => {
     issueCommentEvent.comment.body = '/milestone does not exist'
 
     server.use(
@@ -109,11 +109,93 @@ describe('/milestone', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('milestone "does not exist" not found. Available milestones: some milestone'),
+    )
+  })
+
+  it('reports none when the repository has no milestones', async () => {
+    issueCommentEvent.comment.body = '/milestone v9'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/milestones`,
+        utils.mockResponse(200, []),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('milestone "v9" not found. Available milestones: none'),
+    )
+  })
+
+  it('clears the milestone with /milestone clear', async () => {
+    issueCommentEvent.comment.body = '/milestone clear'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({
+      milestone: null,
+    })
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('does not clear the milestone when commenter is not a collaborator', async () => {
+    issueCommentEvent.comment.body = '/milestone clear'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('not authorized to set a milestone'),
+    )
+  })
+
   it('fails when no milestone is provided', async () => {
-    issueCommentEvent.comment.body = '/milestone '
+    issueCommentEvent.comment.body = '/milestone'
 
     server.use(
       http.get(
