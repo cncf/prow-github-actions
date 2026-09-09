@@ -7,7 +7,7 @@
  * @param body - the full body of the comment
  */
 export function hasCommand(command: string, body: string): boolean {
-  return findCommandLine(command, body) !== undefined
+  return findCommandArgs(command, body) !== undefined
 }
 
 /**
@@ -18,12 +18,7 @@ export function hasCommand(command: string, body: string): boolean {
  * @param body - the full body of the comment
  */
 export function getLineArgs(command: string, body: string): string {
-  const line = findCommandLine(command, body)
-  if (line === undefined) {
-    return ''
-  }
-
-  return line.trim().slice(command.length).trim()
+  return findCommandArgs(command, body) ?? ''
 }
 
 /**
@@ -34,24 +29,23 @@ export function getLineArgs(command: string, body: string): string {
  * @param body - the full body of the comment
  */
 export function getCommandArgs(command: string, body: string): string[] {
-  const line = findCommandLine(command, body)
+  const rest = findCommandArgs(command, body)
 
-  if (line === undefined) {
+  if (rest === undefined) {
     throw new Error(`command ${command} missing from body`)
   }
 
-  const args = line.trim().split(' ').slice(1)
-
-  return stripAtSign(args)
+  return stripAtSign(rest.split(/\s+/).filter(Boolean))
 }
 
-function findCommandLine(command: string, body: string): string | undefined {
+function findCommandArgs(command: string, body: string): string | undefined {
   const pattern = commandPattern(command)
   let found: string | undefined
 
   for (const line of splitLines(body)) {
-    if (pattern.test(line)) {
-      found = line
+    const match = pattern.exec(line)
+    if (match) {
+      found = (match[1] ?? '').trim()
     }
   }
 
@@ -61,7 +55,8 @@ function findCommandLine(command: string, body: string): string | undefined {
 function commandPattern(command: string): RegExp {
   // escape regex metacharacters so a command is matched literally
   const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`^\\s*${escaped}(\\s|$)`)
+  // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+  return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`)
 }
 
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings

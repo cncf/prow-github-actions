@@ -2874,7 +2874,7 @@ exports.getCommandArgs = getCommandArgs;
  * @param body - the full body of the comment
  */
 function hasCommand(command, body) {
-    return findCommandLine(command, body) !== undefined;
+    return findCommandArgs(command, body) !== undefined;
 }
 /**
  * getLineArgs will return the trimmed text following the command on its line
@@ -2884,11 +2884,7 @@ function hasCommand(command, body) {
  * @param body - the full body of the comment
  */
 function getLineArgs(command, body) {
-    const line = findCommandLine(command, body);
-    if (line === undefined) {
-        return '';
-    }
-    return line.trim().slice(command.length).trim();
+    return findCommandArgs(command, body) ?? '';
 }
 /**
  * getCommandArgs will return an array of the arguments associated with a command
@@ -2898,19 +2894,19 @@ function getLineArgs(command, body) {
  * @param body - the full body of the comment
  */
 function getCommandArgs(command, body) {
-    const line = findCommandLine(command, body);
-    if (line === undefined) {
+    const rest = findCommandArgs(command, body);
+    if (rest === undefined) {
         throw new Error(`command ${command} missing from body`);
     }
-    const args = line.trim().split(' ').slice(1);
-    return stripAtSign(args);
+    return stripAtSign(rest.split(/\s+/).filter(Boolean));
 }
-function findCommandLine(command, body) {
+function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
     let found;
     for (const line of splitLines(body)) {
-        if (pattern.test(line)) {
-            found = line;
+        const match = pattern.exec(line);
+        if (match) {
+            found = (match[1] ?? '').trim();
         }
     }
     return found;
@@ -2918,7 +2914,8 @@ function findCommandLine(command, body) {
 function commandPattern(command) {
     // escape regex metacharacters so a command is matched literally
     const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`^\\s*${escaped}(\\s|$)`);
+    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`);
 }
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings
 function splitLines(body) {

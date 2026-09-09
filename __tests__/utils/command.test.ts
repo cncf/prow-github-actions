@@ -97,6 +97,52 @@ describe('anchored argument parsing', () => {
   })
 })
 
+// the matcher accepts any whitespace after the command, so the tokenizer must too
+describe('whitespace between command and arguments', () => {
+  it('splits arguments on a tab', () => {
+    expect(hasCommand('/kind', '/kind\tbug')).toBe(true)
+    expect(getCommandArgs('/kind', '/kind\tbug')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind\tbug\tcleanup')).toEqual(['bug', 'cleanup'])
+  })
+
+  it('does not leak an empty argument for multiple spaces', () => {
+    expect(getCommandArgs('/kind', '/kind  bug')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind   bug    cleanup')).toEqual(['bug', 'cleanup'])
+  })
+
+  it('tolerates a non-breaking space before the command', () => {
+    expect(hasCommand('/kind', '\u00A0/kind bug')).toBe(true)
+    expect(getCommandArgs('/kind', '\u00A0/kind bug')).toEqual(['bug'])
+  })
+
+  it('splits arguments on a non-breaking space', () => {
+    expect(hasCommand('/kind', '/kind\u00A0bug')).toBe(true)
+    expect(getCommandArgs('/kind', '/kind\u00A0bug')).toEqual(['bug'])
+  })
+
+  it('ignores trailing whitespace on the line', () => {
+    expect(getCommandArgs('/kind', '/kind bug   ')).toEqual(['bug'])
+    expect(getCommandArgs('/kind', '/kind bug\t')).toEqual(['bug'])
+    expect(getCommandArgs('/lgtm', '/lgtm   ')).toEqual([])
+  })
+
+  it('handles CRLF endings with tabs and extra spaces', () => {
+    const body = '/kind\tbug\r\n/area  important \r\n'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+    expect(getCommandArgs('/area', body)).toEqual(['important'])
+  })
+
+  it('still strips a leading @ from tab separated arguments', () => {
+    expect(getCommandArgs('/assign', '/assign\t@some-user  @other-user')).toEqual(['some-user', 'other-user'])
+  })
+
+  it('applies the same tokenization to getLineArgs', () => {
+    expect(getLineArgs('/milestone', '/milestone\tv1.2')).toBe('v1.2')
+    expect(getLineArgs('/milestone', '\u00A0/milestone v1.2  ')).toBe('v1.2')
+  })
+})
+
 describe('getLineArgs', () => {
   it('returns the trimmed text after the command', () => {
     expect(getLineArgs('/milestone', '/milestone v1.2')).toBe('v1.2')
