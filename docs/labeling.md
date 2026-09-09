@@ -39,6 +39,17 @@ the issue or PR will be labeled with `priority/low`.
 A later `/priority` command replaces any existing `priority/*` labels
 instead of stacking them.
 
+## Removing labels
+
+Every prefixed command has a `/remove-` form that takes the same values:
+`/remove-area bug` removes `area/bug`, `/remove-kind cleanup` removes
+`kind/cleanup` and `/remove-priority low` removes `priority/low`.
+Only values listed under the matching key in `.prowlabels.yaml` are
+removed, so these commands can be used by anyone without exposing
+labels such as `lgtm`, `hold` or `approved`. A value that is not on
+the issue is ignored. Enabling `/kind` in `prow-commands` also enables
+`/remove-kind`.
+
 ## Automatic PR labels
 
 To automatically label PRs based on file globs, it's recommended to use the

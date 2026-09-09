@@ -8,6 +8,7 @@ import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import * as unassign from '../../src/issueComment/unassign'
 import * as hold from '../../src/labels/hold'
 import * as lgtm from '../../src/labels/lgtm'
+import * as prefixed from '../../src/labels/prefixed'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
 import * as utils from '../testUtils'
@@ -234,4 +235,53 @@ it('does not dispatch an alias whose base command is not configured', async () =
   await handleIssueComment(context)
   expect(hold.hold).not.toHaveBeenCalled()
   expect(assign.assign).not.toHaveBeenCalled()
+})
+
+it.each(['/area', '/kind', '/priority'])('dispatches /remove-%s to the remove path only when %s is configured', async (command) => {
+  utils.setupActionsEnv(command)
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = `${prefixed.removeCommandFor(command)} bug`
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(remove).toHaveBeenCalledTimes(1)
+  expect(remove.mock.calls[0][1]).toMatchObject({ command })
+  expect(add).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('runs remove before add when a comment carries both /kind and /remove-kind', async () => {
+  utils.setupActionsEnv('/kind')
+
+  const order: string[] = []
+  vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(async () => {
+    order.push('add')
+  })
+  vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(async () => {
+    order.push('remove')
+  })
+
+  issueCommentEvent.comment.body = '/kind bug\n/remove-kind cleanup'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(order).toEqual(['remove', 'add'])
+})
+
+it('does not dispatch /remove-kind when /kind is not configured', async () => {
+  utils.setupActionsEnv('/area')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/remove-kind cleanup'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).not.toHaveBeenCalled()
+  expect(remove).not.toHaveBeenCalled()
 })

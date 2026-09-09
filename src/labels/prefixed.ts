@@ -66,6 +66,36 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
   await labelIssue(octokit, context, issueNumber, labels)
 }
 
+/**
+ * removePrefixedLabels removes '<prefix>/<value>' for every value in the
+ * /remove-<command> line that is in the .prowlabels.yaml allowlist and
+ * currently on the issue. Restricting removal to the allowlist keeps
+ * anyone from stripping protected labels such as lgtm, approved or hold.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelCommand): Promise<void> {
+  const token = core.getInput('github-token', { required: true })
+  const octokit = newOctokit(token)
+
+  const issueNumber = requireIssueNumber(context)
+  const commentBody: string = context.payload.comment?.body
+  const command = removeCommandFor(cmd.command)
+
+  const labels = await requestedLabels(octokit, context, cmd, command, commentBody)
+  const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command)
+
+  const present = labels.filter(label => currentLabels.includes(label))
+
+  if (present.length === 0) {
+    core.debug(`${command.slice(1)}: none of ${labels} are on the issue`)
+    return
+  }
+
+  await removeLabels(octokit, context, issueNumber, present)
+}
+
 function requireIssueNumber(context: Context): number {
   const issueNumber: number | undefined = context.payload.issue?.number
 

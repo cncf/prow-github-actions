@@ -1026,6 +1026,7 @@ const commandAliases = {
     '/lgtm': ['/remove-lgtm'],
     '/approve': ['/remove-approve'],
     '/hold': ['/unhold', '/remove-hold'],
+    ...Object.fromEntries(prefixed_1.prefixedLabelCommands.map(cmd => [cmd.command, [(0, prefixed_1.removeCommandFor)(cmd.command)]])),
 };
 function canonicalCommand(name) {
     for (const [command, aliases] of Object.entries(commandAliases)) {
@@ -1060,7 +1061,7 @@ async function handleIssueComment(context = github.context) {
         if (commandForms(command).some(form => (0, command_1.hasCommand)(form, commentBody))) {
             const prefixed = prefixed_1.prefixedLabelCommands.find(cmd => cmd.command === command);
             if (prefixed) {
-                return await (0, prefixed_1.addPrefixedLabels)(context, prefixed).catch(normalizeError);
+                return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError);
             }
             switch (command) {
                 case '/assign':
@@ -1106,6 +1107,15 @@ async function handleIssueComment(context = github.context) {
         .catch((e) => {
         core.setFailed(`${e}`);
     });
+}
+// a body may carry both '/kind bug' and '/remove-kind cleanup'; removals go first
+async function prefixedLabels(context, cmd, body) {
+    if ((0, command_1.hasCommand)((0, prefixed_1.removeCommandFor)(cmd.command), body)) {
+        await (0, prefixed_1.removePrefixedLabels)(context, cmd);
+    }
+    if ((0, command_1.hasCommand)(cmd.command, body)) {
+        await (0, prefixed_1.addPrefixedLabels)(context, cmd);
+    }
 }
 // normalizeError coerces a non-Error rejection so it still fails the Action
 function normalizeError(error) {
@@ -2147,6 +2157,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.prefixedLabelCommands = void 0;
 exports.removeCommandFor = removeCommandFor;
 exports.addPrefixedLabels = addPrefixedLabels;
+exports.removePrefixedLabels = removePrefixedLabels;
 const core = __importStar(__nccwpck_require__(7484));
 const command_1 = __nccwpck_require__(7971);
 const labeling_1 = __nccwpck_require__(7138);
@@ -2190,6 +2201,30 @@ async function addPrefixedLabels(context, cmd) {
         }
     }
     await (0, labeling_1.labelIssue)(octokit, context, issueNumber, labels);
+}
+/**
+ * removePrefixedLabels removes '<prefix>/<value>' for every value in the
+ * /remove-<command> line that is in the .prowlabels.yaml allowlist and
+ * currently on the issue. Restricting removal to the allowlist keeps
+ * anyone from stripping protected labels such as lgtm, approved or hold.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removePrefixedLabels(context, cmd) {
+    const token = core.getInput('github-token', { required: true });
+    const octokit = (0, octokit_1.newOctokit)(token);
+    const issueNumber = requireIssueNumber(context);
+    const commentBody = context.payload.comment?.body;
+    const command = removeCommandFor(cmd.command);
+    const labels = await requestedLabels(octokit, context, cmd, command, commentBody);
+    const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
+    const present = labels.filter(label => currentLabels.includes(label));
+    if (present.length === 0) {
+        core.debug(`${command.slice(1)}: none of ${labels} are on the issue`);
+        return;
+    }
+    await (0, labeling_1.removeLabels)(octokit, context, issueNumber, present);
 }
 function requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
