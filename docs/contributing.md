@@ -15,6 +15,12 @@ The action runs from the committed `dist/index.js` (an `ncc` bundle of `src/`).
 Any change to `src/` must be followed by `npm run pack`, and the resulting
 `dist/index.js` committed alongside it; CI fails if `dist/` is out of date.
 
+`tsc` compiles `src/` to ES modules under `lib/`, and `ncc` bundles those into
+the CommonJS `dist/index.js` that the runner executes; `package.json`
+intentionally has no `"type": "module"`, since Node would then refuse to load
+the bundle. Never import from `@actions/github/lib/*` (only `.` and
+`./lib/utils` are exported); the `Context` type lives in `src/utils/context.ts`.
+
 ## Testing
 
 | Command | What it runs |
