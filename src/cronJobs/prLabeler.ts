@@ -5,8 +5,8 @@
  * even from forks (which this feature attempted to subvert via a cron).
  */
 
-import type { Context } from '@actions/github/lib/context'
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
+import type { Context } from '../utils/context'
 
 import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'

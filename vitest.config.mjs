@@ -5,6 +5,7 @@ export default defineConfig({
     environment: 'node',
     include: ['__tests__/**/*.test.ts'],
     globals: false,
+    setupFiles: ['__tests__/setup.ts'],
     // Mirrors Jest's `clearMocks: true` + `resetMocks: true` + `restoreMocks: true`.
     // Note: Vitest's mockReset restores a spy's original implementation (Jest 29
     // reset it to return undefined); the suite passes identically under both semantics.

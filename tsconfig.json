@@ -2,7 +2,8 @@
   "compilerOptions": {
     "target": "ES2022", /* Node 24 runtime supports ES2022 natively. */
     "rootDir": "./src", /* Specify the root directory of input files. Use to control the output directory structure with --outDir. */
-    "module": "commonjs", /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */
+    "module": "es2022", /* Emit ES module syntax for ncc, which bundles it into a CommonJS dist/index.js. */
+    "moduleResolution": "node10",
     "resolveJsonModule": true,
     "strict": true, /* Enable all strict type-checking options. */
     "noImplicitAny": true, /* Raise error on expressions and declarations with an implied 'any' type. */
