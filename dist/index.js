@@ -43617,6 +43617,16 @@ function getCommandArgs(command, body) {
     const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
     return [...new Set(stripAtSign(args))];
 }
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
     const found = [];
@@ -43632,7 +43642,7 @@ function commandPattern(command) {
     // escape regex metacharacters so a command is matched literally
     const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`);
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
 }
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings
 function splitLines(body) {
@@ -43850,7 +43860,7 @@ async function hold(context = github_context) {
     }
     const cancel = hasCommand('/unhold', commentBody)
         || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody).includes('cancel'));
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
     if (cancel) {
         try {
             await cancelLabel(octokit, context, issueNumber, 'hold');
@@ -44155,7 +44165,7 @@ async function lgtm(context = github_context) {
         throw e;
     }
     const cancel = hasCommand('/remove-lgtm', commentBody)
-        || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody).includes('cancel'));
+        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
     if (cancel) {
         try {
             await cancelLabel(octokit, context, issueNumber, 'lgtm');
@@ -44370,7 +44380,7 @@ async function approve(context = github_context) {
         throw e;
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
-        || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody).includes('cancel'));
+        || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
     if (isCancel) {
         try {
             await cancel(octokit, context, issueNumber, commenterLogin);
@@ -44916,7 +44926,7 @@ async function milestone(context = github_context) {
     if (milestoneToAdd === '') {
         throw new Error(`please provide a milestone to add`);
     }
-    if (milestoneToAdd === 'clear') {
+    if (milestoneToAdd.toLowerCase() === 'clear') {
         await octokit.issues.update({
             ...context.repo,
             issue_number: issueNumber,
@@ -45203,7 +45213,7 @@ async function handleIssueComment(context = github_context) {
     const commandConfig = [...new Set(getInput('prow-commands', { required: false })
             .split(/\s+/)
             .filter(command => command !== '')
-            .map(canonicalCommand))];
+            .map(command => canonicalCommand(command.toLowerCase())))];
     const commentBody = context.payload.comment?.body;
     if (commandConfig.length === 0) {
         setFailed(`please provide a list of space delimited commands / jobs to run. None found`);

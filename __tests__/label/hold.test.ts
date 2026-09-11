@@ -42,6 +42,25 @@ describe('hold', () => {
     })
   })
 
+  it('labels the issue with /HOLD', async () => {
+    issueCommentEvent.comment.body = '/HOLD'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({
+      labels: ['hold'],
+    })
+  })
+
   it('removes the hold label with /hold cancel', async () => {
     issueCommentEvent.comment.body = '/hold cancel'
     const commentContext = new utils.MockContext(issueCommentEvent)
@@ -131,7 +150,7 @@ describe('hold', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it.each(['/unhold', '/remove-hold'])('removes the hold label with %s', async (body) => {
+  it.each(['/unhold', '/remove-hold', '/UNHOLD', '/Hold Cancel'])('removes the hold label with %s', async (body) => {
     issueCommentEvent.comment.body = body
     const commentContext = new utils.MockContext(issueCommentEvent)
 

@@ -463,4 +463,78 @@ reviewers:
       expect.stringContaining('not a org member or collaborator'),
     )
   })
+
+  it('labels the issue with /LGTM', async () => {
+    issueCommentEvent.comment.body = '/LGTM'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({ labels: ['lgtm'] })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('removes the lgtm label with /Lgtm CANCEL', async () => {
+    issueCommentEvent.comment.body = '/Lgtm CANCEL'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'lgtm' })
+
+    const observeDelete = new utils.ObserveRequest()
+    const observeAdd = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeAdd),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.called()).resolves.toBe('called')
+    await expect(observeAdd.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
 })

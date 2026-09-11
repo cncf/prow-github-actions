@@ -52,7 +52,7 @@ export async function milestone(
     throw new Error(`please provide a milestone to add`)
   }
 
-  if (milestoneToAdd === 'clear') {
+  if (milestoneToAdd.toLowerCase() === 'clear') {
     await octokit.issues.update({
       ...context.repo,
       issue_number: issueNumber,

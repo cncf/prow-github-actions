@@ -336,3 +336,46 @@ it.each(['/area', '/kind', '/priority', '/label'])('ignores a lone /remove-%s al
   expect(remove).not.toHaveBeenCalled()
   expect(setFailed).not.toHaveBeenCalled()
 })
+
+it('dispatches an upper-case command in the comment body', async () => {
+  utils.setupActionsEnv('/lgtm')
+
+  vi.spyOn(lgtm, 'lgtm').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/LGTM'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(lgtm.lgtm).toHaveBeenCalledTimes(1)
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('accepts a mixed-case entry in prow-commands and dispatches its lower-case command', async () => {
+  utils.setupActionsEnv('/Kind')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/kind cleanup'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).toHaveBeenCalledTimes(1)
+  expect(add.mock.calls[0][1]).toMatchObject({ command: '/kind' })
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('resolves an upper-case alias in prow-commands to its base command', async () => {
+  utils.setupActionsEnv('/UNHOLD')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/hold'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).toHaveBeenCalledTimes(1)
+  expect(setFailed).not.toHaveBeenCalled()
+})

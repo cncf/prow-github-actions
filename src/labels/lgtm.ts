@@ -4,7 +4,7 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs, hasCommand } from '../utils/command'
+import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { cancelLabel, labelIssue } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
@@ -55,7 +55,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
   }
 
   const cancel = hasCommand('/remove-lgtm', commentBody)
-    || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody).includes('cancel'))
+    || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'))
 
   if (cancel) {
     try {
