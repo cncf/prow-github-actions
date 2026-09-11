@@ -26,9 +26,9 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md)
-`/lgtm cancel` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | removes the `lgtm` label
-`/remove-lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | same as `/lgtm cancel`
+`/lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm cancel` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | removes the `lgtm` label
+`/remove-lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`

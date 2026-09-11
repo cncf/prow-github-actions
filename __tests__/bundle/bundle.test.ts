@@ -162,6 +162,28 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /lgtm by the pr author is refused with a comment and fails the action', async () => {
+    gh.route('GET', `${repo}/contents/OWNERS`, { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/lgtm'),
+      inputs: { ...token, 'prow-commands': '/lgtm' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('you cannot LGTM your own PR.'))).toBe(true)
+    expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
+    const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+    expect(comments).toHaveLength(1)
+    expect(comments[0].body).toEqual({ body: 'you cannot LGTM your own PR.' })
+  })
+
   it('issue_comment /remove fails the action when the api returns 500', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'foo' }] } })

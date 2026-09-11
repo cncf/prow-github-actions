@@ -44134,6 +44134,7 @@ async function createComment(octokit, context, issueNum, message) {
 /**
  * /lgtm will add the lgtm label.
  * /lgtm cancel and /remove-lgtm remove it.
+ * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
  *
@@ -44145,28 +44146,16 @@ async function lgtm(context = github_context) {
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    try {
-        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
-    }
-    catch (e) {
-        const msg = `Cannot apply the lgtm label because ${e}`;
-        error(msg);
-        // Try to reply back that the user is unauthorized
-        try {
-            await createComment(octokit, context, issueNumber, msg);
-        }
-        catch (commentE) {
-            // Log the comment error but continue to throw the original auth error
-            error(`Could not comment with an auth error: ${commentE}`);
-        }
-        throw e;
     }
     const cancel = hasCommand('/remove-lgtm', commentBody)
         || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
     if (cancel) {
+        if (!isAuthor) {
+            await assertReviewer(octokit, context, issueNumber, commenterId);
+        }
         try {
             await cancelLabel(octokit, context, issueNumber, 'lgtm');
         }
@@ -44175,7 +44164,30 @@ async function lgtm(context = github_context) {
         }
         return;
     }
+    if (isAuthor) {
+        await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
+    }
+    await assertReviewer(octokit, context, issueNumber, commenterId);
     await labelIssue(octokit, context, issueNumber, ['lgtm']);
+}
+async function assertReviewer(octokit, context, issueNumber, commenterId) {
+    try {
+        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
+    }
+    catch (e) {
+        await refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
+    }
+}
+// refuse logs and replies with msg, then fails the run with cause (or msg)
+async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+    error(msg);
+    try {
+        await createComment(octokit, context, issueNumber, msg);
+    }
+    catch (commentE) {
+        error(`Could not comment with an auth error: ${commentE}`);
+    }
+    throw cause;
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
