@@ -76,32 +76,28 @@ describe('handleCronJobs', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('fails the removed pr-labeler job with an unknown-job error', async () => {
+    utils.setupJobsEnv('pr-labeler')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.toBeUndefined()
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('could not execute pr-labeler. May not be supported'),
+    )
+  })
+
   it('dispatches jobs delimited by newlines and extra spaces', async () => {
     utils.setupJobsEnv('lgtm  pr-labeler\n')
     const context = new utils.MockContext(pullReqOpenedEvent)
     const mergeReq = serveMergeablePr()
-    const yamlFetch = new utils.ObserveRequest()
-    server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/files`,
-        utils.mockResponse(200, []),
-      ),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/.github%2Flabels.yaml`,
-        utils.mockResponse(404, null, yamlFetch),
-      ),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/.github%2Flabels.yml`,
-        utils.mockResponse(404, null, yamlFetch),
-      ),
-    )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await expect(handleCronJobs(context)).resolves.toBeUndefined()
     await expect(mergeReq.called()).resolves.toBe('called')
-    await expect(yamlFetch.called()).resolves.toBe('called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('could not get .github/labels.yaml or .github/labels.yml'),
+      expect.stringContaining('could not execute pr-labeler'),
     )
   })
 
