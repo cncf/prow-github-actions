@@ -1,10 +1,44 @@
 import * as core from '@actions/core'
-import { describe, expect, it, vi } from 'vitest'
+import { http } from 'msw'
+import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
+import listPullReqs from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 
 import * as utils from '../testUtils'
+
+const server = setupServer()
+beforeAll(() =>
+  server.listen({
+    onUnhandledRequest: 'error',
+  }),
+)
+afterEach(() => server.resetHandlers())
+afterAll(() => server.close())
+
+function serveMergeablePr() {
+  server.use(
+    http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
+      const page = new URL(request.url).searchParams.get('page')
+      const payload = structuredClone(listPullReqs)
+      payload[0].labels[0].name = 'lgtm'
+      return new Response(JSON.stringify(page === '1' ? payload : []), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }),
+  )
+  const mergeReq = new utils.ObserveRequest()
+  server.use(
+    http.put(
+      `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
+      utils.mockResponse(200, null, mergeReq),
+    ),
+  )
+  return mergeReq
+}
 
 describe('handleCronJobs', () => {
   it('fails when the job is not supported', async () => {
@@ -29,5 +63,56 @@ describe('handleCronJobs', () => {
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('please provide a list of space delimited commands / jobs to run'),
     )
+  })
+
+  it('dispatches jobs delimited by newlines', async () => {
+    utils.setupJobsEnv('lgtm\n')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    const mergeReq = serveMergeablePr()
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.toBeUndefined()
+    await expect(mergeReq.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('dispatches jobs delimited by newlines and extra spaces', async () => {
+    utils.setupJobsEnv('lgtm  pr-labeler\n')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    const mergeReq = serveMergeablePr()
+    const yamlFetch = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/files`,
+        utils.mockResponse(200, []),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.github%2Flabels.yaml`,
+        utils.mockResponse(404, null, yamlFetch),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.github%2Flabels.yml`,
+        utils.mockResponse(404, null, yamlFetch),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.toBeUndefined()
+    await expect(mergeReq.called()).resolves.toBe('called')
+    await expect(yamlFetch.called()).resolves.toBe('called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('could not get .github/labels.yaml or .github/labels.yml'),
+    )
+  })
+
+  it('matches job names case-insensitively', async () => {
+    utils.setupJobsEnv('LGTM')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    const mergeReq = serveMergeablePr()
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.toBeUndefined()
+    await expect(mergeReq.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })

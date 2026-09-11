@@ -9,7 +9,7 @@ inputs:
     description: Comment keywords/commands to look for. Space delimited. Expect commands on own line. Prow-style aliases (e.g. /unhold, /remove-lgtm) are enabled with their base command, and listing an alias enables the whole command family (e.g. /remove-kind also enables /kind).
     required: false
   jobs:
-    description: The jobs to automatically run on event. Space delimited, on a single line.
+    description: The jobs to automatically run on event. Space or newline delimited.
     required: false
   merge-method:
     description: "Strategy for Prow-github-actions to take when merging a pull request using the lgtm cron-job. Can be 'squash', 'rebase', or 'merge'. Defaults to 'merge'"

@@ -43545,7 +43545,13 @@ async function sendLabels(octokit, context, prNum, labels) {
  * @param context - the github context of the current action event
  */
 async function handleCronJobs(context = github_context) {
-    const runConfig = getInput('jobs', { required: false }).split(' ');
+    const runConfig = getInput('jobs', { required: false })
+        .split(/\s+/)
+        .filter(command => command !== '')
+        .map(command => command.toLowerCase());
+    if (runConfig.length === 0) {
+        runConfig.push('');
+    }
     await Promise.all(runConfig.map(async (command) => {
         switch (command) {
             case 'pr-labeler':
@@ -45726,7 +45732,13 @@ async function onPrLgtm(context) {
  * @param context - the github context of the current action event
  */
 async function handlePullReq(context = github_context) {
-    const runConfig = getInput('jobs', { required: false }).split(' ');
+    const runConfig = getInput('jobs', { required: false })
+        .split(/\s+/)
+        .filter(command => command !== '')
+        .map(command => command.toLowerCase());
+    if (runConfig.length === 0) {
+        runConfig.push('');
+    }
     await Promise.all(runConfig.map(async (command) => {
         core_debug(`${context}`);
         switch (command) {
