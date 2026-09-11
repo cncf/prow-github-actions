@@ -73,6 +73,8 @@ labels:
 With the command `/label documentation`,
 the issue or PR will be labeled with `documentation` as written, with no prefix.
 Values are split on spaces, so label names containing spaces cannot be listed here.
+`lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and
+`/remove-label`, even when listed here; use `/lgtm`, `/hold` and `/approve` instead.
 
 ## Lifecycle, stage and status labels
 

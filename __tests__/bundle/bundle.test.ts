@@ -136,6 +136,28 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /remove-label refuses lgtm even when .prowlabels.yaml lists it', async () => {
+    const listsLgtm = structuredClone(labelFileContents)
+    listsLgtm.content = Buffer.from('labels:\n  - lgtm\n  - documentation\n').toString('base64')
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: listsLgtm })
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/remove-label lgtm'),
+      inputs: { ...token, 'prow-commands': '/label' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('managed by its own command'))).toBe(true)
+    expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/contents/.prowlabels.yaml`,
+    ])
+  })
+
   it('issue_comment /level uses a mapping-form yaml key as an exclusive label command', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'level/sandbox' }] } })
