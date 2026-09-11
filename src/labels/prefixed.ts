@@ -181,7 +181,7 @@ function requestedLabels(
 }
 
 // GitHub label names are case-insensitive, as are Prow's comparisons
-function sameLabel(a: string, b: string): boolean {
+export function sameLabel(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase()
 }
 

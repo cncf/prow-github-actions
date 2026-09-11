@@ -1,5 +1,7 @@
 # Pull Request Jobs
 
+The `jobs` input is space or newline delimited and case-insensitive.
+
 Jobs | Description
 --- | ---
 `lgtm` | Removes the `lgtm` label (if present) when the PR is updated, so updated code must be reviewed again before [automatic merging](./automatic-merging.md).

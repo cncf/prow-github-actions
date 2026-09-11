@@ -1,7 +1,7 @@
 # Cron jobs
 
 The following jobs are supported through [cron Github workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
-The `jobs` input is space delimited on a single line (`jobs: lgtm`); multi-line `jobs:` blocks do not work.
+The `jobs` input is space or newline delimited and case-insensitive (`jobs: lgtm`).
 Both jobs page through the repository's pull requests, following pages until one comes back empty, and skip locked and closed PRs.
 
 Jobs | Description

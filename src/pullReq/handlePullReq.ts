@@ -12,7 +12,15 @@ import { onPrLgtm } from './onPrLgtm'
  * @param context - the github context of the current action event
  */
 export async function handlePullReq(context: Context = github.context): Promise<void> {
-  const runConfig = core.getInput('jobs', { required: false }).split(' ')
+  const runConfig = core
+    .getInput('jobs', { required: false })
+    .split(/\s+/)
+    .filter(command => command !== '')
+    .map(command => command.toLowerCase())
+
+  if (runConfig.length === 0) {
+    runConfig.push('')
+  }
 
   await Promise.all(
     runConfig.map(async (command) => {

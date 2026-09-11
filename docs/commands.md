@@ -7,7 +7,6 @@ These docs describe `main`. Features added since the latest release (`v2.0.0`) s
 - A command must start a line of the comment; leading whitespace is allowed. A command mentioned mid-sentence is ignored.
 - Commands and their keywords (`cancel`, `clear`, `not-planned`) are case-insensitive: `/LGTM cancel` works.
 - **Label values** are matched case-insensitively against `.prowlabels.yaml` (or `.prowlabels.yml`, see [labeling](./labeling.md)) and applied with the casing written in the file: `/kind Bug` adds `kind/bug`.
-- `/lock` reasons are the exception: they are **case-sensitive**, and an unknown reason locks with no reason.
 - Commands inside Markdown code (fenced ``` / ~~~ blocks, indented code, inline `code`) and blockquotes are ignored.
 - When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins.
 - A `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
@@ -28,7 +27,7 @@ Commands | Policy | Description
 `/close` | Collaborators **or the issue/PR author** | closes the issue / PR
 `/close not-planned` | Collaborators **or the issue/PR author** | closes the issue / PR with the `not planned` state reason
 `/reopen` | Collaborators **or the issue/PR author** | reopens a closed issue / PR
-`/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason. Reasons are **case-sensitive**; an unknown reason locks with no reason
+`/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason (case-insensitive; an unknown reason fails the run without locking)
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. With no title the run fails. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
 `/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens

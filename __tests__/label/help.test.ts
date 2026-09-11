@@ -94,6 +94,15 @@ describe('/help and /good-first-issue', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('/remove-help removes labels with the casing on the issue', async () => {
+    const { mutations } = serveIssueAndRecordMutations(['Help Wanted'])
+
+    const setFailed = await run('/help', '/remove-help')
+
+    expect(mutations).toEqual(['DELETE Help%20Wanted'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('/remove-help is a no-op when neither label is on the issue', async () => {
     const { mutations } = serveIssueAndRecordMutations([])
 

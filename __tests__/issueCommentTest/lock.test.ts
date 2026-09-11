@@ -128,8 +128,8 @@ describe('/lock', () => {
     })
   })
 
-  it('locks the associated issue with given reason resolved', async () => {
-    issueCommentEvent.comment.body = '/lock resolved'
+  it('locks the associated issue with given reason RESOLVED (case-insensitive)', async () => {
+    issueCommentEvent.comment.body = '/lock RESOLVED'
 
     server.use(
       http.get(
@@ -150,8 +150,89 @@ describe('/lock', () => {
 
     await handleIssueComment(commentContext)
     await observeReq.called()
-    // resolved is GitHub's default, so no lock_reason is sent
+    expect(await observeReq.body()).toMatchObject({
+      lock_reason: 'resolved',
+    })
+  })
+
+  it('locks the associated issue with given reason Too-Heated (case-insensitive)', async () => {
+    issueCommentEvent.comment.body = '/lock Too-Heated'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/lock`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({
+      lock_reason: 'too heated',
+    })
+  })
+
+  it('locks with no reason when none is given', async () => {
+    issueCommentEvent.comment.body = '/lock'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/lock`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
     expect(await observeReq.ref?.text()).toBe('')
+  })
+
+  it('fails loudly on an unknown reason without locking', async () => {
+    issueCommentEvent.comment.body = '/lock bogus'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/lock`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('unknown reason "bogus"'),
+    )
   })
 
   it('fails when commenter is not a collaborator', async () => {

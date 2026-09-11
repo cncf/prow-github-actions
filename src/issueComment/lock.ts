@@ -6,6 +6,15 @@ import { checkCollaborator } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { newOctokit } from '../utils/octokit'
 
+type LockReason = 'off-topic' | 'too heated' | 'resolved' | 'spam'
+
+const lockReasons: Record<string, LockReason> = {
+  'resolved': 'resolved',
+  'off-topic': 'off-topic',
+  'too-heated': 'too heated',
+  'spam': 'spam',
+}
+
 /**
  * /lock will lock the issue / PR.
  * No more comments will be permitted
@@ -39,82 +48,24 @@ export async function lock(context: Context = github.context): Promise<void> {
   }
 
   if (isAuthUser) {
+    let lockReason: LockReason | undefined
     if (commentArgs.length > 0) {
-      switch (commentArgs[0]) {
-        case 'resolved':
-          try {
-            await octokit.issues.lock({
-              ...context.repo,
-              issue_number: issueNumber,
-            })
-          }
-          catch (e) {
-            throw new Error(`could not lock issue: ${e}`)
-          }
-          break
-
-        case 'off-topic':
-          try {
-            await octokit.issues.lock({
-              ...context.repo,
-              issue_number: issueNumber,
-              lock_reason: 'off-topic',
-            })
-          }
-          catch (e) {
-            throw new Error(`could not lock issue: ${e}`)
-          }
-          break
-
-        case 'too-heated':
-          try {
-            await octokit.issues.lock({
-              ...context.repo,
-              issue_number: issueNumber,
-              lock_reason: 'too heated',
-            })
-          }
-          catch (e) {
-            throw new Error(`could not lock issue: ${e}`)
-          }
-          break
-
-        case 'spam':
-          try {
-            await octokit.issues.lock({
-              ...context.repo,
-              issue_number: issueNumber,
-              lock_reason: 'spam',
-            })
-          }
-          catch (e) {
-            throw new Error(`could not lock issue: ${e}`)
-          }
-          break
-
-        default:
-          try {
-            await octokit.issues.lock({
-              ...context.repo,
-              issue_number: issueNumber,
-            })
-          }
-          catch (e) {
-            throw new Error(`could not lock issue: ${e}`)
-          }
-          break
+      const arg = commentArgs[0].toLowerCase()
+      lockReason = lockReasons[arg]
+      if (lockReason === undefined) {
+        throw new Error(`/lock: unknown reason "${commentArgs[0]}". Use resolved, off-topic, too-heated or spam`)
       }
     }
-    else {
-      try {
-        await octokit.issues.lock({
-          ...context.repo,
-          issue_number: issueNumber,
-        })
-      }
-      catch (e) {
-        throw new Error(`could not lock issue: ${e}`)
-      }
+
+    try {
+      await octokit.issues.lock({
+        ...context.repo,
+        issue_number: issueNumber,
+        ...(lockReason !== undefined ? { lock_reason: lockReason } : {}),
+      })
+    }
+    catch (e) {
+      throw new Error(`could not lock issue: ${e}`)
     }
   }
   else {
