@@ -16,9 +16,10 @@ vi.setConfig({ testTimeout: 30_000 })
 const repo = '/repos/Codertocat/Hello-World'
 const token = { 'github-token': 'some-token' }
 
-function comment(body: string) {
+function comment(body: string, author = issueCommentEvent.issue.user.login) {
   const payload = structuredClone(issueCommentEvent)
   payload.comment.body = body
+  payload.issue.user.login = author
   return payload
 }
 
@@ -144,12 +145,12 @@ describe('dist/index.js', () => {
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
   })
 
-  it('issue_comment /close by a non-collaborator is a silent no-op', async () => {
+  it('issue_comment /close by a non-collaborator non-author is a silent no-op', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
     const result = await runBundle({
       eventName: 'issue_comment',
-      payload: comment('/close'),
+      payload: comment('/close', 'some-author'),
       inputs: { ...token, 'prow-commands': '/close' },
       apiUrl: gh.url,
     })
@@ -159,6 +160,28 @@ describe('dist/index.js', () => {
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
       `GET ${repo}/collaborators/Codertocat`,
+    ])
+  })
+
+  it('issue_comment /close not-planned by a collaborator closes with state_reason not_planned', async () => {
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+    gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/close not-planned', 'some-author'),
+      inputs: { ...token, 'prow-commands': '/close' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const patches = gh.requestsMatching('PATCH', /\/issues\/1$/)
+    expect(patches).toHaveLength(1)
+    expect(patches[0].body).toEqual({ state: 'closed', state_reason: 'not_planned' })
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/collaborators/Codertocat`,
+      `PATCH ${repo}/issues/1`,
     ])
   })
 

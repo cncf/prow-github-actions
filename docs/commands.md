@@ -12,8 +12,9 @@ Commands | Policy | Description
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Target be an Org Member, Collaborator, or have previously commented.
 `/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Target must already have had a review requested.
-`/close` | Collaborators | closes the issue / PR
-`/reopen` | Collaborators | reopens a closed issue / PR
+`/close` | Collaborators **or the issue/PR author** | closes the issue / PR
+`/close not-planned` | Collaborators **or the issue/PR author** | closes the issue / PR with the `not planned` state reason
+`/reopen` | Collaborators **or the issue/PR author** | reopens a closed issue / PR
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone

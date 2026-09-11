@@ -44622,8 +44622,10 @@ async function selfReview(octokit, context, pullNum, user) {
 
 
 
+
 /**
- * /close will close the issue / PR
+ * /close will close the issue / PR.
+ * /close not-planned closes it with the not_planned state reason
  *
  * @param context - the github actions event context
  */
@@ -44631,26 +44633,42 @@ async function close_close(context = github_context) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
     const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     // Only users who:
+    // - are the issue / PR author
     // - are collaborators
-    let isAuthUser = false;
-    try {
-        isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    }
-    catch (e) {
-        throw new Error(`could not check commentor auth: ${e}`);
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
+    let isAuthUser = isAuthor;
+    if (!isAuthor) {
+        try {
+            isAuthUser = await checkCollaborator(octokit, context, commenterId);
+        }
+        catch (e) {
+            throw new Error(`could not check commentor auth: ${e}`);
+        }
     }
     if (isAuthUser) {
+        const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned');
         try {
-            await octokit.issues.update({
-                ...context.repo,
-                issue_number: issueNumber,
-                state: 'closed',
-            });
+            if (notPlanned) {
+                await octokit.issues.update({
+                    ...context.repo,
+                    issue_number: issueNumber,
+                    state: 'closed',
+                    state_reason: 'not_planned',
+                });
+            }
+            else {
+                await octokit.issues.update({
+                    ...context.repo,
+                    issue_number: issueNumber,
+                    state: 'closed',
+                });
+            }
         }
         catch (e) {
             throw new Error(`could not close issue: ${e}`);
@@ -44981,13 +44999,17 @@ async function reopen(context = github_context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     // Only users who:
+    // - are the issue / PR author
     // - are collaborators
-    let isAuthUser = false;
-    try {
-        isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    }
-    catch (e) {
-        throw new Error(`could not check commentor auth: ${e}`);
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
+    let isAuthUser = isAuthor;
+    if (!isAuthor) {
+        try {
+            isAuthUser = await checkCollaborator(octokit, context, commenterId);
+        }
+        catch (e) {
+            throw new Error(`could not check commentor auth: ${e}`);
+        }
     }
     if (isAuthUser) {
         try {
