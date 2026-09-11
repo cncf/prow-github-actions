@@ -104,15 +104,16 @@ The file itself must still exist, as it does for every other label command.
 
 `/help` and `/good-first-issue` mirror Prow's help plugin and use GitHub's default
 label names, which contain spaces and therefore cannot be listed in
-`.prowlabels.yaml`. They are fixed and do not read the file at all:
+`.prowlabels.yaml`. They are fixed and do not read the file at all. Removal
+matches labels case-insensitively and deletes them with the casing on the issue:
 
 Command | Adds | `/remove-` form removes
 --- | --- | ---
 `/help` | `help wanted` | `help wanted`, `good first issue`
 `/good-first-issue` | `good first issue`, `help wanted` | `good first issue`
 
-Removal matches label names **case-sensitively**, unlike the prefixed label
-commands: `/remove-help` does not remove a label spelled `Help Wanted`.
+Removal matches label names case-insensitively, like the prefixed label
+commands: `/remove-help` removes a label spelled `Help Wanted` as it appears on the issue.
 
 ## Removing labels
 

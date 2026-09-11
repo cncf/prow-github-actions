@@ -3,6 +3,7 @@ import * as core from '@actions/core'
 
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
+import { sameLabel } from './prefixed'
 
 export interface FixedLabelCommand {
   /** the slash command, ex: '/help' */
@@ -52,7 +53,7 @@ export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand
     throw new Error(`could not get labels from issue: ${e}`)
   }
 
-  const present = cmd.remove.filter(label => currentLabels.includes(label))
+  const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)))
 
   if (present.length === 0) {
     core.debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`)

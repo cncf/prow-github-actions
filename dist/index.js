@@ -43781,59 +43781,6 @@ function isNotFound(error) {
         && error.status === 404);
 }
 
-;// CONCATENATED MODULE: ./lib/labels/fixed.js
-
-
-
-// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
-const fixedLabelCommands = [
-    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
-    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
-];
-/**
- * addFixedLabels labels the issue with the command's fixed labels
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function addFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    await labelIssue(octokit, context, requireIssueNumber(context), cmd.add);
-}
-/**
- * removeFixedLabels removes the command's fixed labels that are on the issue
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function removeFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
-    let currentLabels = [];
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    const present = cmd.remove.filter(label => currentLabels.includes(label));
-    if (present.length === 0) {
-        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
-        return;
-    }
-    await removeLabels(octokit, context, issueNumber, present);
-}
-function requireIssueNumber(context) {
-    const issueNumber = context.payload.issue?.number;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    return issueNumber;
-}
-
 ;// CONCATENATED MODULE: ./lib/utils/command.js
 /**
  * hasCommand reports whether the command starts a line of the body
@@ -43984,6 +43931,201 @@ function stripAtSign(args) {
         }
     }
     return toReturn;
+}
+
+;// CONCATENATED MODULE: ./lib/labels/prefixed.js
+
+
+
+
+const prefixedLabelCommands = [
+    { command: '/area', prefix: 'area', allowlistKey: 'area' },
+    { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
+    { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
+    { command: '/label', prefix: '', allowlistKey: 'labels' },
+    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
+    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
+    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
+];
+// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
+const labelCommandName = /^[a-z][a-z0-9-]*$/;
+/**
+ * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
+ * key so that `/<key> value` labels the issue with '<key>/value'
+ *
+ * @param name - the top level key, ex: 'level'
+ */
+function dynamicPrefixedCommand(name) {
+    return { command: `/${name}`, prefix: name, allowlistKey: name };
+}
+/**
+ * removeCommandFor returns the Prow-style removal spelling of a label command
+ * Ex: '/kind' -> '/remove-kind'
+ *
+ * @param command - the add form of the command
+ */
+function removeCommandFor(command) {
+    return `/remove-${command.slice(1)}`;
+}
+/**
+ * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
+ * that is both in the comment and in the .prowlabels.yaml allowlist.
+ * When the command is exclusive, existing '<prefix>/*' labels that were not
+ * requested are removed first.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addPrefixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    const commentBody = context.payload.comment?.body;
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
+    if (section.exclusive) {
+        const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
+        const stale = currentLabels.filter((label) => {
+            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
+                && !labels.some(requested => sameLabel(requested, label));
+        });
+        if (stale.length > 0) {
+            await removeLabels(octokit, context, issueNumber, stale);
+        }
+    }
+    await labelIssue(octokit, context, issueNumber, labels);
+}
+/**
+ * removePrefixedLabels removes '<prefix>/<value>' for every value in the
+ * /remove-<command> line that is in the .prowlabels.yaml allowlist and
+ * currently on the issue. Restricting removal to the allowlist keeps
+ * anyone from stripping protected labels such as lgtm, approved or hold.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removePrefixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    const commentBody = context.payload.comment?.body;
+    const command = removeCommandFor(cmd.command);
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, command, commentBody, section.values);
+    const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
+    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
+    if (present.length === 0) {
+        core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
+}
+// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
+async function allowlistFor(octokit, context, cmd) {
+    const key = cmd.allowlistKey;
+    try {
+        const section = (await getLabelConfig(octokit, context))[key];
+        if (section) {
+            core_debug(`${key}: found labels ${section.values}`);
+            return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false };
+        }
+        if (cmd.defaultValues) {
+            core_debug(`${key}: using built-in labels ${cmd.defaultValues}`);
+            return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false };
+        }
+        throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from yaml: ${e}`);
+    }
+}
+function requestedLabels(cmd, command, commentBody, allowed) {
+    const args = getCommandArgs(command, commentBody);
+    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
+    const values = args
+        .map(arg => canonical.get(arg.toLowerCase()))
+        .filter((value) => value !== undefined);
+    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
+    // no arguments after command provided
+    if (labels.length === 0) {
+        throw new Error(`${command.slice(1)}: command args missing from body`);
+    }
+    return labels;
+}
+// GitHub label names are case-insensitive, as are Prow's comparisons
+function sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
+}
+async function currentIssueLabels(octokit, context, issueNumber, command) {
+    try {
+        const currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
+        return currentLabels;
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/labels/fixed.js
+
+
+
+
+// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
+const fixedLabelCommands = [
+    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
+    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
+];
+/**
+ * addFixedLabels labels the issue with the command's fixed labels
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await labelIssue(octokit, context, fixed_requireIssueNumber(context), cmd.add);
+}
+/**
+ * removeFixedLabels removes the command's fixed labels that are on the issue
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removeFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = fixed_requireIssueNumber(context);
+    let currentLabels = [];
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)));
+    if (present.length === 0) {
+        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function fixed_requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/hold.js
@@ -44556,147 +44698,6 @@ async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)
         error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
-}
-
-;// CONCATENATED MODULE: ./lib/labels/prefixed.js
-
-
-
-
-const prefixedLabelCommands = [
-    { command: '/area', prefix: 'area', allowlistKey: 'area' },
-    { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
-    { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
-    { command: '/label', prefix: '', allowlistKey: 'labels' },
-    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
-    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
-    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
-];
-// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
-const labelCommandName = /^[a-z][a-z0-9-]*$/;
-/**
- * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
- * key so that `/<key> value` labels the issue with '<key>/value'
- *
- * @param name - the top level key, ex: 'level'
- */
-function dynamicPrefixedCommand(name) {
-    return { command: `/${name}`, prefix: name, allowlistKey: name };
-}
-/**
- * removeCommandFor returns the Prow-style removal spelling of a label command
- * Ex: '/kind' -> '/remove-kind'
- *
- * @param command - the add form of the command
- */
-function removeCommandFor(command) {
-    return `/remove-${command.slice(1)}`;
-}
-/**
- * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
- * that is both in the comment and in the .prowlabels.yaml allowlist.
- * When the command is exclusive, existing '<prefix>/*' labels that were not
- * requested are removed first.
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function addPrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = prefixed_requireIssueNumber(context);
-    const commentBody = context.payload.comment?.body;
-    const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
-    if (section.exclusive) {
-        const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
-        const stale = currentLabels.filter((label) => {
-            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
-                && !labels.some(requested => sameLabel(requested, label));
-        });
-        if (stale.length > 0) {
-            await removeLabels(octokit, context, issueNumber, stale);
-        }
-    }
-    await labelIssue(octokit, context, issueNumber, labels);
-}
-/**
- * removePrefixedLabels removes '<prefix>/<value>' for every value in the
- * /remove-<command> line that is in the .prowlabels.yaml allowlist and
- * currently on the issue. Restricting removal to the allowlist keeps
- * anyone from stripping protected labels such as lgtm, approved or hold.
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function removePrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = prefixed_requireIssueNumber(context);
-    const commentBody = context.payload.comment?.body;
-    const command = removeCommandFor(cmd.command);
-    const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, command, commentBody, section.values);
-    const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
-    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
-    if (present.length === 0) {
-        core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
-        return;
-    }
-    await removeLabels(octokit, context, issueNumber, present);
-}
-function prefixed_requireIssueNumber(context) {
-    const issueNumber = context.payload.issue?.number;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    return issueNumber;
-}
-// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
-async function allowlistFor(octokit, context, cmd) {
-    const key = cmd.allowlistKey;
-    try {
-        const section = (await getLabelConfig(octokit, context))[key];
-        if (section) {
-            core_debug(`${key}: found labels ${section.values}`);
-            return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false };
-        }
-        if (cmd.defaultValues) {
-            core_debug(`${key}: using built-in labels ${cmd.defaultValues}`);
-            return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false };
-        }
-        throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from yaml: ${e}`);
-    }
-}
-function requestedLabels(cmd, command, commentBody, allowed) {
-    const args = getCommandArgs(command, commentBody);
-    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
-    const values = args
-        .map(arg => canonical.get(arg.toLowerCase()))
-        .filter((value) => value !== undefined);
-    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
-    // no arguments after command provided
-    if (labels.length === 0) {
-        throw new Error(`${command.slice(1)}: command args missing from body`);
-    }
-    return labels;
-}
-// GitHub label names are case-insensitive, as are Prow's comparisons
-function sameLabel(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
-}
-async function currentIssueLabels(octokit, context, issueNumber, command) {
-    try {
-        const currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
-        return currentLabels;
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/remove.js
