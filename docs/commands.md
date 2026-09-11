@@ -4,10 +4,10 @@ A command must start a line of the comment (leading whitespace is allowed); a co
 
 Commands | Policy | Description
 --- | --- | ---
-`/approve` | [OWNERS](#owners) if present, otherwise Org members & Collaborators | approve all the files for the current PR
-`/approve no-issue` | [OWNERS](#owners) if present, otherwise Org members & Collaborators | same as `/approve`; accepted for Prow compatibility
-`/approve cancel` | [OWNERS](#owners) if present, otherwise Org member & Collaborators | removes your approval on this pull-request
-`/remove-approve` | [OWNERS](#owners) if present, otherwise Org member & Collaborators | same as `/approve cancel`
+`/approve` | [OWNERS](#owners) approver for **every** changed file if the repo has OWNERS files, otherwise Org members & Collaborators | approve all the files for the current PR
+`/approve no-issue` | same as `/approve` | same as `/approve`; accepted for Prow compatibility
+`/approve cancel` | same as `/approve` | removes your approval on this pull-request
+`/remove-approve` | same as `/approve` | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Target be an Org Member, Collaborator, or have previously commented.
@@ -27,9 +27,9 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
-`/lgtm cancel` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | removes the `lgtm` label
-`/remove-lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | same as `/lgtm cancel`
+`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Collaborators and Org Members; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
+`/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
@@ -79,13 +79,43 @@ The API key is optional; unauthenticated access is best effort and may be rate l
 
 ## OWNERS
 
-A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) file is supported. When an OWNERS file is present at the root of the repository, it is used to authorize the /lgtm and /approve commands. See an [example][owners-example] using an OWNERS file.
+A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) files is supported. When the repository contains any `OWNERS` file, the `/lgtm` and `/approve` commands are authorized against them; when it contains none, org members and collaborators may use both commands. See an [example][owners-example] using OWNERS files.
 
-The `reviewers` role grants access to the /lgtm command and the approvers role grants access to the /approve command.
+### Where OWNERS files live
 
-The `approvers` role does not grant the reviewers role, a user must be in both roles to use /lgtm and /approve.
+An `OWNERS` file may be placed in any directory. It applies to the files in that directory and all directories below it. Which files apply to a given path is resolved the way Prow does it: walk from the file's directory up to the repository root and take the union of every `OWNERS` file on the way (a directory's `OWNERS` plus its parents'). A root-only `OWNERS` therefore covers the whole repository.
 
-The OWNERS file must be in YAML format. All entries are expected to be GitHub usernames; teams are not supported.
+Setting `options.no_parent_owners: true` in an `OWNERS` file stops the walk there, so only that file (and any below it) applies and the parents' approvers and reviewers are not inherited.
+
+### Which files decide the outcome
+
+On a pull request the changed files are listed (for renames both the old and the new path count) and their OWNERS are read from the PR's **base** branch. The head branch is never consulted, so a pull request cannot grant itself approvers by editing an `OWNERS` file.
+
+- `/approve`: the commenter must be an `approver` for **every** changed file. The refusal names the first file that is not covered and the OWNERS files consulted for it.
+- `/lgtm`: the commenter must be a `reviewer` or `approver` for **at least one** changed file (Prow's lgtm rule).
+- On an issue there are no changed files, so the root `OWNERS` of the default branch is used as before.
+
+The `approvers` role does not grant `/lgtm` on its own for issues; on pull requests an approver of a changed file may also `/lgtm`.
+
+### Failure modes
+
+Authorization fails closed:
+
+- a changed file with no covering `OWNERS` file fails the command with an error naming the file;
+- an `OWNERS` file that cannot be fetched or parsed (for example `approvers` is not a list) fails the command;
+- the org-member/collaborator fallback applies only when the repository has **no** `OWNERS` file at all.
+
+### File format
+
+The OWNERS file must be in YAML format. All entries are expected to be GitHub usernames (compared case-insensitively); teams are not supported.
+
+Key | Meaning
+--- | ---
+`approvers` | list of usernames who may use `/approve` (and `/lgtm` on a pull request)
+`reviewers` | list of usernames who may use `/lgtm`
+`options.no_parent_owners` | `true` stops inheritance from parent directories
+
+`emeritus_approvers`, `emeritus_reviewers`, `labels` and `filters` are accepted but ignored (`filters` is noted in the debug log). `OWNERS_ALIASES` files and aliases are not supported. Unknown keys are tolerated.
 
 ```yaml
 # List of usernames who may use /lgtm
@@ -99,6 +129,10 @@ approvers:
   - user1
   - user2
   - admin1
+
+# Optional: do not inherit approvers and reviewers from parent directories
+options:
+  no_parent_owners: false
 ```
 
 [owners-example]: ./examples.md#review-and-approve-pull-requests

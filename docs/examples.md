@@ -28,7 +28,7 @@ priority:
 
 ## Review and Approve Pull Requests
 
-Below is an example of how to use an [OWNERS](./commands.md#owners) file with the Prow action.
+Below is an example of how to use [OWNERS](./commands.md#owners) files with the Prow action.
 
 Add an OWNERS file to the root of the repository in the default branch.
 ```yaml
@@ -44,6 +44,18 @@ approvers:
   - user2
   - admin1
 ```
+
+Optionally add more OWNERS files in subdirectories, for example `sdk/OWNERS`. Their approvers and reviewers apply to files under `sdk/` in addition to the root ones, unless `no_parent_owners` is set.
+
+```yaml
+# sdk/OWNERS: sdk-maintainer may /approve and /lgtm changes under sdk/
+approvers:
+  - sdk-maintainer
+reviewers:
+  - sdk-reviewer
+```
+
+A pull request that changes files under `sdk/` and elsewhere needs an approver for every changed file (`user1` or `admin1` here, since they are inherited from the root), while `/lgtm` needs a reviewer or approver of at least one changed file. OWNERS files are read from the base branch of the pull request.
 
 Grant the default GITHUB_TOKEN permission to label issues and review pull requests.
 ```yaml
