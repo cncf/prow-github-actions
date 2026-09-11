@@ -455,12 +455,12 @@ describe('dist/index.js', () => {
   })
 
   describe('schedule lgtm job', () => {
-    function routePulls(pr: unknown) {
+    function routePulls(pr: unknown, merge: { status: number, body: unknown } = { status: 200, body: { merged: true } }) {
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
         const page = new URL(req.path, gh.url).searchParams.get('page')
         return { status: 200, body: page === '1' ? [pr] : [] }
       })
-      gh.route('PUT', `${repo}/pulls/2/merge`, { status: 200, body: { merged: true } })
+      gh.route('PUT', `${repo}/pulls/2/merge`, merge)
     }
 
     function runCron() {
@@ -513,6 +513,22 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
         `GET ${repo}/pulls?state=open&page=1`,
+        `GET ${repo}/pulls?state=open&page=2`,
+      ])
+    })
+
+    it('fails the run when a merge is refused', async () => {
+      routePulls(openPr(['lgtm']), { status: 405, body: { message: 'Pull Request is not mergeable' } })
+
+      const result = await runCron()
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('could not merge pr #2'))).toBe(true)
+      expect(result.errors.some(e => e.includes('1 pull request(s) could not be merged: #2 (Pull Request is not mergeable)'))).toBe(true)
+      expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
+      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+        `GET ${repo}/pulls?state=open&page=1`,
+        `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
