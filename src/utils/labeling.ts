@@ -7,22 +7,31 @@ import * as core from '@actions/core'
 
 import * as yaml from 'js-yaml'
 
+/** one top level key of .prowlabels.yaml */
+export interface LabelSection {
+  /** the allowed values, ex: ['bug', 'cleanup'] */
+  values: string[]
+  /** replace any existing '<prefix>/*' labels instead of stacking them */
+  exclusive?: boolean
+}
+
+export type LabelConfig = Record<string, LabelSection>
+
 /**
- * getArgumentLabels will get the .prowlabels.yaml or .prowlabels.yml file.
- * it will then return the section specified by arg.
+ * getLabelConfig fetches .prowlabels.yaml (or .prowlabels.yml) and returns
+ * every top level key as a LabelSection. A key may be written as a plain
+ * list of values or as a mapping `{ values: [...], exclusive: bool }`.
  *
  * This method has some eslint ignores related to
  * no explicit typing in octokit for content response - https://github.com/octokit/rest.js/issues/1516
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
- * @param arg - the label section to return. For example, may be 'area', etc
  */
-export async function getArgumentLabels(
+export async function getLabelConfig(
   octokit: Octokit,
   context: Context,
-  arg: string,
-): Promise<string[]> {
+): Promise<LabelConfig> {
   let response: any
   try {
     response = await octokit.repos.getContent({
@@ -55,13 +64,60 @@ export async function getArgumentLabels(
     response.data.encoding,
   ).toString()
 
-  const content: any = yaml.load(decoded)
+  const content: unknown = yaml.load(decoded)
+  const sections: Record<string, unknown> = isMapping(content) ? content : {}
 
-  if (!content[arg] && !Array.isArray(content[arg])) {
+  return Object.fromEntries(
+    Object.entries(sections).map(([key, section]) => [key, normalizeSection(key, section)]),
+  )
+}
+
+/**
+ * getArgumentLabels returns the allowed values of one .prowlabels.yaml section
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param arg - the label section to return. For example, may be 'area', etc
+ */
+export async function getArgumentLabels(
+  octokit: Octokit,
+  context: Context,
+  arg: string,
+): Promise<string[]> {
+  const config = await getLabelConfig(octokit, context)
+  const section = config[arg]
+
+  if (!section) {
     throw new Error(`${arg}: yaml malformed, expected '${arg}' top level key`)
   }
 
-  return content[arg]
+  return section.values
+}
+
+function normalizeSection(key: string, section: unknown): LabelSection {
+  if (isStringList(section)) {
+    return { values: section }
+  }
+
+  if (
+    isMapping(section)
+    && isStringList(section.values)
+    && (section.exclusive === undefined || typeof section.exclusive === 'boolean')
+  ) {
+    return { values: section.values, exclusive: section.exclusive }
+  }
+
+  throw new Error(
+    `${key}: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`,
+  )
+}
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
 /**

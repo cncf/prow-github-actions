@@ -3,7 +3,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
-import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
+import labelFileContents from '../fixtures/labels/globLabelsFileContentsResp.json'
 
 import prListFiles from '../fixtures/pullReq/pullReqListFiles.json'
 import listPullReqs from '../fixtures/pullReq/pullReqListPulls.json'

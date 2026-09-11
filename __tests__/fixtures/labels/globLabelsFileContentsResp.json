@@ -1,10 +1,10 @@
 {
   "type": "file",
   "encoding": "base64",
-  "size": 346,
+  "size": 203,
   "name": "labels.yaml",
-  "path": ".prowlabels.yaml",
-  "content": "YXJlYToKICAtICdidWcnCiAgLSAnaW1wb3J0YW50JwoKa2luZDoKICAtICdmYWlsaW5nLXRlc3QnCiAgLSAnY2xlYW51cCcKCnByaW9yaXR5OgogIC0gJ2xvdycKICAtICdoaWdoJwoKbGFiZWxzOgogIC0gJ2dvb2QtZmlyc3QtaXNzdWUnCiAgLSAnaGVscC13YW50ZWQnCgpsZXZlbDoKICB2YWx1ZXM6CiAgICAtIHNhbmRib3gKICAgIC0gaW5jdWJhdGlvbgogICAgLSBncmFkdWF0aW9uCiAgICAtIGFyY2hpdmVkCiAgZXhjbHVzaXZlOiB0cnVlCgp0cmlhZ2U6CiAgLSBhY2NlcHRlZAogIC0gbmVlZHMtaW5mb3JtYXRpb24KCnRlc3RzOgogIC0gJyoqLyoudGVzdC50cycKCnNvdXJjZToKICAtICdzcmMvKionCg==",
+  "path": ".github/labels.yaml",
+  "content": "YXJlYToKICAtICdidWcnCiAgLSAnaW1wb3J0YW50JwoKa2luZDoKICAtICdmYWlsaW5nLXRlc3QnCiAgLSAnY2xlYW51cCcKCnByaW9yaXR5OgogIC0gJ2xvdycKICAtICdoaWdoJwoKbGFiZWxzOgogIC0gJ2dvb2QtZmlyc3QtaXNzdWUnCiAgLSAnaGVscC13YW50ZWQnCgp0ZXN0czoKICAtICcqKi8qLnRlc3QudHMnCgpzb3VyY2U6CiAgLSAnc3JjLyoqJwo=",
   "sha": "3d21ec53a331a6f037a91c368710b99387d012c1",
   "url": "https://api.github.com/repos/octokit/octokit.rb/contents/.github.com/labels.yaml",
   "git_url": "https://api.github.com/repos/octokit/octokit.rb/git/blobs/3d21ec53a331a6f037a91c368710b99387d012c1",

@@ -13,3 +13,9 @@ priority:
 labels:
   - documentation
   - question
+
+triage:
+  values:
+    - accepted
+    - needs-information
+  exclusive: true

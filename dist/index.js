@@ -43577,113 +43577,22 @@ async function handleCronJobs(context = github_context) {
     });
 }
 
-;// CONCATENATED MODULE: ./lib/utils/command.js
-/**
- * hasCommand reports whether the command starts a line of the body
- * (leading whitespace allowed) so that mentions mid-sentence and
- * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
- *
- * @param command - the command to look for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function hasCommand(command, body) {
-    return findCommandArgs(command, body).length > 0;
-}
-/**
- * getLineArgs will return the trimmed text following the command on its line.
- * When the command appears on several lines the last one wins, which suits
- * single-valued commands such as /milestone and /retitle
- * Ex return: 'some-user some-other-user'
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getLineArgs(command, body) {
-    return findCommandArgs(command, body).at(-1) ?? '';
-}
-/**
- * getCommandArgs will return an array of the arguments associated with a command,
- * collected in order from every line that carries it and de-duplicated
- * Ex return: [`some-user', 'some-other-user']
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getCommandArgs(command, body) {
-    const rests = findCommandArgs(command, body);
-    if (rests.length === 0) {
-        throw new Error(`command ${command} missing from body`);
-    }
-    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
-    return [...new Set(stripAtSign(args))];
-}
-/**
- * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
- * is among the arguments, ignoring case like Prow's (?i) plugin regexes
- *
- * @param args - the arguments returned by getCommandArgs
- * @param keyword - the lowercase keyword to look for
- */
-function hasKeyword(args, keyword) {
-    return args.some(arg => arg.toLowerCase() === keyword);
-}
-function findCommandArgs(command, body) {
-    const pattern = commandPattern(command);
-    const found = [];
-    for (const line of splitLines(body)) {
-        const match = pattern.exec(line);
-        if (match) {
-            found.push((match[1] ?? '').trim());
-        }
-    }
-    return found;
-}
-function commandPattern(command) {
-    // escape regex metacharacters so a command is matched literally
-    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
-}
-// splitLines splits a comment body into lines, tolerating CRLF and CR endings
-function splitLines(body) {
-    return body.replace(/\r\n?/g, '\n').split('\n');
-}
-/**
- * stripAtSign will remove a leading '@' sign from the arguments array
- * This is necessary as some commands may have arguments with users tagged with
- * a leading at sign. Ex: /assign @some-user
- *
- * @param args - the array to remove at signs from
- */
-function stripAtSign(args) {
-    const toReturn = [];
-    for (const e of args) {
-        if (e.startsWith('@')) {
-            toReturn.push(e.replace('@', ''));
-        }
-        else {
-            toReturn.push(e);
-        }
-    }
-    return toReturn;
-}
-
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
 
 
 
 /**
- * getArgumentLabels will get the .prowlabels.yaml or .prowlabels.yml file.
- * it will then return the section specified by arg.
+ * getLabelConfig fetches .prowlabels.yaml (or .prowlabels.yml) and returns
+ * every top level key as a LabelSection. A key may be written as a plain
+ * list of values or as a mapping `{ values: [...], exclusive: bool }`.
  *
  * This method has some eslint ignores related to
  * no explicit typing in octokit for content response - https://github.com/octokit/rest.js/issues/1516
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
- * @param arg - the label section to return. For example, may be 'area', etc
  */
-async function getArgumentLabels(octokit, context, arg) {
+async function getLabelConfig(octokit, context) {
     let response;
     try {
         response = await octokit.repos.getContent({
@@ -43707,10 +43616,40 @@ async function getArgumentLabels(octokit, context, arg) {
     }
     const decoded = external_node_buffer_.Buffer.from(response.data.content, response.data.encoding).toString();
     const content = load(decoded);
-    if (!content[arg] && !Array.isArray(content[arg])) {
+    const sections = isMapping(content) ? content : {};
+    return Object.fromEntries(Object.entries(sections).map(([key, section]) => [key, normalizeSection(key, section)]));
+}
+/**
+ * getArgumentLabels returns the allowed values of one .prowlabels.yaml section
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param arg - the label section to return. For example, may be 'area', etc
+ */
+async function getArgumentLabels(octokit, context, arg) {
+    const config = await getLabelConfig(octokit, context);
+    const section = config[arg];
+    if (!section) {
         throw new Error(`${arg}: yaml malformed, expected '${arg}' top level key`);
     }
-    return content[arg];
+    return section.values;
+}
+function normalizeSection(key, section) {
+    if (isStringList(section)) {
+        return { values: section };
+    }
+    if (isMapping(section)
+        && isStringList(section.values)
+        && (section.exclusive === undefined || typeof section.exclusive === 'boolean')) {
+        return { values: section.values, exclusive: section.exclusive };
+    }
+    throw new Error(`${key}: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`);
+}
+function isMapping(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function isStringList(value) {
+    return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 /**
  * labelIssue will label the issue with the labels provided
@@ -43834,6 +43773,150 @@ function isNotFound(error) {
         && error !== null
         && 'status' in error
         && error.status === 404);
+}
+
+;// CONCATENATED MODULE: ./lib/labels/fixed.js
+
+
+
+// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
+const fixedLabelCommands = [
+    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
+    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
+];
+/**
+ * addFixedLabels labels the issue with the command's fixed labels
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await labelIssue(octokit, context, requireIssueNumber(context), cmd.add);
+}
+/**
+ * removeFixedLabels removes the command's fixed labels that are on the issue
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removeFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    let currentLabels = [];
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const present = cmd.remove.filter(label => currentLabels.includes(label));
+    if (present.length === 0) {
+        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/command.js
+/**
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandArgs(command, body).length > 0;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
+ * Ex return: 'some-user some-other-user'
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getLineArgs(command, body) {
+    return findCommandArgs(command, body).at(-1) ?? '';
+}
+/**
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
+ * Ex return: [`some-user', 'some-other-user']
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getCommandArgs(command, body) {
+    const rests = findCommandArgs(command, body);
+    if (rests.length === 0) {
+        throw new Error(`command ${command} missing from body`);
+    }
+    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
+    return [...new Set(stripAtSign(args))];
+}
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
+function findCommandArgs(command, body) {
+    const pattern = commandPattern(command);
+    const found = [];
+    for (const line of splitLines(body)) {
+        const match = pattern.exec(line);
+        if (match) {
+            found.push((match[1] ?? '').trim());
+        }
+    }
+    return found;
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
+}
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body) {
+    return body.replace(/\r\n?/g, '\n').split('\n');
+}
+/**
+ * stripAtSign will remove a leading '@' sign from the arguments array
+ * This is necessary as some commands may have arguments with users tagged with
+ * a leading at sign. Ex: /assign @some-user
+ *
+ * @param args - the array to remove at signs from
+ */
+function stripAtSign(args) {
+    const toReturn = [];
+    for (const e of args) {
+        if (e.startsWith('@')) {
+            toReturn.push(e.replace('@', ''));
+        }
+        else {
+            toReturn.push(e);
+        }
+    }
+    return toReturn;
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/hold.js
@@ -44200,7 +44283,21 @@ const prefixedLabelCommands = [
     { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
     { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
     { command: '/label', prefix: '', allowlistKey: 'labels' },
+    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
+    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
+    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
 ];
+// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
+const labelCommandName = /^[a-z][a-z0-9-]*$/;
+/**
+ * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
+ * key so that `/<key> value` labels the issue with '<key>/value'
+ *
+ * @param name - the top level key, ex: 'level'
+ */
+function dynamicPrefixedCommand(name) {
+    return { command: `/${name}`, prefix: name, allowlistKey: name };
+}
 /**
  * removeCommandFor returns the Prow-style removal spelling of a label command
  * Ex: '/kind' -> '/remove-kind'
@@ -44222,13 +44319,15 @@ function removeCommandFor(command) {
 async function addPrefixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
+    const issueNumber = prefixed_requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
-    const labels = await requestedLabels(octokit, context, cmd, cmd.command, commentBody);
-    if (cmd.exclusive) {
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
+    if (section.exclusive) {
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
-            return label.startsWith(`${cmd.prefix}/`) && !labels.includes(label);
+            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
+                && !labels.some(requested => sameLabel(requested, label));
         });
         if (stale.length > 0) {
             await removeLabels(octokit, context, issueNumber, stale);
@@ -44248,42 +44347,61 @@ async function addPrefixedLabels(context, cmd) {
 async function removePrefixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
+    const issueNumber = prefixed_requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
-    const labels = await requestedLabels(octokit, context, cmd, command, commentBody);
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, command, commentBody, section.values);
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
-    const present = labels.filter(label => currentLabels.includes(label));
+    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
         core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
         return;
     }
     await removeLabels(octokit, context, issueNumber, present);
 }
-function requireIssueNumber(context) {
+function prefixed_requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     return issueNumber;
 }
-async function requestedLabels(octokit, context, cmd, command, commentBody) {
-    const name = command.slice(1);
-    const args = getCommandArgs(command, commentBody);
-    let allowed = [];
+// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
+async function allowlistFor(octokit, context, cmd) {
+    const key = cmd.allowlistKey;
     try {
-        allowed = await getArgumentLabels(octokit, context, cmd.allowlistKey);
-        core_debug(`${name}: found labels ${allowed}`);
+        const section = (await getLabelConfig(octokit, context))[key];
+        if (section) {
+            core_debug(`${key}: found labels ${section.values}`);
+            return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false };
+        }
+        if (cmd.defaultValues) {
+            core_debug(`${key}: using built-in labels ${cmd.defaultValues}`);
+            return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false };
+        }
+        throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
     }
-    const labels = addPrefix(cmd.prefix, args.filter(arg => allowed.includes(arg)));
+}
+function requestedLabels(cmd, command, commentBody, allowed) {
+    const args = getCommandArgs(command, commentBody);
+    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
+    const values = args
+        .map(arg => canonical.get(arg.toLowerCase()))
+        .filter((value) => value !== undefined);
+    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
     // no arguments after command provided
     if (labels.length === 0) {
-        throw new Error(`${name}: command args missing from body`);
+        throw new Error(`${command.slice(1)}: command args missing from body`);
     }
     return labels;
+}
+// GitHub label names are case-insensitive, as are Prow's comparisons
+function sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
 }
 async function currentIssueLabels(octokit, context, issueNumber, command) {
     try {
@@ -45218,22 +45336,53 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
+// hand-written commands; looked up lazily so the module bindings stay spy-able
+const handlers = {
+    '/assign': context => assign_assign(context),
+    '/cc': context => cc(context),
+    '/uncc': context => uncc(context),
+    '/unassign': context => unassign(context),
+    '/approve': context => approve(context),
+    '/retitle': context => retitle(context),
+    '/remove': context => remove(context),
+    '/hold': context => hold(context),
+    '/lgtm': context => lgtm(context),
+    '/close': context => close_close(context),
+    '/lock': context => lock(context),
+    '/reopen': context => reopen(context),
+    '/milestone': context => milestone(context),
+    '/meow': context => meow(context),
+};
 // Prow-style spellings that are handled by the canonical command's module
 const commandAliases = {
     '/lgtm': ['/remove-lgtm'],
     '/approve': ['/remove-approve'],
     '/hold': ['/unhold', '/remove-hold'],
-    ...Object.fromEntries(prefixedLabelCommands.map(cmd => [cmd.command, [removeCommandFor(cmd.command)]])),
+    ...Object.fromEntries([...prefixedLabelCommands, ...fixedLabelCommands]
+        .map(cmd => [cmd.command, [removeCommandFor(cmd.command)]])),
 };
+// any other /<key> names a .prowlabels.yaml section
+function isDynamicLabelCommand(command) {
+    return command.startsWith('/')
+        && labelCommandName.test(command.slice(1))
+        && !(command in handlers)
+        && !(command in commandAliases);
+}
 function canonicalCommand(name) {
+    // the alias table wins so /remove-lgtm, /remove-hold and friends keep their bases
     for (const [command, aliases] of Object.entries(commandAliases)) {
         if (aliases.includes(name)) {
             return command;
         }
     }
-    return name;
+    const base = name.replace(/^\/remove-/, '/');
+    return base !== name && isDynamicLabelCommand(base) ? base : name;
 }
 function commandForms(command) {
+    if (isDynamicLabelCommand(command)) {
+        return [command, removeCommandFor(command)];
+    }
     return [command, ...(commandAliases[command] ?? [])];
 }
 /**
@@ -45259,38 +45408,18 @@ async function handleIssueComment(context = github_context) {
             if (prefixed) {
                 return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError);
             }
-            switch (command) {
-                case '/assign':
-                    return await assign_assign(context).catch(normalizeError);
-                case '/cc':
-                    return await cc(context).catch(normalizeError);
-                case '/uncc':
-                    return await uncc(context).catch(normalizeError);
-                case '/unassign':
-                    return await unassign(context).catch(normalizeError);
-                case '/approve':
-                    return await approve(context).catch(normalizeError);
-                case '/retitle':
-                    return await retitle(context).catch(normalizeError);
-                case '/remove':
-                    return await remove(context).catch(normalizeError);
-                case '/hold':
-                    return await hold(context).catch(normalizeError);
-                case '/lgtm':
-                    return await lgtm(context).catch(normalizeError);
-                case '/close':
-                    return await close_close(context).catch(normalizeError);
-                case '/lock':
-                    return await lock(context).catch(normalizeError);
-                case '/reopen':
-                    return await reopen(context).catch(normalizeError);
-                case '/milestone':
-                    return await milestone(context).catch(normalizeError);
-                case '/meow':
-                    return await meow(context).catch(normalizeError);
-                default:
-                    return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+            const fixed = fixedLabelCommands.find(cmd => cmd.command === command);
+            if (fixed) {
+                return await fixedLabels(context, fixed, commentBody).catch(normalizeError);
             }
+            const handler = handlers[command];
+            if (handler) {
+                return await handler(context).catch(normalizeError);
+            }
+            if (isDynamicLabelCommand(command)) {
+                return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError);
+            }
+            return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
         }
     }))
         .then((results) => {
@@ -45311,6 +45440,14 @@ async function prefixedLabels(context, cmd, body) {
     }
     if (hasCommand(cmd.command, body)) {
         await addPrefixedLabels(context, cmd);
+    }
+}
+async function fixedLabels(context, cmd, body) {
+    if (hasCommand(removeCommandFor(cmd.command), body)) {
+        await removeFixedLabels(context, cmd);
+    }
+    if (hasCommand(cmd.command, body)) {
+        await addFixedLabels(context, cmd);
     }
 }
 // normalizeError coerces a non-Error rejection so it still fails the Action
