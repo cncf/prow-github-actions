@@ -2,13 +2,14 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
+import { commandLines } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { newOctokit } from '../utils/octokit'
 
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med'
 
 // a line of exactly /meow, not /meowvie or a mention
-const meowCommand = /^[\t ]*\/meow[\t ]*$/m
+const meowCommand = /^[\t ]*\/meow[\t ]*$/
 
 // bounded so a slow provider cannot stall the runner; exported so tests can shrink the waits
 export const meowConfig = {
@@ -50,9 +51,9 @@ export async function meow(context: Context = github.context): Promise<void> {
   await createComment(octokit, context, issueNumber, body)
 }
 
-// hasMeowCommand reports whether the body has a standalone /meow line
+// hasMeowCommand reports whether the body has a standalone /meow line outside Markdown code
 function hasMeowCommand(body: unknown): boolean {
-  return typeof body === 'string' && meowCommand.test(body)
+  return typeof body === 'string' && commandLines(body).some(line => meowCommand.test(line))
 }
 
 async function fetchCatImage(): Promise<URL> {

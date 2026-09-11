@@ -43881,13 +43881,74 @@ function hasKeyword(args, keyword) {
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
     const found = [];
-    for (const line of splitLines(body)) {
+    for (const line of commandLines(body)) {
         const match = pattern.exec(line);
         if (match) {
             found.push((match[1] ?? '').trim());
         }
     }
     return found;
+}
+const indentedCode = /^(?: {4}| {0,3}\t)/;
+// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
+const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/;
+/**
+ * commandLines returns the lines of the body that can carry a command:
+ * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
+ *
+ * @param body - the full body of the comment
+ */
+function commandLines(body) {
+    const visible = [];
+    let fence;
+    let inIndentedCode = false;
+    let afterBlockBoundary = true;
+    for (const line of splitLines(body)) {
+        if (fence) {
+            if (closesFence(line, fence)) {
+                fence = undefined;
+                afterBlockBoundary = true;
+            }
+            continue;
+        }
+        if (line.trim() === '') {
+            visible.push(line);
+            inIndentedCode = false;
+            afterBlockBoundary = true;
+            continue;
+        }
+        // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
+        if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
+            inIndentedCode = true;
+            continue;
+        }
+        inIndentedCode = false;
+        afterBlockBoundary = false;
+        const opener = fenceOpener(line);
+        if (opener) {
+            fence = opener;
+            continue;
+        }
+        visible.push(line);
+    }
+    return visible;
+}
+function fenceOpener(line) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return undefined;
+    const char = match[1][0];
+    if (char === '`' && match[2].includes('`'))
+        return undefined;
+    return { char, length: match[1].length };
+}
+function closesFence(line, fence) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return false;
+    return match[1][0] === fence.char
+        && match[1].length >= fence.length
+        && match[2].trim() === '';
 }
 function commandPattern(command) {
     // escape regex metacharacters so a command is matched literally
@@ -45128,9 +45189,10 @@ async function lock(context = github_context) {
 
 
 
+
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med';
 // a line of exactly /meow, not /meowvie or a mention
-const meowCommand = /^[\t ]*\/meow[\t ]*$/m;
+const meowCommand = /^[\t ]*\/meow[\t ]*$/;
 // bounded so a slow provider cannot stall the runner; exported so tests can shrink the waits
 const meowConfig = {
     timeoutMs: 5_000,
@@ -45163,9 +45225,9 @@ async function meow(context = github_context) {
     }
     await createComment(octokit, context, issueNumber, body);
 }
-// hasMeowCommand reports whether the body has a standalone /meow line
+// hasMeowCommand reports whether the body has a standalone /meow line outside Markdown code
 function hasMeowCommand(body) {
-    return typeof body === 'string' && meowCommand.test(body);
+    return typeof body === 'string' && commandLines(body).some(line => meowCommand.test(line));
 }
 async function fetchCatImage() {
     const headers = { accept: 'application/json' };

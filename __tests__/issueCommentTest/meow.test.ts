@@ -72,6 +72,25 @@ describe('/meow', () => {
     },
   )
 
+  it.each(['```\n/meow\n```', '~~~\n/meow\n~~~', 'try:\n\n    /meow', '`/meow`'])(
+    'does not trigger for %p inside markdown code',
+    async (body) => {
+      await handleIssueComment(contextFor(body))
+      expect(createComment).not.toHaveBeenCalled()
+    },
+  )
+
+  it('still triggers for a /meow after a closed fence', async () => {
+    server.use(
+      http.get(catApi, () =>
+        HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])),
+    )
+
+    await handleIssueComment(contextFor('```\n/meow\n```\n/meow'))
+
+    expect(createComment).toHaveBeenCalledTimes(1)
+  })
+
   it('matches a standalone /meow once in a CRLF comment', async () => {
     server.use(
       http.get(catApi, () =>

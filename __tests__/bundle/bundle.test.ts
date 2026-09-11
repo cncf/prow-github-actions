@@ -79,6 +79,19 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment ignores a /kind inside a fenced code block without calling the api', async () => {
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('try:\n```\n/kind cleanup\n```'),
+      inputs: { ...token, 'prow-commands': '/kind' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests).toEqual([])
+  })
+
   it('issue_comment /remove-kind removes a prefixed label when /kind is configured', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'kind/cleanup' }] } })

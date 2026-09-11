@@ -116,6 +116,36 @@ it('dispatches a command preceded by whitespace', async () => {
   expect(hold.hold).toHaveBeenCalledTimes(1)
 })
 
+it('ignores a command inside a fenced code block', async () => {
+  utils.setupActionsEnv('/kind')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = 'try:\n```\n/kind bug\n```'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).not.toHaveBeenCalled()
+  expect(remove).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('ignores a command inside an indented code block', async () => {
+  utils.setupActionsEnv('/hold')
+
+  vi.spyOn(hold, 'hold').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = 'try:\n\n    /hold'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(hold.hold).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
 it('tolerates extra whitespace in the prow-commands config', async () => {
   utils.setupActionsEnv('  /assign  \n\n/unassign ')
 
