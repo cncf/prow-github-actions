@@ -44326,7 +44326,8 @@ async function addPrefixedLabels(context, cmd) {
     if (section.exclusive) {
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
-            return label.startsWith(`${cmd.prefix}/`) && !labels.includes(label);
+            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
+                && !labels.some(requested => sameLabel(requested, label));
         });
         if (stale.length > 0) {
             await removeLabels(octokit, context, issueNumber, stale);
@@ -44352,7 +44353,7 @@ async function removePrefixedLabels(context, cmd) {
     const section = await allowlistFor(octokit, context, cmd);
     const labels = requestedLabels(cmd, command, commentBody, section.values);
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
-    const present = labels.filter(label => currentLabels.includes(label));
+    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
         core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
         return;
@@ -44387,12 +44388,20 @@ async function allowlistFor(octokit, context, cmd) {
 }
 function requestedLabels(cmd, command, commentBody, allowed) {
     const args = getCommandArgs(command, commentBody);
-    const labels = addPrefix(cmd.prefix, args.filter(arg => allowed.includes(arg)));
+    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
+    const values = args
+        .map(arg => canonical.get(arg.toLowerCase()))
+        .filter((value) => value !== undefined);
+    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
     // no arguments after command provided
     if (labels.length === 0) {
         throw new Error(`${command.slice(1)}: command args missing from body`);
     }
     return labels;
+}
+// GitHub label names are case-insensitive, as are Prow's comparisons
+function sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
 }
 async function currentIssueLabels(octokit, context, issueNumber, command) {
     try {

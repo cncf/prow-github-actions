@@ -105,6 +105,24 @@ describe('built-in lifecycle, stage and status commands', () => {
     )
   })
 
+  it('/Stage BETA is matched regardless of case and labels stage/beta', async () => {
+    const mutations = serveIssueAndRecordMutations([])
+
+    const setFailed = await run('/stage', '/Stage BETA')
+
+    expect(mutations).toEqual(['POST stage/beta'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('/lifecycle treats an existing Lifecycle/Rotten as a sibling to replace', async () => {
+    const mutations = serveIssueAndRecordMutations(['Lifecycle/Rotten'])
+
+    const setFailed = await run('/lifecycle', '/lifecycle stale')
+
+    expect(mutations).toEqual(['DELETE Lifecycle%2FRotten', 'POST lifecycle/stale'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   describe('with a lifecycle section in the yaml', () => {
     const override = yamlFile('lifecycle:\n  - frozen\n')
 

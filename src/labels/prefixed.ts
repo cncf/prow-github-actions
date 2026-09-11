@@ -76,7 +76,8 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command)
 
     const stale = currentLabels.filter((label) => {
-      return label.startsWith(`${cmd.prefix}/`) && !labels.includes(label)
+      return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
+        && !labels.some(requested => sameLabel(requested, label))
     })
 
     if (stale.length > 0) {
@@ -108,7 +109,7 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   const labels = requestedLabels(cmd, command, commentBody, section.values)
   const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command)
 
-  const present = labels.filter(label => currentLabels.includes(label))
+  const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)))
 
   if (present.length === 0) {
     core.debug(`${command.slice(1)}: none of ${labels} are on the issue`)
@@ -165,7 +166,11 @@ function requestedLabels(
   allowed: string[],
 ): string[] {
   const args = getCommandArgs(command, commentBody)
-  const labels = addPrefix(cmd.prefix, args.filter(arg => allowed.includes(arg)))
+  const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]))
+  const values = args
+    .map(arg => canonical.get(arg.toLowerCase()))
+    .filter((value): value is string => value !== undefined)
+  const labels = addPrefix(cmd.prefix, [...new Set(values)])
 
   // no arguments after command provided
   if (labels.length === 0) {
@@ -173,6 +178,11 @@ function requestedLabels(
   }
 
   return labels
+}
+
+// GitHub label names are case-insensitive, as are Prow's comparisons
+function sameLabel(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase()
 }
 
 async function currentIssueLabels(
