@@ -1,10 +1,11 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
+import type { OwnersRole } from './owners'
 import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import * as yaml from 'js-yaml'
+import { effectiveOwners, loadOwnersTree, parseOwners } from './owners'
 
 function getErrorDetails(error: unknown): { status: unknown, message: string } {
   if (typeof error === 'object' && error !== null) {
@@ -228,28 +229,30 @@ export async function checkCommenterAuth(
 }
 
 /**
- * When an OWNERS file is present, use it to authorize the action
-   otherwise fall back to allowing organization members and collaborators
- * @param role is the role to check
- * @param username is the user to authorize
+ * When the repository has OWNERS files, use them to authorize the action,
+ * otherwise fall back to allowing organization members and collaborators.
+ * On a pull request the OWNERS covering each changed file are used
+ * (approvers must cover every file, reviewers at least one); on an issue the
+ * root OWNERS file is used.
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param role - the role to check
+ * @param username - the user to authorize
  */
 export async function assertAuthorizedByOwnersOrMembership(
   octokit: Octokit,
   context: Context,
-  role: string,
+  role: OwnersRole,
   username: string,
 ): Promise<void> {
   core.debug('Checking if the user is authorized to interact with prow')
-  const owners = await retrieveOwnersFile(octokit, context)
 
-  if (owners !== '') {
-    if (!isInOwnersFile(owners, role, username)) {
-      throw new Error(
-        `${username} is not included in the ${role} role in the OWNERS file`,
-      )
-    }
-  }
-  else {
+  const hasOwners
+    = context.payload.issue?.pull_request !== undefined
+      ? await assertPullRequestOwner(octokit, context, role, username)
+      : await assertRootOwner(octokit, context, role, username)
+
+  if (!hasOwners) {
     const isOrgMember = await checkOrgMember(octokit, context, username)
     const isCollaborator = await checkCollaborator(octokit, context, username)
 
@@ -257,6 +260,88 @@ export async function assertAuthorizedByOwnersOrMembership(
       throw new Error(`${username} is not a org member or collaborator`)
     }
   }
+}
+
+/**
+ * Authorize against the root OWNERS file of the default branch.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function assertRootOwner(
+  octokit: Octokit,
+  context: Context,
+  role: OwnersRole,
+  username: string,
+): Promise<boolean> {
+  const contents = await retrieveOwnersFile(octokit, context)
+  if (contents === '') {
+    return false
+  }
+
+  const owners = parseOwners('OWNERS', contents)
+  if (!owners[role].includes(username.toLowerCase())) {
+    throw new Error(
+      `${username} is not included in the ${role} role in the OWNERS file`,
+    )
+  }
+  return true
+}
+
+/**
+ * Authorize against the OWNERS files covering the pull request's changed files.
+ * @returns false when the repository has no OWNERS files at all
+ */
+async function assertPullRequestOwner(
+  octokit: Octokit,
+  context: Context,
+  role: OwnersRole,
+  username: string,
+): Promise<boolean> {
+  const pullNumber = context.payload.issue!.number
+
+  const { data: pull } = await octokit.pulls.get({
+    ...context.repo,
+    pull_number: pullNumber,
+  })
+  const changed = await octokit.paginate(octokit.pulls.listFiles, {
+    ...context.repo,
+    pull_number: pullNumber,
+    per_page: 100,
+  })
+  const files = [...new Set(changed.flatMap(f =>
+    f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename],
+  ))]
+
+  // OWNERS come from the base branch so a PR cannot grant itself approvers
+  const tree = await loadOwnersTree(octokit, context, pull.base.sha, files)
+  if (!tree.hasOwners) {
+    core.debug('No OWNERS files found')
+    return false
+  }
+
+  const login = username.toLowerCase()
+  const covered = files.map((file) => {
+    const owners = effectiveOwners(file, tree.owners)
+    if (owners === undefined) {
+      throw new Error(`no OWNERS file covers ${file}`)
+    }
+    return { file, owners }
+  })
+
+  if (role === 'approvers') {
+    const failing = covered.find(({ owners }) => !owners.approvers.has(login))
+    if (failing !== undefined) {
+      throw new Error(
+        `${username} is not an approver for ${failing.file} (OWNERS: ${failing.owners.sources.join(', ')})`,
+      )
+    }
+  }
+  else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
+    throw new Error(
+      `${username} is not a reviewer or approver for any changed file`,
+    )
+  }
+
+  return true
 }
 
 /**
@@ -294,27 +379,4 @@ async function retrieveOwnersFile(
   const decoded = Buffer.from(data.content, data.encoding).toString()
   core.debug(`OWNERS file contents: ${decoded}`)
   return decoded
-}
-
-/**
- * Determine if the user has the specified role in the OWNERS file.
- * @param ownersContents - the contents of the OWNERS file
- * @param role - the role to check
- * @param username - the user to authorize
- */
-function isInOwnersFile(
-  ownersContents: string,
-  role: string,
-  username: string,
-): boolean {
-  core.debug(`checking if ${username} is in the ${role} in the OWNERS file`)
-  const ownersData: any = yaml.load(ownersContents)
-
-  const roleMembers = ownersData[role]
-  if ((roleMembers as string[]) !== undefined) {
-    return roleMembers.includes(username)
-  }
-
-  core.info(`${username} is not in the ${role} role in the OWNERS file`)
-  return false
 }

@@ -43956,6 +43956,182 @@ async function hold(context = github_context) {
     await labelIssue(octokit, context, issueNumber, ['hold']);
 }
 
+;// CONCATENATED MODULE: ./lib/utils/owners.js
+
+
+
+/**
+ * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
+ * logins are case-insensitive.
+ *
+ * @param path - the path of the OWNERS file, used in error messages
+ * @param contents - the yaml contents
+ */
+function parseOwners(path, contents) {
+    const loaded = contents.trim() === '' ? {} : load(contents);
+    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
+        ? loaded
+        : {};
+    if ('filters' in doc) {
+        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
+    }
+    const options = doc.options;
+    const noParentOwners = typeof options === 'object'
+        && options !== null
+        && options.no_parent_owners === true;
+    return {
+        path,
+        approvers: roleList(path, doc, 'approvers'),
+        reviewers: roleList(path, doc, 'reviewers'),
+        noParentOwners,
+    };
+}
+function roleList(path, doc, role) {
+    const value = doc[role];
+    if (value === undefined || value === null) {
+        return [];
+    }
+    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
+        throw new Error(`OWNERS at ${path}: ${role} must be a list of GitHub usernames`);
+    }
+    return value.map(v => v.toLowerCase());
+}
+/**
+ * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
+ *
+ * @param path - a repository relative path
+ */
+function ownersDir(path) {
+    const slash = path.lastIndexOf('/');
+    return slash === -1 ? '' : path.slice(0, slash);
+}
+/**
+ * Resolve the OWNERS that apply to a file: walk from its directory up to the
+ * root, taking the union of every OWNERS file on the way. A file with
+ * options.no_parent_owners stops the walk.
+ *
+ * @param file - the changed file
+ * @param owners - OWNERS files keyed by directory
+ * @returns undefined when no OWNERS file covers the file
+ */
+function effectiveOwners(file, owners) {
+    const approvers = new Set();
+    const reviewers = new Set();
+    const sources = [];
+    let dir = ownersDir(file);
+    for (;;) {
+        const found = owners.get(dir);
+        if (found !== undefined) {
+            found.approvers.forEach(a => approvers.add(a));
+            found.reviewers.forEach(r => reviewers.add(r));
+            sources.push(found.path);
+            if (found.noParentOwners) {
+                break;
+            }
+        }
+        if (dir === '') {
+            break;
+        }
+        dir = ownersDir(dir);
+    }
+    if (sources.length === 0) {
+        return undefined;
+    }
+    return { approvers, reviewers, sources };
+}
+function ancestorDirs(paths) {
+    const dirs = new Set(['']);
+    for (const path of paths) {
+        for (let dir = ownersDir(path); dir !== ''; dir = ownersDir(dir)) {
+            dirs.add(dir);
+        }
+    }
+    return dirs;
+}
+function isOwnersPath(path) {
+    return path === 'OWNERS' || path.endsWith('/OWNERS');
+}
+function decode(data, path) {
+    const file = data;
+    if (!file.content || !file.encoding) {
+        throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
+    }
+    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
+}
+/**
+ * Load the OWNERS files at ref that can apply to the given paths.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param ref - the commit to read OWNERS files from
+ * @param pathsOfInterest - the changed files; only OWNERS in their ancestor directories are fetched
+ */
+async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
+    const dirs = ancestorDirs(pathsOfInterest);
+    let tree;
+    try {
+        const response = await octokit.git.getTree({
+            ...context.repo,
+            tree_sha: ref,
+            recursive: 'true',
+        });
+        tree = response.data;
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    if (tree.truncated) {
+        // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
+        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
+        return probeOwners(octokit, context, ref, dirs);
+    }
+    const entries = tree.tree.filter(entry => entry.type === 'blob'
+        && entry.path !== undefined
+        && entry.sha !== undefined
+        && isOwnersPath(entry.path));
+    const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
+    let files;
+    try {
+        files = await Promise.all(wanted.map(async (entry) => {
+            const blob = await octokit.git.getBlob({
+                ...context.repo,
+                file_sha: entry.sha,
+            });
+            return parseOwners(entry.path, decode(blob.data, entry.path));
+        }));
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    return {
+        owners: new Map(files.map(file => [ownersDir(file.path), file])),
+        hasOwners: entries.length > 0,
+    };
+}
+async function probeOwners(octokit, context, ref, dirs) {
+    const owners = new Map();
+    for (const dir of dirs) {
+        const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
+        let data;
+        try {
+            const response = await octokit.repos.getContent({
+                ...context.repo,
+                path,
+                ref,
+            });
+            data = response.data;
+        }
+        catch (e) {
+            if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
+                continue;
+            }
+            throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+        }
+        owners.set(dir, parseOwners(path, decode(data, path)));
+    }
+    return { owners, hasOwners: owners.size > 0 };
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/auth.js
 
 
@@ -44118,26 +44294,84 @@ async function checkCommenterAuth(octokit, context, issueNum, user) {
     return false;
 }
 /**
- * When an OWNERS file is present, use it to authorize the action
-   otherwise fall back to allowing organization members and collaborators
- * @param role is the role to check
- * @param username is the user to authorize
+ * When the repository has OWNERS files, use them to authorize the action,
+ * otherwise fall back to allowing organization members and collaborators.
+ * On a pull request the OWNERS covering each changed file are used
+ * (approvers must cover every file, reviewers at least one); on an issue the
+ * root OWNERS file is used.
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param role - the role to check
+ * @param username - the user to authorize
  */
 async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
     core_debug('Checking if the user is authorized to interact with prow');
-    const owners = await retrieveOwnersFile(octokit, context);
-    if (owners !== '') {
-        if (!isInOwnersFile(owners, role, username)) {
-            throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
-        }
-    }
-    else {
+    const hasOwners = context.payload.issue?.pull_request !== undefined
+        ? await assertPullRequestOwner(octokit, context, role, username)
+        : await assertRootOwner(octokit, context, role, username);
+    if (!hasOwners) {
         const isOrgMember = await checkOrgMember(octokit, context, username);
         const isCollaborator = await checkCollaborator(octokit, context, username);
         if (!isOrgMember && !isCollaborator) {
             throw new Error(`${username} is not a org member or collaborator`);
         }
     }
+}
+/**
+ * Authorize against the root OWNERS file of the default branch.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function assertRootOwner(octokit, context, role, username) {
+    const contents = await retrieveOwnersFile(octokit, context);
+    if (contents === '') {
+        return false;
+    }
+    const owners = parseOwners('OWNERS', contents);
+    if (!owners[role].includes(username.toLowerCase())) {
+        throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
+    }
+    return true;
+}
+/**
+ * Authorize against the OWNERS files covering the pull request's changed files.
+ * @returns false when the repository has no OWNERS files at all
+ */
+async function assertPullRequestOwner(octokit, context, role, username) {
+    const pullNumber = context.payload.issue.number;
+    const { data: pull } = await octokit.pulls.get({
+        ...context.repo,
+        pull_number: pullNumber,
+    });
+    const changed = await octokit.paginate(octokit.pulls.listFiles, {
+        ...context.repo,
+        pull_number: pullNumber,
+        per_page: 100,
+    });
+    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
+    // OWNERS come from the base branch so a PR cannot grant itself approvers
+    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
+    if (!tree.hasOwners) {
+        core_debug('No OWNERS files found');
+        return false;
+    }
+    const login = username.toLowerCase();
+    const covered = files.map((file) => {
+        const owners = effectiveOwners(file, tree.owners);
+        if (owners === undefined) {
+            throw new Error(`no OWNERS file covers ${file}`);
+        }
+        return { file, owners };
+    });
+    if (role === 'approvers') {
+        const failing = covered.find(({ owners }) => !owners.approvers.has(login));
+        if (failing !== undefined) {
+            throw new Error(`${username} is not an approver for ${failing.file} (OWNERS: ${failing.owners.sources.join(', ')})`);
+        }
+    }
+    else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
+        throw new Error(`${username} is not a reviewer or approver for any changed file`);
+    }
+    return true;
 }
 /**
  * Retrieve the contents of the OWNERS file at the root of the repository.
@@ -44166,22 +44400,6 @@ async function retrieveOwnersFile(octokit, context) {
     const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
     core_debug(`OWNERS file contents: ${decoded}`);
     return decoded;
-}
-/**
- * Determine if the user has the specified role in the OWNERS file.
- * @param ownersContents - the contents of the OWNERS file
- * @param role - the role to check
- * @param username - the user to authorize
- */
-function isInOwnersFile(ownersContents, role, username) {
-    core_debug(`checking if ${username} is in the ${role} in the OWNERS file`);
-    const ownersData = load(ownersContents);
-    const roleMembers = ownersData[role];
-    if (roleMembers !== undefined) {
-        return roleMembers.includes(username);
-    }
-    info(`${username} is not in the ${role} role in the OWNERS file`);
-    return false;
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/comments.js
