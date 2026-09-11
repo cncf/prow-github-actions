@@ -5,7 +5,6 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 
 import { cronLgtm } from './lgtm'
-import { cronLabelPr } from './prLabeler'
 
 /**
  * This Method handles any cron job events.
@@ -27,12 +26,6 @@ export async function handleCronJobs(context: Context = github.context): Promise
   await Promise.all(
     runConfig.map(async (command) => {
       switch (command) {
-        case 'pr-labeler':
-          core.debug('running cronLabelPr job')
-          return await cronLabelPr(1, context).catch(async (e) => {
-            return e
-          })
-
         case 'lgtm':
           core.debug('running cronLgtm job')
           return await cronLgtm(1, context).catch(async (e) => {

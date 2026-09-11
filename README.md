@@ -84,7 +84,7 @@ jobs:
 - [Overview](./docs/overview.md)
 - [Commands](./docs/commands.md)
 - [Labeling](./docs/labeling.md)
-- [Cron Jobs](./docs/cron-jobs.md) (includes the deprecated PR labeler)
+- [Cron Jobs](./docs/cron-jobs.md)
 - [Automatic PR merging](./docs/automatic-merging.md)
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)
