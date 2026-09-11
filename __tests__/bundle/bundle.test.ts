@@ -147,6 +147,26 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /help adds help wanted without reading .prowlabels.yaml', async () => {
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/help'),
+      inputs: { ...token, 'prow-commands': '/help' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ labels: ['help wanted'] })
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `POST ${repo}/issues/1/labels`,
+    ])
+  })
+
   it('issue_comment /assign self-assigns an org member', async () => {
     gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })

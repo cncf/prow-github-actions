@@ -1,9 +1,11 @@
+import type { FixedLabelCommand } from '../labels/fixed'
 import type { PrefixedLabelCommand } from '../labels/prefixed'
 import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
+import { addFixedLabels, fixedLabelCommands, removeFixedLabels } from '../labels/fixed'
 import { hold } from '../labels/hold'
 import { lgtm } from '../labels/lgtm'
 import { addPrefixedLabels, dynamicPrefixedCommand, labelCommandName, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
@@ -45,7 +47,8 @@ const commandAliases: Record<string, string[]> = {
   '/approve': ['/remove-approve'],
   '/hold': ['/unhold', '/remove-hold'],
   ...Object.fromEntries(
-    prefixedLabelCommands.map(cmd => [cmd.command, [removeCommandFor(cmd.command)]]),
+    [...prefixedLabelCommands, ...fixedLabelCommands]
+      .map(cmd => [cmd.command, [removeCommandFor(cmd.command)]]),
   ),
 }
 
@@ -108,6 +111,11 @@ export async function handleIssueComment(context: Context = github.context): Pro
           return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError)
         }
 
+        const fixed = fixedLabelCommands.find(cmd => cmd.command === command)
+        if (fixed) {
+          return await fixedLabels(context, fixed, commentBody).catch(normalizeError)
+        }
+
         const handler = handlers[command]
         if (handler) {
           return await handler(context).catch(normalizeError)
@@ -142,6 +150,15 @@ async function prefixedLabels(context: Context, cmd: PrefixedLabelCommand, body:
   }
   if (hasCommand(cmd.command, body)) {
     await addPrefixedLabels(context, cmd)
+  }
+}
+
+async function fixedLabels(context: Context, cmd: FixedLabelCommand, body: string): Promise<void> {
+  if (hasCommand(removeCommandFor(cmd.command), body)) {
+    await removeFixedLabels(context, cmd)
+  }
+  if (hasCommand(cmd.command, body)) {
+    await addFixedLabels(context, cmd)
   }
 }
 

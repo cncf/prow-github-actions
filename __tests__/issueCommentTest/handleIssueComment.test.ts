@@ -6,6 +6,7 @@ import * as assign from '../../src/issueComment/assign'
 import * as cc from '../../src/issueComment/cc'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import * as unassign from '../../src/issueComment/unassign'
+import * as fixed from '../../src/labels/fixed'
 import * as hold from '../../src/labels/hold'
 import * as lgtm from '../../src/labels/lgtm'
 import * as prefixed from '../../src/labels/prefixed'
@@ -204,6 +205,45 @@ it('listing only /remove-<key> also enables the dynamic /<key>', async () => {
   expect(add).toHaveBeenCalledTimes(1)
   expect(add.mock.calls[0][1]).toMatchObject({ command: '/level' })
   expect(setFailed).not.toHaveBeenCalled()
+})
+
+it.each([
+  ['/help', '/help'],
+  ['/good-first-issue', '/good-first-issue'],
+  ['/remove-good-first-issue', '/good-first-issue'],
+] as const)('dispatches a fixed label command listed as %s to %s', async (config, command) => {
+  utils.setupActionsEnv(config)
+
+  const add = vi.spyOn(fixed, 'addFixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(fixed, 'removeFixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = command
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).toHaveBeenCalledTimes(1)
+  expect(add.mock.calls[0][1]).toMatchObject({ command })
+  expect(remove).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('runs remove before add when a comment carries both /help and /remove-help', async () => {
+  utils.setupActionsEnv('/help')
+
+  const order: string[] = []
+  vi.spyOn(fixed, 'addFixedLabels').mockImplementation(async () => {
+    order.push('add')
+  })
+  vi.spyOn(fixed, 'removeFixedLabels').mockImplementation(async () => {
+    order.push('remove')
+  })
+
+  issueCommentEvent.comment.body = '/help\n/remove-help'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(order).toEqual(['remove', 'add'])
 })
 
 it('does not turn /remove-<hand-written command> into a label command', async () => {

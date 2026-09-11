@@ -115,6 +115,17 @@ status:
 
 The file itself must still exist, as it does for every other label command.
 
+## Help wanted and good first issue
+
+`/help` and `/good-first-issue` mirror Prow's help plugin and use GitHub's default
+label names, which contain spaces and therefore cannot be listed in
+`.prowlabels.yaml`. They are fixed and do not read the file at all:
+
+Command | Adds | `/remove-` form removes
+--- | --- | ---
+`/help` | `help wanted` | `help wanted`, `good first issue`
+`/good-first-issue` | `good first issue`, `help wanted` | `good first issue`
+
 ## Removing labels
 
 Every label command has a `/remove-` form that takes the same values:

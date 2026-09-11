@@ -43577,97 +43577,6 @@ async function handleCronJobs(context = github_context) {
     });
 }
 
-;// CONCATENATED MODULE: ./lib/utils/command.js
-/**
- * hasCommand reports whether the command starts a line of the body
- * (leading whitespace allowed) so that mentions mid-sentence and
- * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
- *
- * @param command - the command to look for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function hasCommand(command, body) {
-    return findCommandArgs(command, body).length > 0;
-}
-/**
- * getLineArgs will return the trimmed text following the command on its line.
- * When the command appears on several lines the last one wins, which suits
- * single-valued commands such as /milestone and /retitle
- * Ex return: 'some-user some-other-user'
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getLineArgs(command, body) {
-    return findCommandArgs(command, body).at(-1) ?? '';
-}
-/**
- * getCommandArgs will return an array of the arguments associated with a command,
- * collected in order from every line that carries it and de-duplicated
- * Ex return: [`some-user', 'some-other-user']
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getCommandArgs(command, body) {
-    const rests = findCommandArgs(command, body);
-    if (rests.length === 0) {
-        throw new Error(`command ${command} missing from body`);
-    }
-    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
-    return [...new Set(stripAtSign(args))];
-}
-/**
- * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
- * is among the arguments, ignoring case like Prow's (?i) plugin regexes
- *
- * @param args - the arguments returned by getCommandArgs
- * @param keyword - the lowercase keyword to look for
- */
-function hasKeyword(args, keyword) {
-    return args.some(arg => arg.toLowerCase() === keyword);
-}
-function findCommandArgs(command, body) {
-    const pattern = commandPattern(command);
-    const found = [];
-    for (const line of splitLines(body)) {
-        const match = pattern.exec(line);
-        if (match) {
-            found.push((match[1] ?? '').trim());
-        }
-    }
-    return found;
-}
-function commandPattern(command) {
-    // escape regex metacharacters so a command is matched literally
-    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
-}
-// splitLines splits a comment body into lines, tolerating CRLF and CR endings
-function splitLines(body) {
-    return body.replace(/\r\n?/g, '\n').split('\n');
-}
-/**
- * stripAtSign will remove a leading '@' sign from the arguments array
- * This is necessary as some commands may have arguments with users tagged with
- * a leading at sign. Ex: /assign @some-user
- *
- * @param args - the array to remove at signs from
- */
-function stripAtSign(args) {
-    const toReturn = [];
-    for (const e of args) {
-        if (e.startsWith('@')) {
-            toReturn.push(e.replace('@', ''));
-        }
-        else {
-            toReturn.push(e);
-        }
-    }
-    return toReturn;
-}
-
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
 
 
@@ -43864,6 +43773,150 @@ function isNotFound(error) {
         && error !== null
         && 'status' in error
         && error.status === 404);
+}
+
+;// CONCATENATED MODULE: ./lib/labels/fixed.js
+
+
+
+// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
+const fixedLabelCommands = [
+    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
+    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
+];
+/**
+ * addFixedLabels labels the issue with the command's fixed labels
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await labelIssue(octokit, context, requireIssueNumber(context), cmd.add);
+}
+/**
+ * removeFixedLabels removes the command's fixed labels that are on the issue
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removeFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    let currentLabels = [];
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const present = cmd.remove.filter(label => currentLabels.includes(label));
+    if (present.length === 0) {
+        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/command.js
+/**
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandArgs(command, body).length > 0;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
+ * Ex return: 'some-user some-other-user'
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getLineArgs(command, body) {
+    return findCommandArgs(command, body).at(-1) ?? '';
+}
+/**
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
+ * Ex return: [`some-user', 'some-other-user']
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getCommandArgs(command, body) {
+    const rests = findCommandArgs(command, body);
+    if (rests.length === 0) {
+        throw new Error(`command ${command} missing from body`);
+    }
+    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
+    return [...new Set(stripAtSign(args))];
+}
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
+function findCommandArgs(command, body) {
+    const pattern = commandPattern(command);
+    const found = [];
+    for (const line of splitLines(body)) {
+        const match = pattern.exec(line);
+        if (match) {
+            found.push((match[1] ?? '').trim());
+        }
+    }
+    return found;
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
+}
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body) {
+    return body.replace(/\r\n?/g, '\n').split('\n');
+}
+/**
+ * stripAtSign will remove a leading '@' sign from the arguments array
+ * This is necessary as some commands may have arguments with users tagged with
+ * a leading at sign. Ex: /assign @some-user
+ *
+ * @param args - the array to remove at signs from
+ */
+function stripAtSign(args) {
+    const toReturn = [];
+    for (const e of args) {
+        if (e.startsWith('@')) {
+            toReturn.push(e.replace('@', ''));
+        }
+        else {
+            toReturn.push(e);
+        }
+    }
+    return toReturn;
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/hold.js
@@ -44266,7 +44319,7 @@ function removeCommandFor(command) {
 async function addPrefixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
+    const issueNumber = prefixed_requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const section = await allowlistFor(octokit, context, cmd);
     const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
@@ -44293,7 +44346,7 @@ async function addPrefixedLabels(context, cmd) {
 async function removePrefixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
+    const issueNumber = prefixed_requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
     const section = await allowlistFor(octokit, context, cmd);
@@ -44306,7 +44359,7 @@ async function removePrefixedLabels(context, cmd) {
     }
     await removeLabels(octokit, context, issueNumber, present);
 }
-function requireIssueNumber(context) {
+function prefixed_requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
@@ -45274,6 +45327,7 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
 // hand-written commands; looked up lazily so the module bindings stay spy-able
 const handlers = {
     '/assign': context => assign_assign(context),
@@ -45296,7 +45350,8 @@ const commandAliases = {
     '/lgtm': ['/remove-lgtm'],
     '/approve': ['/remove-approve'],
     '/hold': ['/unhold', '/remove-hold'],
-    ...Object.fromEntries(prefixedLabelCommands.map(cmd => [cmd.command, [removeCommandFor(cmd.command)]])),
+    ...Object.fromEntries([...prefixedLabelCommands, ...fixedLabelCommands]
+        .map(cmd => [cmd.command, [removeCommandFor(cmd.command)]])),
 };
 // any other /<key> names a .prowlabels.yaml section
 function isDynamicLabelCommand(command) {
@@ -45344,6 +45399,10 @@ async function handleIssueComment(context = github_context) {
             if (prefixed) {
                 return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError);
             }
+            const fixed = fixedLabelCommands.find(cmd => cmd.command === command);
+            if (fixed) {
+                return await fixedLabels(context, fixed, commentBody).catch(normalizeError);
+            }
             const handler = handlers[command];
             if (handler) {
                 return await handler(context).catch(normalizeError);
@@ -45372,6 +45431,14 @@ async function prefixedLabels(context, cmd, body) {
     }
     if (hasCommand(cmd.command, body)) {
         await addPrefixedLabels(context, cmd);
+    }
+}
+async function fixedLabels(context, cmd, body) {
+    if (hasCommand(removeCommandFor(cmd.command), body)) {
+        await removeFixedLabels(context, cmd);
+    }
+    if (hasCommand(cmd.command, body)) {
+        await addFixedLabels(context, cmd);
     }
 }
 // normalizeError coerces a non-Error rejection so it still fails the Action

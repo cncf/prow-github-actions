@@ -43,6 +43,10 @@ Label Commands | Policy | Description
 `/remove-stage [alpha / beta / stable]` | anyone | removes the `stage/<>` label
 `/status [approved-for-milestone / in-progress / in-review]` | anyone | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
 `/remove-status [approved-for-milestone / in-progress / in-review]` | anyone | removes the `status/<>` label
+`/help` | anyone | adds the `help wanted` label
+`/remove-help` | anyone | removes the `help wanted` and `good first issue` labels
+`/good-first-issue` | anyone | adds the `good first issue` and `help wanted` labels
+`/remove-good-first-issue` | anyone | removes the `good first issue` label
 `/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other top level `<key>` of [the `.prowlabels.yaml` file](./labeling.md) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
