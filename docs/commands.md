@@ -37,6 +37,12 @@ Label Commands | Policy | Description
 `/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md). Label names containing spaces are not supported
 `/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md)
+`/lifecycle [frozen / stale / rotten]` | anyone | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-lifecycle [frozen / stale / rotten]` | anyone | removes the `lifecycle/<>` label
+`/stage [alpha / beta / stable]` | anyone | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-stage [alpha / beta / stable]` | anyone | removes the `stage/<>` label
+`/status [approved-for-milestone / in-progress / in-review]` | anyone | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-status [approved-for-milestone / in-progress / in-review]` | anyone | removes the `status/<>` label
 `/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other top level `<key>` of [the `.prowlabels.yaml` file](./labeling.md) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR

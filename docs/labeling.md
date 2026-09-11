@@ -89,6 +89,32 @@ With the command `/label good-first-issue`,
 the issue or PR will be labeled with `good-first-issue` as written, with no prefix.
 Values are split on spaces, so label names containing spaces cannot be listed here.
 
+## Lifecycle, stage and status labels
+
+`/lifecycle`, `/stage` and `/status` ship with Prow's values and need no
+`.prowlabels.yaml` section:
+
+Command | Built-in values
+--- | ---
+`/lifecycle` | `frozen`, `stale`, `rotten`
+`/stage` | `alpha`, `beta`, `stable`
+`/status` | `approved-for-milestone`, `in-progress`, `in-review`
+
+All three are exclusive, so `/lifecycle stale` removes an existing `lifecycle/rotten`.
+A `lifecycle`, `stage` or `status` key in the yaml replaces the built-in values;
+the mapping form can also set `exclusive: false`:
+
+```yaml
+lifecycle:
+  - frozen
+
+status:
+  values: [triage, in-progress, done]
+  exclusive: true
+```
+
+The file itself must still exist, as it does for every other label command.
+
 ## Removing labels
 
 Every label command has a `/remove-` form that takes the same values:

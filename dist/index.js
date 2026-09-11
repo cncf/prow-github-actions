@@ -44230,6 +44230,9 @@ const prefixedLabelCommands = [
     { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
     { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
     { command: '/label', prefix: '', allowlistKey: 'labels' },
+    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
+    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
+    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
 ];
 // a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
 const labelCommandName = /^[a-z][a-z0-9-]*$/;
