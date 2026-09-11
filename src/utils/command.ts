@@ -58,7 +58,7 @@ function findCommandArgs(command: string, body: string): string[] {
   const pattern = commandPattern(command)
   const found: string[] = []
 
-  for (const line of splitLines(body)) {
+  for (const line of commandLines(body)) {
     const match = pattern.exec(line)
     if (match) {
       found.push((match[1] ?? '').trim())
@@ -66,6 +66,85 @@ function findCommandArgs(command: string, body: string): string[] {
   }
 
   return found
+}
+
+interface Fence {
+  char: '`' | '~'
+  length: number
+}
+
+const indentedCode = /^(?: {4}| {0,3}\t)/
+// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
+const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/
+
+/**
+ * commandLines returns the lines of the body that can carry a command:
+ * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
+ *
+ * @param body - the full body of the comment
+ */
+export function commandLines(body: string): string[] {
+  const visible: string[] = []
+  let fence: Fence | undefined
+  let inIndentedCode = false
+  let afterBlockBoundary = true
+
+  for (const line of splitLines(body)) {
+    if (fence) {
+      if (closesFence(line, fence)) {
+        fence = undefined
+        afterBlockBoundary = true
+      }
+      continue
+    }
+
+    if (line.trim() === '') {
+      visible.push(line)
+      inIndentedCode = false
+      afterBlockBoundary = true
+      continue
+    }
+
+    // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
+    if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
+      inIndentedCode = true
+      continue
+    }
+    inIndentedCode = false
+    afterBlockBoundary = false
+
+    const opener = fenceOpener(line)
+    if (opener) {
+      fence = opener
+      continue
+    }
+
+    visible.push(line)
+  }
+
+  return visible
+}
+
+function fenceOpener(line: string): Fence | undefined {
+  const match = fenceLine.exec(line)
+  if (!match)
+    return undefined
+
+  const char = match[1][0] as Fence['char']
+  if (char === '`' && match[2].includes('`'))
+    return undefined
+
+  return { char, length: match[1].length }
+}
+
+function closesFence(line: string, fence: Fence): boolean {
+  const match = fenceLine.exec(line)
+  if (!match)
+    return false
+
+  return match[1][0] === fence.char
+    && match[1].length >= fence.length
+    && match[2].trim() === ''
 }
 
 function commandPattern(command: string): RegExp {

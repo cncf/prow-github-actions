@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getCommandArgs, getLineArgs, hasCommand, hasKeyword } from '../../src/utils/command'
+import { commandLines, getCommandArgs, getLineArgs, hasCommand, hasKeyword } from '../../src/utils/command'
 
 it('handles comments with multiple lines', () => {
   const body = `Here is something
@@ -46,7 +46,7 @@ describe('hasCommand', () => {
     expect(hasCommand('/lgtm', '/lgtm')).toBe(true)
     expect(hasCommand('/lgtm', 'looks fine\n/lgtm cancel')).toBe(true)
     expect(hasCommand('/lgtm', '  /lgtm')).toBe(true)
-    expect(hasCommand('/lgtm', '\t/lgtm')).toBe(true)
+    expect(hasCommand('/lgtm', 'looks fine\n\t/lgtm')).toBe(true)
     expect(hasCommand('/lgtm', '/kind bug\r\n/lgtm\r\n')).toBe(true)
   })
 
@@ -74,12 +74,210 @@ describe('hasCommand', () => {
     expect(hasCommand('/kind', '/kind foo')).toBe(true)
   })
 
-  // #66 fenced code blocks are not stripped yet; flip this when that lands
-  it('currently matches a command inside a fenced code block', () => {
+  // #66
+  it('does not match a command inside a fenced code block', () => {
     const body = 'try this:\n```\n/kind bug\n```\n'
+
+    expect(hasCommand('/kind', body)).toBe(false)
+    expect(() => getCommandArgs('/kind', body)).toThrow('command /kind missing from body')
+  })
+})
+
+describe('code blocks', () => {
+  it('ignores a command inside a ``` fence (issue repro)', () => {
+    const body = 'try this:\n```\n/kind bug\n```\n'
+
+    expect(hasCommand('/kind', body)).toBe(false)
+    expect(getLineArgs('/kind', body)).toBe('')
+  })
+
+  it('ignores a command inside a fence with an info string', () => {
+    expect(hasCommand('/approve', '```bash\n/approve\n```')).toBe(false)
+    expect(hasCommand('/approve', '```  bash  \n/approve\n```')).toBe(false)
+  })
+
+  it('ignores a command inside a ~~~ fence', () => {
+    expect(hasCommand('/approve', '~~~\n/approve\n~~~')).toBe(false)
+    expect(hasCommand('/approve', '~~~~text\n/approve\n~~~~')).toBe(false)
+  })
+
+  it('treats a ~~~ inside a ``` block as literal and closes only on ```', () => {
+    const body = '```\n~~~\n/approve\n```\n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('treats a ``` inside a ~~~ block as literal and closes only on ~~~', () => {
+    const body = '~~~\n```\n/approve\n~~~\n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('closes a fence with a longer fence of the same character', () => {
+    const body = '```\n/approve\n````\n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('does not close a fence with a shorter fence', () => {
+    const body = '````\n```\n/approve\n```\n/lgtm\n````\n/hold'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(false)
+    expect(hasCommand('/hold', body)).toBe(true)
+  })
+
+  it('does not close a fence with a line that has trailing text after the fence', () => {
+    const body = '```\n/approve\n``` not a closer\n/lgtm\n```\n/hold'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(false)
+    expect(hasCommand('/hold', body)).toBe(true)
+  })
+
+  it('closes a fence followed by trailing whitespace', () => {
+    const body = '```\n/approve\n```   \n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('swallows everything after an unclosed fence', () => {
+    const body = 'see:\n```\n/approve\n/lgtm\n/hold'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(false)
+    expect(hasCommand('/hold', body)).toBe(false)
+  })
+
+  it('still matches a command after a closed fence', () => {
+    const body = '```\necho hi\n```\n/kind bug'
 
     expect(hasCommand('/kind', body)).toBe(true)
     expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+  })
+
+  it('still matches a command before a fence', () => {
+    const body = '/kind bug\n```\n/kind cleanup\n```'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug'])
+  })
+
+  it('collects only arguments outside fences across several blocks', () => {
+    const body = '/kind bug\n```\n/kind a\n```\n/kind cleanup\n~~~\n/kind b\n~~~\n/kind docs'
+
+    expect(getCommandArgs('/kind', body)).toEqual(['bug', 'cleanup', 'docs'])
+  })
+
+  it('opens a fence indented by up to 3 spaces', () => {
+    expect(hasCommand('/approve', ' ```\n/approve\n```')).toBe(false)
+    expect(hasCommand('/approve', '   ```\n/approve\n   ```')).toBe(false)
+    expect(hasCommand('/approve', '```\n/approve\n   ```\n/lgtm')).toBe(false)
+  })
+
+  it('does not treat a backtick fence with a backtick in its info string as an opener', () => {
+    // CommonMark: the info string of a backtick fence may not contain a backtick
+    const body = '``` `code` ```\n/approve'
+
+    expect(hasCommand('/approve', body)).toBe(true)
+  })
+
+  it('ignores a 4-space indented code block after a blank line', () => {
+    const body = 'try this:\n\n    /approve\n'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+  })
+
+  it('ignores an indented code block at the start of the body', () => {
+    expect(hasCommand('/approve', '    /approve')).toBe(false)
+    expect(hasCommand('/approve', '        /approve\n    /lgtm')).toBe(false)
+  })
+
+  it('ignores a tab-indented code block', () => {
+    expect(hasCommand('/approve', 'try this:\n\n\t/approve')).toBe(false)
+    expect(hasCommand('/approve', '\t/approve')).toBe(false)
+  })
+
+  it('keeps an indented code block going across its own lines', () => {
+    const body = '\n    echo hi\n    /approve\n\n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('ends an indented code block at the first line that is not indented', () => {
+    const body = '\n    echo hi\ntext\n    /approve'
+
+    expect(hasCommand('/approve', body)).toBe(true)
+  })
+
+  // simplification: a paragraph continuation line is treated as visible text
+  it('still matches an indented line directly after a paragraph (no blank line)', () => {
+    expect(hasCommand('/approve', 'some text\n    /approve')).toBe(true)
+    expect(hasCommand('/approve', 'some text\n\t/approve')).toBe(true)
+  })
+
+  // simplification: list continuation is not parsed, consistent with Prow
+  it('still matches an indented list continuation line', () => {
+    expect(hasCommand('/approve', '- item\n    /approve')).toBe(true)
+  })
+
+  it('still matches a line indented by fewer than 4 spaces', () => {
+    expect(hasCommand('/approve', '\n   /approve')).toBe(true)
+    expect(getCommandArgs('/kind', '\n   /kind bug')).toEqual(['bug'])
+  })
+
+  it('does not match inline code', () => {
+    expect(hasCommand('/approve', '`/approve`')).toBe(false)
+    expect(hasCommand('/approve', 'run `/approve` to approve')).toBe(false)
+  })
+
+  it('does not match a blockquote', () => {
+    expect(hasCommand('/approve', '> /approve')).toBe(false)
+    expect(hasCommand('/approve', '> quoted\n> /approve')).toBe(false)
+  })
+
+  it('handles fences in a CRLF body', () => {
+    const body = 'try:\r\n```\r\n/kind bug\r\n```\r\n/kind cleanup\r\n'
+
+    expect(hasCommand('/kind', body)).toBe(true)
+    expect(getCommandArgs('/kind', body)).toEqual(['cleanup'])
+  })
+
+  it('handles an indented block in a CRLF body', () => {
+    const body = 'try:\r\n\r\n    /approve\r\n/lgtm'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(true)
+  })
+
+  it('is case-insensitive and whitespace-tolerant inside fences too', () => {
+    expect(hasCommand('/lgtm', '```\n  /LGTM  \n```')).toBe(false)
+  })
+
+  describe('commandLines', () => {
+    it('returns exactly the visible lines with their original content', () => {
+      const body = 'intro\n```bash\n/kind bug\n```\n  /approve  \n\n    indented\n~~~\nx\n~~~\ntail'
+
+      expect(commandLines(body)).toEqual(['intro', '  /approve  ', '', 'tail'])
+    })
+
+    it('drops fence lines themselves', () => {
+      expect(commandLines('```\n```')).toEqual([])
+      expect(commandLines('a\n```\n```\nb')).toEqual(['a', 'b'])
+    })
+
+    it('returns every line when there is no code', () => {
+      expect(commandLines('a\nb\r\nc')).toEqual(['a', 'b', 'c'])
+      expect(commandLines('')).toEqual([''])
+    })
+
+    it('keeps an unclosed fence out to the end', () => {
+      expect(commandLines('a\n```\nb\nc')).toEqual(['a'])
+    })
   })
 })
 
