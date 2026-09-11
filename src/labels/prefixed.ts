@@ -1,9 +1,10 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
+import type { LabelSection } from '../utils/labeling'
 import * as core from '@actions/core'
 
 import { getCommandArgs } from '../utils/command'
-import { addPrefix, getArgumentLabels, getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
+import { addPrefix, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
 export interface PrefixedLabelCommand {
@@ -15,6 +16,8 @@ export interface PrefixedLabelCommand {
   allowlistKey: string
   /** replace any existing '<prefix>/*' labels instead of stacking them */
   exclusive?: boolean
+  /** built-in values used when the yaml has no `allowlistKey` section */
+  defaultValues?: string[]
 }
 
 export const prefixedLabelCommands: PrefixedLabelCommand[] = [
@@ -23,6 +26,19 @@ export const prefixedLabelCommands: PrefixedLabelCommand[] = [
   { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
   { command: '/label', prefix: '', allowlistKey: 'labels' },
 ]
+
+// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
+export const labelCommandName = /^[a-z][a-z0-9-]*$/
+
+/**
+ * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
+ * key so that `/<key> value` labels the issue with '<key>/value'
+ *
+ * @param name - the top level key, ex: 'level'
+ */
+export function dynamicPrefixedCommand(name: string): PrefixedLabelCommand {
+  return { command: `/${name}`, prefix: name, allowlistKey: name }
+}
 
 /**
  * removeCommandFor returns the Prow-style removal spelling of a label command
@@ -50,9 +66,10 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
   const issueNumber = requireIssueNumber(context)
   const commentBody: string = context.payload.comment?.body
 
-  const labels = await requestedLabels(octokit, context, cmd, cmd.command, commentBody)
+  const section = await allowlistFor(octokit, context, cmd)
+  const labels = requestedLabels(cmd, cmd.command, commentBody, section.values)
 
-  if (cmd.exclusive) {
+  if (section.exclusive) {
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command)
 
     const stale = currentLabels.filter((label) => {
@@ -84,7 +101,8 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   const commentBody: string = context.payload.comment?.body
   const command = removeCommandFor(cmd.command)
 
-  const labels = await requestedLabels(octokit, context, cmd, command, commentBody)
+  const section = await allowlistFor(octokit, context, cmd)
+  const labels = requestedLabels(cmd, command, commentBody, section.values)
   const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command)
 
   const present = labels.filter(label => currentLabels.includes(label))
@@ -109,30 +127,46 @@ function requireIssueNumber(context: Context): number {
   return issueNumber
 }
 
-async function requestedLabels(
+// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
+async function allowlistFor(
   octokit: Octokit,
   context: Context,
   cmd: PrefixedLabelCommand,
-  command: string,
-  commentBody: string,
-): Promise<string[]> {
-  const name = command.slice(1)
-  const args = getCommandArgs(command, commentBody)
+): Promise<Required<LabelSection>> {
+  const key = cmd.allowlistKey
 
-  let allowed: string[] = []
   try {
-    allowed = await getArgumentLabels(octokit, context, cmd.allowlistKey)
-    core.debug(`${name}: found labels ${allowed}`)
+    const section = (await getLabelConfig(octokit, context))[key]
+
+    if (section) {
+      core.debug(`${key}: found labels ${section.values}`)
+      return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false }
+    }
+
+    if (cmd.defaultValues) {
+      core.debug(`${key}: using built-in labels ${cmd.defaultValues}`)
+      return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false }
+    }
+
+    throw new Error(`${key}: yaml malformed, expected '${key}' top level key`)
   }
   catch (e) {
     throw new Error(`could not get labels from yaml: ${e}`)
   }
+}
 
+function requestedLabels(
+  cmd: PrefixedLabelCommand,
+  command: string,
+  commentBody: string,
+  allowed: string[],
+): string[] {
+  const args = getCommandArgs(command, commentBody)
   const labels = addPrefix(cmd.prefix, args.filter(arg => allowed.includes(arg)))
 
   // no arguments after command provided
   if (labels.length === 0) {
-    throw new Error(`${name}: command args missing from body`)
+    throw new Error(`${command.slice(1)}: command args missing from body`)
   }
 
   return labels

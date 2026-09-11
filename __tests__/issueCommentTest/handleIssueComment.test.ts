@@ -146,17 +146,80 @@ it('fails when prow-commands is empty', async () => {
 })
 
 it('fails for an unsupported command in prow-commands', async () => {
-  utils.setupActionsEnv('/not-a-command')
+  utils.setupActionsEnv('/not_a_command')
 
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
-  issueCommentEvent.comment.body = '/not-a-command'
+  issueCommentEvent.comment.body = '/not_a_command'
   const context = new utils.MockContext(issueCommentEvent)
 
   await handleIssueComment(context)
   expect(setFailed).toHaveBeenCalledWith(
-    expect.stringContaining('could not execute /not-a-command'),
+    expect.stringContaining('could not execute /not_a_command'),
   )
+})
+
+it('dispatches an unknown lower-case command as a dynamic label command', async () => {
+  utils.setupActionsEnv('/level')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/level incubation'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).toHaveBeenCalledTimes(1)
+  expect(add.mock.calls[0][1]).toEqual({ command: '/level', prefix: 'level', allowlistKey: 'level' })
+  expect(remove).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('dispatches /remove-<key> to the remove path of a dynamic label command', async () => {
+  utils.setupActionsEnv('/level')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/remove-level incubation'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(remove).toHaveBeenCalledTimes(1)
+  expect(remove.mock.calls[0][1]).toMatchObject({ command: '/level' })
+  expect(add).not.toHaveBeenCalled()
+})
+
+it('listing only /remove-<key> also enables the dynamic /<key>', async () => {
+  utils.setupActionsEnv('/remove-level')
+
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  issueCommentEvent.comment.body = '/level incubation'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(add).toHaveBeenCalledTimes(1)
+  expect(add.mock.calls[0][1]).toMatchObject({ command: '/level' })
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('does not turn /remove-<hand-written command> into a label command', async () => {
+  utils.setupActionsEnv('/assign')
+
+  vi.spyOn(assign, 'assign').mockImplementation(() => Promise.resolve())
+  const add = vi.spyOn(prefixed, 'addPrefixedLabels').mockImplementation(() => Promise.resolve())
+  const remove = vi.spyOn(prefixed, 'removePrefixedLabels').mockImplementation(() => Promise.resolve())
+
+  issueCommentEvent.comment.body = '/remove-assign @some-user'
+  const context = new utils.MockContext(issueCommentEvent)
+
+  await handleIssueComment(context)
+  expect(assign.assign).not.toHaveBeenCalled()
+  expect(add).not.toHaveBeenCalled()
+  expect(remove).not.toHaveBeenCalled()
 })
 
 it('dispatches /remove-lgtm once to lgtm when /lgtm is configured', async () => {

@@ -6,7 +6,7 @@ import * as github from '@actions/github'
 
 import { hold } from '../labels/hold'
 import { lgtm } from '../labels/lgtm'
-import { addPrefixedLabels, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
+import { addPrefixedLabels, dynamicPrefixedCommand, labelCommandName, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
 import { remove } from '../labels/remove'
 import { hasCommand } from '../utils/command'
 import { approve } from './approve'
@@ -21,6 +21,24 @@ import { retitle } from './retitle'
 import { unassign } from './unassign'
 import { uncc } from './uncc'
 
+// hand-written commands; looked up lazily so the module bindings stay spy-able
+const handlers: Record<string, (context: Context) => Promise<void>> = {
+  '/assign': context => assign(context),
+  '/cc': context => cc(context),
+  '/uncc': context => uncc(context),
+  '/unassign': context => unassign(context),
+  '/approve': context => approve(context),
+  '/retitle': context => retitle(context),
+  '/remove': context => remove(context),
+  '/hold': context => hold(context),
+  '/lgtm': context => lgtm(context),
+  '/close': context => close(context),
+  '/lock': context => lock(context),
+  '/reopen': context => reopen(context),
+  '/milestone': context => milestone(context),
+  '/meow': context => meow(context),
+}
+
 // Prow-style spellings that are handled by the canonical command's module
 const commandAliases: Record<string, string[]> = {
   '/lgtm': ['/remove-lgtm'],
@@ -31,16 +49,30 @@ const commandAliases: Record<string, string[]> = {
   ),
 }
 
+// any other /<key> names a .prowlabels.yaml section
+function isDynamicLabelCommand(command: string): boolean {
+  return command.startsWith('/')
+    && labelCommandName.test(command.slice(1))
+    && !(command in handlers)
+    && !(command in commandAliases)
+}
+
 function canonicalCommand(name: string): string {
+  // the alias table wins so /remove-lgtm, /remove-hold and friends keep their bases
   for (const [command, aliases] of Object.entries(commandAliases)) {
     if (aliases.includes(name)) {
       return command
     }
   }
-  return name
+
+  const base = name.replace(/^\/remove-/, '/')
+  return base !== name && isDynamicLabelCommand(base) ? base : name
 }
 
 function commandForms(command: string): string[] {
+  if (isDynamicLabelCommand(command)) {
+    return [command, removeCommandFor(command)]
+  }
   return [command, ...(commandAliases[command] ?? [])]
 }
 
@@ -76,54 +108,18 @@ export async function handleIssueComment(context: Context = github.context): Pro
           return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError)
         }
 
-        switch (command) {
-          case '/assign':
-            return await assign(context).catch(normalizeError)
-
-          case '/cc':
-            return await cc(context).catch(normalizeError)
-
-          case '/uncc':
-            return await uncc(context).catch(normalizeError)
-
-          case '/unassign':
-            return await unassign(context).catch(normalizeError)
-
-          case '/approve':
-            return await approve(context).catch(normalizeError)
-
-          case '/retitle':
-            return await retitle(context).catch(normalizeError)
-
-          case '/remove':
-            return await remove(context).catch(normalizeError)
-
-          case '/hold':
-            return await hold(context).catch(normalizeError)
-
-          case '/lgtm':
-            return await lgtm(context).catch(normalizeError)
-
-          case '/close':
-            return await close(context).catch(normalizeError)
-
-          case '/lock':
-            return await lock(context).catch(normalizeError)
-
-          case '/reopen':
-            return await reopen(context).catch(normalizeError)
-
-          case '/milestone':
-            return await milestone(context).catch(normalizeError)
-
-          case '/meow':
-            return await meow(context).catch(normalizeError)
-
-          default:
-            return new Error(
-              `could not execute ${command}. May not be supported - please refer to docs`,
-            )
+        const handler = handlers[command]
+        if (handler) {
+          return await handler(context).catch(normalizeError)
         }
+
+        if (isDynamicLabelCommand(command)) {
+          return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError)
+        }
+
+        return new Error(
+          `could not execute ${command}. May not be supported - please refer to docs`,
+        )
       }
     }),
   )
