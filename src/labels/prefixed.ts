@@ -33,6 +33,15 @@ export const prefixedLabelCommands: PrefixedLabelCommand[] = [
 // a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
 export const labelCommandName = /^[a-z][a-z0-9-]*$/
 
+// labels with dedicated, authorization-gated commands; never reachable through /label
+const protectedLabels = ['lgtm', 'hold', 'approved']
+const protectedPrefixes = ['do-not-merge/']
+
+export function isProtectedLabel(label: string): boolean {
+  const lower = label.toLowerCase()
+  return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+}
+
 /**
  * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
  * key so that `/<key> value` labels the issue with '<key>/value'
@@ -91,8 +100,8 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
 /**
  * removePrefixedLabels removes '<prefix>/<value>' for every value in the
  * /remove-<command> line that is in the .prowlabels.yaml allowlist and
- * currently on the issue. Restricting removal to the allowlist keeps
- * anyone from stripping protected labels such as lgtm, approved or hold.
+ * currently on the issue. Labels owned by other commands (lgtm, hold,
+ * approved, do-not-merge/*) are refused even when the allowlist names them.
  *
  * @param context - the github actions event context
  * @param cmd - the command definition
@@ -175,6 +184,13 @@ function requestedLabels(
   // no arguments after command provided
   if (labels.length === 0) {
     throw new Error(`${command.slice(1)}: command args missing from body`)
+  }
+
+  if (cmd.prefix === '') {
+    const offender = labels.find(isProtectedLabel)
+    if (offender !== undefined) {
+      throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`)
+    }
   }
 
   return labels

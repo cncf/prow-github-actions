@@ -30,7 +30,10 @@ This Github workflow will check every hour
 for PRs with the `lgtm` label and will attempt to automatically merge them.
 If the `hold` label is present, it will block automatic merging.
 Locked and closed PRs are skipped. An unknown `merge-method` falls back to `merge`.
-A merge failure is logged at debug level and does **not** fail the run.
+Every eligible PR is attempted, so one un-mergeable PR does not stop the others.
+Each failed merge is logged as an error annotation (`could not merge pr #<n>: <reason>`);
+once all pages are processed the run fails if any merge failed, listing the PRs:
+`2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
 
 The companion `lgtm` PR job removes the `lgtm` label from a PR that gets updated.
 This prevents any un-reviewed code from being automatically merged by the lgtm-merger mechanism.

@@ -37254,16 +37254,18 @@ function newOctokit(token) {
 
 
 
-let jobsDone = 0;
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label
+ * and attempt to merge them if they have the "lgtm" label.
+ * Every PR is attempted; once all pages are processed the run fails
+ * if any merge was refused, listing the affected PRs.
  *
  * @param currentPage - the page to return from the github api
  * @param context - The github actions event context
+ * @param progress - merges done and failures collected on earlier pages
  */
-async function cronLgtm(currentPage, context) {
+async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
     info(`starting lgtm merger page: ${currentPage}`);
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
@@ -37277,7 +37279,11 @@ async function cronLgtm(currentPage, context) {
     }
     if (prs.length <= 0) {
         // All done!
-        return jobsDone;
+        if (progress.failures.length > 0) {
+            const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+            throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
+        }
+        return progress.jobsDone;
     }
     const results = await Promise.all(prs.map(async (pr) => {
         info(`processing pr: ${pr.number}`);
@@ -37288,8 +37294,9 @@ async function cronLgtm(currentPage, context) {
             return;
         }
         try {
-            await tryMergePr(pr, octokit, context);
-            jobsDone++;
+            if (await tryMergePr(pr, octokit, context, progress.failures)) {
+                progress.jobsDone++;
+            }
         }
         catch (error) {
             return error;
@@ -37301,7 +37308,7 @@ async function cronLgtm(currentPage, context) {
         }
     }
     // Recurse, continue to next page
-    return await cronLgtm(currentPage + 1, context);
+    return await cronLgtm(currentPage + 1, context, progress);
 }
 /**
  * grabs pulls from github in baches of 100
@@ -37321,45 +37328,45 @@ async function getOpenPrs(octokit, context = github_context, page) {
     return prResults.data;
 }
 /**
- * Attempts to merge a PR if it is mergable and has the lgtm label
+ * Attempts to merge a PR if it has the lgtm label and not the hold label.
+ * A refused merge is logged as an error annotation and recorded in
+ * failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
+ * @param failures - collects PRs whose merge the api refused
+ * @returns whether the PR was merged
  */
-async function tryMergePr(pr, octokit, context = github_context) {
+async function tryMergePr(pr, octokit, context = github_context, failures) {
     const method = getInput('merge-method', { required: false });
-    // if pr has label 'lgtm', attempt to merge
-    // but not if it has the 'hold' label
-    if (pr.labels.map(e => e.name).includes('lgtm')
-        && !pr.labels.map(e => e.name).includes('hold')) {
-        try {
-            switch (method) {
-                case 'squash':
-                    await octokit.pulls.merge({
-                        ...context.repo,
-                        pull_number: pr.number,
-                        merge_method: 'squash',
-                    });
-                    break;
-                case 'rebase':
-                    await octokit.pulls.merge({
-                        ...context.repo,
-                        pull_number: pr.number,
-                        merge_method: 'rebase',
-                    });
-                    break;
-                default:
-                    await octokit.pulls.merge({
-                        ...context.repo,
-                        pull_number: pr.number,
-                        merge_method: 'merge',
-                    });
-            }
-        }
-        catch (e) {
-            core_debug(`could not merge pr ${pr.number}: ${e}`);
-        }
+    const names = pr.labels.map(e => e.name);
+    if (!names.includes('lgtm') || names.includes('hold')) {
+        return false;
+    }
+    try {
+        await octokit.pulls.merge({
+            ...context.repo,
+            pull_number: pr.number,
+            merge_method: mergeMethod(method),
+        });
+        return true;
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        error(`could not merge pr #${pr.number}: ${message}`);
+        failures.push({ number: pr.number, message });
+        return false;
+    }
+}
+// an unknown merge-method input falls back to 'merge'
+function mergeMethod(input) {
+    switch (input) {
+        case 'squash':
+        case 'rebase':
+            return input;
+        default:
+            return 'merge';
     }
 }
 
@@ -41374,6 +41381,13 @@ const prefixedLabelCommands = [
 ];
 // a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
 const labelCommandName = /^[a-z][a-z0-9-]*$/;
+// labels with dedicated, authorization-gated commands; never reachable through /label
+const protectedLabels = ['lgtm', 'hold', 'approved'];
+const protectedPrefixes = ['do-not-merge/'];
+function isProtectedLabel(label) {
+    const lower = label.toLowerCase();
+    return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix));
+}
 /**
  * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
  * key so that `/<key> value` labels the issue with '<key>/value'
@@ -41423,8 +41437,8 @@ async function addPrefixedLabels(context, cmd) {
 /**
  * removePrefixedLabels removes '<prefix>/<value>' for every value in the
  * /remove-<command> line that is in the .prowlabels.yaml allowlist and
- * currently on the issue. Restricting removal to the allowlist keeps
- * anyone from stripping protected labels such as lgtm, approved or hold.
+ * currently on the issue. Labels owned by other commands (lgtm, hold,
+ * approved, do-not-merge/*) are refused even when the allowlist names them.
  *
  * @param context - the github actions event context
  * @param cmd - the command definition
@@ -41481,6 +41495,12 @@ function requestedLabels(cmd, command, commentBody, allowed) {
     // no arguments after command provided
     if (labels.length === 0) {
         throw new Error(`${command.slice(1)}: command args missing from body`);
+    }
+    if (cmd.prefix === '') {
+        const offender = labels.find(isProtectedLabel);
+        if (offender !== undefined) {
+            throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`);
+        }
     }
     return labels;
 }

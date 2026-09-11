@@ -1,6 +1,7 @@
+import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
 import listPullReqs from '../fixtures/pullReq/pullReqListPulls.json'
@@ -171,5 +172,96 @@ describe('cronLgtm', () => {
 
     await expect(handleCronJobs(context)).resolves.not.toThrow()
     await expect(observeReq.notCalled()).resolves.toBe('not called')
+  })
+
+  function lgtmPr(number: number) {
+    const pr = structuredClone(listPullReqs[0])
+    pr.number = number
+    pr.labels = [{ ...pr.labels[0], name: 'lgtm' }]
+    return pr
+  }
+
+  function routePulls(prs: unknown[]) {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
+        ({ request }) => {
+          const page = new URL(request.url).searchParams.get('page')
+          return utils.mockResponse(200, page === '1' ? prs : [])({ request })
+        },
+      ),
+    )
+  }
+
+  it('does not fail the run when the merge succeeds', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    routePulls([lgtmPr(2)])
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
+        utils.mockResponse(200, { merged: true }, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeReq.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('attempts every PR and fails the run listing the merge that failed', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    routePulls([lgtmPr(3), lgtmPr(4)])
+
+    const observeFirst = new utils.ObserveRequest()
+    const observeSecond = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/3/merge`,
+        utils.mockResponse(405, { message: 'Pull Request is not mergeable' }, observeFirst),
+      ),
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/4/merge`,
+        utils.mockResponse(200, { merged: true }, observeSecond),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(observeFirst.called()).resolves.toBe('called')
+    await expect(observeSecond.called()).resolves.toBe('called')
+
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('could not merge pr #3'))
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('1 pull request(s) could not be merged'))
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('#3'))
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('not mergeable'))
+    expect(setFailed).not.toHaveBeenCalledWith(expect.stringContaining('#4'))
+  })
+
+  it('reports a 409 base branch change in the failure message', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    routePulls([lgtmPr(5)])
+
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/5/merge`,
+        utils.mockResponse(409, { message: 'Base branch was modified. Review and try the merge again.' }),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('#5 (Base branch was modified'))
   })
 })

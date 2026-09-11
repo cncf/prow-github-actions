@@ -5,8 +5,6 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { newOctokit } from '../utils/octokit'
 
-let jobsDone = 0
-
 type PullsListResponseDataType
   = RestEndpointMethodTypes['pulls']['list']['response']['data']
 
@@ -14,17 +12,31 @@ type PullsListResponseItem = PullsListResponseDataType extends (infer Item)[]
   ? Item
   : never
 
+interface MergeFailure {
+  number: number
+  message: string
+}
+
+interface LgtmProgress {
+  jobsDone: number
+  failures: MergeFailure[]
+}
+
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label
+ * and attempt to merge them if they have the "lgtm" label.
+ * Every PR is attempted; once all pages are processed the run fails
+ * if any merge was refused, listing the affected PRs.
  *
  * @param currentPage - the page to return from the github api
  * @param context - The github actions event context
+ * @param progress - merges done and failures collected on earlier pages
  */
 export async function cronLgtm(
   currentPage: number,
   context: Context,
+  progress: LgtmProgress = { jobsDone: 0, failures: [] },
 ): Promise<number> {
   core.info(`starting lgtm merger page: ${currentPage}`)
 
@@ -42,7 +54,11 @@ export async function cronLgtm(
 
   if (prs.length <= 0) {
     // All done!
-    return jobsDone
+    if (progress.failures.length > 0) {
+      const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ')
+      throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`)
+    }
+    return progress.jobsDone
   }
 
   const results = await Promise.all(
@@ -57,8 +73,9 @@ export async function cronLgtm(
       }
 
       try {
-        await tryMergePr(pr, octokit, context)
-        jobsDone++
+        if (await tryMergePr(pr, octokit, context, progress.failures)) {
+          progress.jobsDone++
+        }
       }
       catch (error) {
         return error
@@ -73,7 +90,7 @@ export async function cronLgtm(
   }
 
   // Recurse, continue to next page
-  return await cronLgtm(currentPage + 1, context)
+  return await cronLgtm(currentPage + 1, context, progress)
 }
 
 /**
@@ -102,53 +119,52 @@ async function getOpenPrs(
 }
 
 /**
- * Attempts to merge a PR if it is mergable and has the lgtm label
+ * Attempts to merge a PR if it has the lgtm label and not the hold label.
+ * A refused merge is logged as an error annotation and recorded in
+ * failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
+ * @param failures - collects PRs whose merge the api refused
+ * @returns whether the PR was merged
  */
 async function tryMergePr(
   pr: PullsListResponseItem,
   octokit: Octokit,
   context: Context = github.context,
-): Promise<void> {
+  failures: MergeFailure[],
+): Promise<boolean> {
   const method = core.getInput('merge-method', { required: false })
 
-  // if pr has label 'lgtm', attempt to merge
-  // but not if it has the 'hold' label
-  if (
-    pr.labels.map(e => e.name).includes('lgtm')
-    && !pr.labels.map(e => e.name).includes('hold')
-  ) {
-    try {
-      switch (method) {
-        case 'squash':
-          await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: pr.number,
-            merge_method: 'squash',
-          })
-          break
+  const names = pr.labels.map(e => e.name)
+  if (!names.includes('lgtm') || names.includes('hold')) {
+    return false
+  }
 
-        case 'rebase':
-          await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: pr.number,
-            merge_method: 'rebase',
-          })
-          break
+  try {
+    await octokit.pulls.merge({
+      ...context.repo,
+      pull_number: pr.number,
+      merge_method: mergeMethod(method),
+    })
+    return true
+  }
+  catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    core.error(`could not merge pr #${pr.number}: ${message}`)
+    failures.push({ number: pr.number, message })
+    return false
+  }
+}
 
-        default:
-          await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: pr.number,
-            merge_method: 'merge',
-          })
-      }
-    }
-    catch (e) {
-      core.debug(`could not merge pr ${pr.number}: ${e}`)
-    }
+// an unknown merge-method input falls back to 'merge'
+function mergeMethod(input: string): 'merge' | 'squash' | 'rebase' {
+  switch (input) {
+    case 'squash':
+    case 'rebase':
+      return input
+    default:
+      return 'merge'
   }
 }
