@@ -534,7 +534,7 @@ reviewers:
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('removes approval with the /approve cancel command if commenter is collaborator', async () => {
+  it.each(['/approve cancel', '/Approve CANCEL'])('removes approval with %s if commenter is collaborator', async (body) => {
     server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
@@ -562,7 +562,7 @@ reviewers:
       ),
     )
 
-    issueCommentEventAssign.comment.body = '/approve cancel'
+    issueCommentEventAssign.comment.body = body
     issueCommentEventAssign.comment.user.login = 'some-user'
     const commentContext = new utils.MockContext(issueCommentEventAssign)
 

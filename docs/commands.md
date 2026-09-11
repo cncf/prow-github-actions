@@ -1,6 +1,6 @@
 # Prow github actions commands
 
-A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`. When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins; a `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
+A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Commands and their keywords are case-insensitive (`/LGTM cancel` works); label values are matched by the label configuration, and milestone titles are matched exactly. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`. When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins; a `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
 
 Commands | Policy | Description
 --- | --- | ---
@@ -12,8 +12,9 @@ Commands | Policy | Description
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Target be an Org Member, Collaborator, or have previously commented.
 `/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Target must already have had a review requested.
-`/close` | Collaborators | closes the issue / PR
-`/reopen` | Collaborators | reopens a closed issue / PR
+`/close` | Collaborators **or the issue/PR author** | closes the issue / PR
+`/close not-planned` | Collaborators **or the issue/PR author** | closes the issue / PR with the `not planned` state reason
+`/reopen` | Collaborators **or the issue/PR author** | reopens a closed issue / PR
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
@@ -26,9 +27,9 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md)
-`/lgtm cancel` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | removes the `lgtm` label
-`/remove-lgtm` | [OWNERS](#owners) if present, otherwise Collaborators and Org Members | same as `/lgtm cancel`
+`/lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm cancel` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | removes the `lgtm` label
+`/remove-lgtm` | [OWNERS](#owners) reviewers if present, otherwise Collaborators and Org Members, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`

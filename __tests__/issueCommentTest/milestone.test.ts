@@ -114,6 +114,38 @@ describe('/milestone', () => {
     )
   })
 
+  it('matches milestone titles case-sensitively even though the command is not', async () => {
+    issueCommentEvent.comment.body = '/MILESTONE Some Milestone'
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/milestones`,
+        utils.mockResponse(200, repoMilestones),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('milestone "Some Milestone" not found'),
+    )
+  })
+
   it('reports none when the repository has no milestones', async () => {
     issueCommentEvent.comment.body = '/milestone v9'
 
@@ -137,8 +169,8 @@ describe('/milestone', () => {
     )
   })
 
-  it('clears the milestone with /milestone clear', async () => {
-    issueCommentEvent.comment.body = '/milestone clear'
+  it.each(['/milestone clear', '/Milestone CLEAR'])('clears the milestone with %s', async (body) => {
+    issueCommentEvent.comment.body = body
 
     server.use(
       http.get(

@@ -57,7 +57,7 @@ export async function handleIssueComment(context: Context = github.context): Pro
       .getInput('prow-commands', { required: false })
       .split(/\s+/)
       .filter(command => command !== '')
-      .map(canonicalCommand),
+      .map(command => canonicalCommand(command.toLowerCase())),
   )]
   const commentBody: string = context.payload.comment?.body
 

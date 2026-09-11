@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getCommandArgs, getLineArgs, hasCommand } from '../../src/utils/command'
+import { getCommandArgs, getLineArgs, hasCommand, hasKeyword } from '../../src/utils/command'
 
 it('handles comments with multiple lines', () => {
   const body = `Here is something
@@ -199,5 +199,41 @@ describe('getLineArgs', () => {
   it('returns an empty string when the command is absent', () => {
     expect(getLineArgs('/milestone', 'no command here')).toBe('')
     expect(getLineArgs('/milestone', 'set /milestone v1.2 please')).toBe('')
+  })
+})
+
+describe('case-insensitive matching', () => {
+  it('matches a command regardless of case', () => {
+    expect(hasCommand('/lgtm', '/LGTM')).toBe(true)
+    expect(hasCommand('/lgtm', '/Lgtm cancel')).toBe(true)
+    expect(hasCommand('/remove-lgtm', '/Remove-LGTM')).toBe(true)
+    expect(hasCommand('/lgtm', '/lgtmx')).toBe(false)
+    expect(hasCommand('/lgtm', '/LGTMX')).toBe(false)
+  })
+
+  it('keeps the case of the arguments', () => {
+    expect(getCommandArgs('/lgtm', '/Lgtm Cancel')).toEqual(['Cancel'])
+    expect(getCommandArgs('/kind', '/KIND Bug')).toEqual(['Bug'])
+    expect(getLineArgs('/milestone', '/MILESTONE V1.0')).toBe('V1.0')
+  })
+
+  it('still refuses a longer command sharing the prefix', () => {
+    expect(hasCommand('/lgtm', '/REMOVE-LGTM')).toBe(false)
+    expect(() => getCommandArgs('/lgtm', '/REMOVE-LGTM')).toThrow('command /lgtm missing from body')
+  })
+})
+
+describe('hasKeyword', () => {
+  it('matches a keyword regardless of case', () => {
+    expect(hasKeyword(['cancel'], 'cancel')).toBe(true)
+    expect(hasKeyword(['Cancel'], 'cancel')).toBe(true)
+    expect(hasKeyword(['CANCEL'], 'cancel')).toBe(true)
+    expect(hasKeyword(['foo', 'NOT-PLANNED'], 'not-planned')).toBe(true)
+  })
+
+  it('requires a whole-argument match', () => {
+    expect(hasKeyword([], 'cancel')).toBe(false)
+    expect(hasKeyword(['cancelled'], 'cancel')).toBe(false)
+    expect(hasKeyword(['no-cancel'], 'cancel')).toBe(false)
   })
 })

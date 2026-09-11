@@ -24,13 +24,17 @@ export async function reopen(context: Context = github.context): Promise<void> {
   }
 
   // Only users who:
+  // - are the issue / PR author
   // - are collaborators
-  let isAuthUser: boolean = false
-  try {
-    isAuthUser = await checkCollaborator(octokit, context, commenterId)
-  }
-  catch (e) {
-    throw new Error(`could not check commentor auth: ${e}`)
+  const isAuthor = commenterId === context.payload.issue?.user?.login
+  let isAuthUser: boolean = isAuthor
+  if (!isAuthor) {
+    try {
+      isAuthUser = await checkCollaborator(octokit, context, commenterId)
+    }
+    catch (e) {
+      throw new Error(`could not check commentor auth: ${e}`)
+    }
   }
 
   if (isAuthUser) {

@@ -43617,6 +43617,16 @@ function getCommandArgs(command, body) {
     const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
     return [...new Set(stripAtSign(args))];
 }
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
     const found = [];
@@ -43632,7 +43642,7 @@ function commandPattern(command) {
     // escape regex metacharacters so a command is matched literally
     const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`);
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
 }
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings
 function splitLines(body) {
@@ -43850,7 +43860,7 @@ async function hold(context = github_context) {
     }
     const cancel = hasCommand('/unhold', commentBody)
         || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody).includes('cancel'));
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
     if (cancel) {
         try {
             await cancelLabel(octokit, context, issueNumber, 'hold');
@@ -44124,6 +44134,7 @@ async function createComment(octokit, context, issueNum, message) {
 /**
  * /lgtm will add the lgtm label.
  * /lgtm cancel and /remove-lgtm remove it.
+ * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
  *
@@ -44135,28 +44146,16 @@ async function lgtm(context = github_context) {
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
-    try {
-        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
-    }
-    catch (e) {
-        const msg = `Cannot apply the lgtm label because ${e}`;
-        error(msg);
-        // Try to reply back that the user is unauthorized
-        try {
-            await createComment(octokit, context, issueNumber, msg);
-        }
-        catch (commentE) {
-            // Log the comment error but continue to throw the original auth error
-            error(`Could not comment with an auth error: ${commentE}`);
-        }
-        throw e;
-    }
     const cancel = hasCommand('/remove-lgtm', commentBody)
-        || (hasCommand('/lgtm', commentBody) && getCommandArgs('/lgtm', commentBody).includes('cancel'));
+        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
     if (cancel) {
+        if (!isAuthor) {
+            await assertReviewer(octokit, context, issueNumber, commenterId);
+        }
         try {
             await cancelLabel(octokit, context, issueNumber, 'lgtm');
         }
@@ -44165,7 +44164,30 @@ async function lgtm(context = github_context) {
         }
         return;
     }
+    if (isAuthor) {
+        await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
+    }
+    await assertReviewer(octokit, context, issueNumber, commenterId);
     await labelIssue(octokit, context, issueNumber, ['lgtm']);
+}
+async function assertReviewer(octokit, context, issueNumber, commenterId) {
+    try {
+        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
+    }
+    catch (e) {
+        await refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
+    }
+}
+// refuse logs and replies with msg, then fails the run with cause (or msg)
+async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+    error(msg);
+    try {
+        await createComment(octokit, context, issueNumber, msg);
+    }
+    catch (commentE) {
+        error(`Could not comment with an auth error: ${commentE}`);
+    }
+    throw cause;
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
@@ -44370,7 +44392,7 @@ async function approve(context = github_context) {
         throw e;
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
-        || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody).includes('cancel'));
+        || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
     if (isCancel) {
         try {
             await cancel(octokit, context, issueNumber, commenterLogin);
@@ -44600,8 +44622,10 @@ async function selfReview(octokit, context, pullNum, user) {
 
 
 
+
 /**
- * /close will close the issue / PR
+ * /close will close the issue / PR.
+ * /close not-planned closes it with the not_planned state reason
  *
  * @param context - the github actions event context
  */
@@ -44609,26 +44633,42 @@ async function close_close(context = github_context) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
     const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     // Only users who:
+    // - are the issue / PR author
     // - are collaborators
-    let isAuthUser = false;
-    try {
-        isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    }
-    catch (e) {
-        throw new Error(`could not check commentor auth: ${e}`);
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
+    let isAuthUser = isAuthor;
+    if (!isAuthor) {
+        try {
+            isAuthUser = await checkCollaborator(octokit, context, commenterId);
+        }
+        catch (e) {
+            throw new Error(`could not check commentor auth: ${e}`);
+        }
     }
     if (isAuthUser) {
+        const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned');
         try {
-            await octokit.issues.update({
-                ...context.repo,
-                issue_number: issueNumber,
-                state: 'closed',
-            });
+            if (notPlanned) {
+                await octokit.issues.update({
+                    ...context.repo,
+                    issue_number: issueNumber,
+                    state: 'closed',
+                    state_reason: 'not_planned',
+                });
+            }
+            else {
+                await octokit.issues.update({
+                    ...context.repo,
+                    issue_number: issueNumber,
+                    state: 'closed',
+                });
+            }
         }
         catch (e) {
             throw new Error(`could not close issue: ${e}`);
@@ -44916,7 +44956,7 @@ async function milestone(context = github_context) {
     if (milestoneToAdd === '') {
         throw new Error(`please provide a milestone to add`);
     }
-    if (milestoneToAdd === 'clear') {
+    if (milestoneToAdd.toLowerCase() === 'clear') {
         await octokit.issues.update({
             ...context.repo,
             issue_number: issueNumber,
@@ -44959,13 +44999,17 @@ async function reopen(context = github_context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     // Only users who:
+    // - are the issue / PR author
     // - are collaborators
-    let isAuthUser = false;
-    try {
-        isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    }
-    catch (e) {
-        throw new Error(`could not check commentor auth: ${e}`);
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
+    let isAuthUser = isAuthor;
+    if (!isAuthor) {
+        try {
+            isAuthUser = await checkCollaborator(octokit, context, commenterId);
+        }
+        catch (e) {
+            throw new Error(`could not check commentor auth: ${e}`);
+        }
     }
     if (isAuthUser) {
         try {
@@ -45203,7 +45247,7 @@ async function handleIssueComment(context = github_context) {
     const commandConfig = [...new Set(getInput('prow-commands', { required: false })
             .split(/\s+/)
             .filter(command => command !== '')
-            .map(canonicalCommand))];
+            .map(command => canonicalCommand(command.toLowerCase())))];
     const commentBody = context.payload.comment?.body;
     if (commandConfig.length === 0) {
         setFailed(`please provide a list of space delimited commands / jobs to run. None found`);

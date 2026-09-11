@@ -43,6 +43,17 @@ export function getCommandArgs(command: string, body: string): string[] {
   return [...new Set(stripAtSign(args))]
 }
 
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+export function hasKeyword(args: string[], keyword: string): boolean {
+  return args.some(arg => arg.toLowerCase() === keyword)
+}
+
 function findCommandArgs(command: string, body: string): string[] {
   const pattern = commandPattern(command)
   const found: string[] = []
@@ -61,7 +72,7 @@ function commandPattern(command: string): RegExp {
   // escape regex metacharacters so a command is matched literally
   const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-  return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`)
+  return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i')
 }
 
 // splitLines splits a comment body into lines, tolerating CRLF and CR endings

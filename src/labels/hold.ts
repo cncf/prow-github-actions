@@ -3,7 +3,7 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
-import { getCommandArgs, hasCommand } from '../utils/command'
+import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { cancelLabel, labelIssue } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
@@ -30,7 +30,7 @@ export async function hold(context: Context = github.context): Promise<void> {
 
   const cancel = hasCommand('/unhold', commentBody)
     || hasCommand('/remove-hold', commentBody)
-    || (hasCommand('/hold', commentBody) && getCommandArgs('/hold', commentBody).includes('cancel'))
+    || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'))
 
   if (cancel) {
     try {

@@ -4,7 +4,7 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs, hasCommand } from '../utils/command'
+import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { newOctokit } from '../utils/octokit'
 
@@ -62,7 +62,7 @@ export async function approve(
   }
 
   const isCancel = hasCommand('/remove-approve', commentBody)
-    || (hasCommand('/approve', commentBody) && getCommandArgs('/approve', commentBody).includes('cancel'))
+    || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'))
 
   if (isCancel) {
     try {
