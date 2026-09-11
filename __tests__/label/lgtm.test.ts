@@ -12,6 +12,7 @@ import issuePayload from '../fixtures/issues/issue.json'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
+import { prCommentEvent, prHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
@@ -657,6 +658,58 @@ reviewers:
       await expect(observeAuth.notCalled()).resolves.toBe('not called')
       expect(setFailed).not.toHaveBeenCalled()
     })
+  })
+
+  it('adds label on a PR when the commenter reviews any changed file', async () => {
+    const commentContext = new utils.MockContext(prCommentEvent('/lgtm', 'ryan'))
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      ...prHandlers(
+        { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- ryan\n' },
+        ['sdk/x.go', 'docs/y.md'],
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({ labels: ['lgtm'] })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails on a PR when the commenter reviews none of the changed files', async () => {
+    const commentContext = new utils.MockContext(prCommentEvent('/lgtm', 'ryan'))
+
+    const wantErr = 'ryan is not a reviewer or approver for any changed file'
+
+    const observeAdd = new utils.ObserveRequest()
+    const observeComment = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeAdd),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(200, null, observeComment),
+      ),
+      ...prHandlers(
+        { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- ryan\n' },
+        ['docs/y.md'],
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeComment.called()
+    expect(await observeComment.body().then(body => body.body)).toContain(wantErr)
+    await expect(observeAdd.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
   })
 
   it('still rejects /lgtm cancel from a non-author who is not a reviewer', async () => {

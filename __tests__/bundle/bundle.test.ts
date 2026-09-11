@@ -1,4 +1,5 @@
 import type { FakeGithub } from './fakeGithub'
+import { Buffer } from 'node:buffer'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import process from 'node:process'
@@ -8,6 +9,7 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
+import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
 import { bundlePath, runBundle } from './runBundle'
 
@@ -251,6 +253,88 @@ describe('dist/index.js', () => {
     const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
     expect(comments).toHaveLength(1)
     expect(comments[0].body).toEqual({ body: 'you cannot LGTM your own PR.' })
+  })
+
+  describe('issue_comment /approve on a pull request', () => {
+    const ownersFiles: Record<string, string> = {
+      'OWNERS': 'approvers:\n- alice\n',
+      'sdk/OWNERS': 'approvers:\n- bob\n',
+      'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
+    }
+
+    function routeOwners(files: string[]) {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { base: { sha: 'basesha' } } })
+      gh.route('GET', `${repo}/pulls/1/files`, {
+        status: 200,
+        body: files.map(filename => ({ filename, status: 'modified' })),
+      })
+      gh.route('GET', `${repo}/git/trees/basesha`, {
+        status: 200,
+        body: {
+          sha: 'basesha',
+          truncated: false,
+          tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
+        },
+      })
+      for (const [path, contents] of Object.entries(ownersFiles)) {
+        gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
+          status: 200,
+          body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
+        })
+      }
+      gh.route('POST', `${repo}/pulls/1/reviews`, { status: 200, body: {} })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+    }
+
+    it('approves when a nested approver covers every changed file', async () => {
+      routeOwners(['sdk/x.go', 'sdk/internal/y.go'])
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/approve', 'bob'),
+        inputs: { ...token, 'prow-commands': '/approve' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const reviews = gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)
+      expect(reviews).toHaveLength(1)
+      expect(reviews[0].body).toEqual({ event: 'APPROVE', comments: [] })
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, 3)).toEqual([
+        `GET ${repo}/pulls/1`,
+        `GET ${repo}/pulls/1/files?per_page=100`,
+        `GET ${repo}/git/trees/basesha?recursive=true`,
+      ])
+      // the blobs are fetched concurrently, so their order is not fixed
+      expect(calls.slice(3, 5).sort()).toEqual([
+        `GET ${repo}/git/blobs/${blobSha('OWNERS')}`,
+        `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
+      ])
+      expect(calls.slice(5)).toEqual([`POST ${repo}/pulls/1/reviews`])
+    })
+
+    it('refuses with a comment naming the file outside the approver\'s directory', async () => {
+      routeOwners(['sdk/x.go', 'olm/y.go'])
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/approve', 'bob'),
+        inputs: { ...token, 'prow-commands': '/approve' },
+        apiUrl: gh.url,
+      })
+
+      const wantErr = 'bob is not an approver for olm/y.go (OWNERS: olm/OWNERS)'
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes(wantErr))).toBe(true)
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect(comments[0].body).toEqual({ body: `Cannot approve the pull request: Error: ${wantErr}` })
+      expect(gh.requestsMatching('GET', /\/contents\//)).toEqual([])
+    })
   })
 
   it('issue_comment /remove fails the action when the api returns 500', async () => {

@@ -10,6 +10,7 @@ import issueCommentEventAssign from '../fixtures/issues/assign/issueCommentEvent
 
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
 import * as utils from '../testUtils'
+import { prCommentEvent, prHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
@@ -175,6 +176,62 @@ reviewers:
     expect(await observeReq.body()).toMatchObject({
       event: 'APPROVE',
     })
+  })
+
+  it('approves a PR when the commenter is an approver for every changed file', async () => {
+    const commentContext = new utils.MockContext(prCommentEvent('/approve', 'bob'))
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      ...prHandlers(
+        { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'approvers:\n- bob\n' },
+        ['sdk/x.go', 'sdk/internal/y.go'],
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({ event: 'APPROVE' })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails a PR /approve naming the file the commenter does not own', async () => {
+    const commentContext = new utils.MockContext(prCommentEvent('/approve', 'bob'))
+
+    const wantErr = 'bob is not an approver for olm/y.go (OWNERS: olm/OWNERS)'
+
+    const observeReview = new utils.ObserveRequest()
+    const observeComment = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeReview),
+      ),
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(200, null, observeComment),
+      ),
+      ...prHandlers(
+        {
+          'OWNERS': 'approvers:\n- alice\n',
+          'sdk/OWNERS': 'approvers:\n- bob\n',
+          'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
+        },
+        ['sdk/x.go', 'olm/y.go'],
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeComment.called()
+    expect(await observeComment.body().then(body => body.body)).toContain(wantErr)
+    await expect(observeReview.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
   })
 
   it('removes approval with the /approve cancel command if approver in OWNERS file', async () => {
