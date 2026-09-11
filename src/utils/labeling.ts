@@ -1,5 +1,5 @@
-import type { Context } from '@actions/github/lib/context'
 import type { Octokit } from '@octokit/rest'
+import type { Context } from './context'
 
 import { Buffer } from 'node:buffer'
 

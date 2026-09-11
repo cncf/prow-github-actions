@@ -1,10 +1,14 @@
-import type { WebhookPayload } from '@actions/github/lib/interfaces'
-import { Context } from '@actions/github/lib/context'
+import type { Context } from '../src/utils/context'
+import * as github from '@actions/github'
+
+type WebhookPayload = Context['payload']
 
 export const api = 'https://api.github.com'
 
-// Generate and create a fake context to use
-export const MockContext = class extends Context {
+// @actions/github exports only the context instance; extend its class via the prototype
+const ContextClass = github.context.constructor as new () => Context
+
+export class MockContext extends ContextClass {
   constructor(payload: WebhookPayload) {
     super()
     // clone so tests never mutate the shared imported fixture

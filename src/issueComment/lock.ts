@@ -1,4 +1,4 @@
-import type { Context } from '@actions/github/lib/context'
+import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
