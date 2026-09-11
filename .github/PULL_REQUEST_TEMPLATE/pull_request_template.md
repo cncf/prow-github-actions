@@ -16,6 +16,8 @@ Please describe the tests that you ran, created, or modified in order to verify 
 ## Checklist
 
 - [ ] I ran `npm run all` to lint and build my code
+- [ ] I ran `npm run pack` and committed `dist/`
+- [ ] Commits are signed off (DCO)
 - [ ] Note any new dependencies these changes bring in
 - [ ] I have performed a self-review of my own code
 - [ ] I have commented my code, particularly in hard-to-understand areas

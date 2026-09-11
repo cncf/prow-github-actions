@@ -1,24 +1,37 @@
 # Prow github actions commands
 
-A command must start a line of the comment (leading whitespace is allowed); a command mentioned mid-sentence is ignored. Commands inside Markdown code (fenced ``` / ~~~ blocks, indented code, inline `code`) and blockquotes are ignored. Commands, their keywords and label values are case-insensitive (`/LGTM cancel` and `/kind Bug` work; the label is applied with the casing from `.prowlabels.yaml`), while milestone titles are matched exactly. Prow-style aliases such as `/remove-lgtm` and `/unhold` are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`. Any other lower-case `/<key>` listed in `prow-commands` is a [label command](./labeling.md#any-key-is-a-command) backed by the `<key>` section of `.prowlabels.yaml`. When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins; a `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
+These docs describe `main`. Features added since the latest release (`v2.0.0`) ship in the next release, which also creates the floating `v2` tag; until then pin `@v2.0.0` for the released behaviour.
+
+## Command syntax
+
+- A command must start a line of the comment; leading whitespace is allowed. A command mentioned mid-sentence is ignored.
+- Commands and their keywords (`cancel`, `clear`, `not-planned`) are case-insensitive: `/LGTM cancel` works.
+- **Label values** are matched case-insensitively against `.prowlabels.yaml` (or `.prowlabels.yml`, see [labeling](./labeling.md)) and applied with the casing written in the file: `/kind Bug` adds `kind/bug`.
+- `/lock` reasons are the exception: they are **case-sensitive**, and an unknown reason locks with no reason.
+- Commands inside Markdown code (fenced ``` / ~~~ blocks, indented code, inline `code`) and blockquotes are ignored.
+- When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins.
+- A `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
+- Milestone titles are matched exactly.
+- Prow-style aliases (`/remove-lgtm`, `/unhold`, ...) are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`.
+- Any other lower-case `/<key>` listed in `prow-commands` is a [label command](./labeling.md#any-key-is-a-command) backed by the `<key>` section of `.prowlabels.yaml`.
 
 Commands | Policy | Description
 --- | --- | ---
-`/approve` | [OWNERS](#owners) approver for **every** changed file if the repo has OWNERS files, otherwise Org members & Collaborators | approve all the files for the current PR
+`/approve` | [OWNERS](#owners) approver for **every** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | approve all the files for the current PR
 `/approve no-issue` | same as `/approve` | same as `/approve`; accepted for Prow compatibility
-`/approve cancel` | same as `/approve` | removes your approval on this pull-request
+`/approve cancel` | same as `/approve` | dismisses the bot's latest approval on this pull-request
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
-`/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). Target must have been already assigned.
-`/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Target be an Org Member, Collaborator, or have previously commented.
-`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Target must already have had a review requested.
+`/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must have been already assigned.
+`/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Self-cc requires Collaborator; targets must be an Org Member, Collaborator, or have previously commented.
+`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must already have had a review requested.
 `/close` | Collaborators **or the issue/PR author** | closes the issue / PR
 `/close not-planned` | Collaborators **or the issue/PR author** | closes the issue / PR with the `not planned` state reason
 `/reopen` | Collaborators **or the issue/PR author** | reopens a closed issue / PR
-`/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason
-`/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. An unknown title fails the run with the list of available milestones
+`/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason. Reasons are **case-sensitive**; an unknown reason locks with no reason
+`/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. With no title the run fails. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
-`/retitle some new title` | Collaborators | Renames the issue / PR
+`/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 
 Label Commands | Policy | Description
@@ -27,7 +40,7 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Collaborators and Org Members; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
 `/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
@@ -51,7 +64,15 @@ Label Commands | Policy | Description
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in [the `.prowlabels.yaml` file](./labeling.md)
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
-The `/remove-<key>` commands are enabled together with their base command and only remove values listed in `.prowlabels.yaml`, so anyone may use them without being able to strip `lgtm`, `hold` or `approved`. Use `/remove` for arbitrary labels.
+The `/remove-<key>` commands are enabled together with their base command and only remove values listed in `.prowlabels.yaml`, so anyone may use them without being able to strip `lgtm`, `hold` or `approved` — unless the repository lists those names under `labels:`, in which case `/remove-label` can remove them. Use `/remove` for arbitrary labels.
+
+## What happens when you are not authorized
+
+Failure behaviour differs per command:
+
+- `/close`, `/reopen` and `/retitle` silently do nothing.
+- `/lock`, `/remove` and `/milestone` fail the run.
+- `/lgtm` and `/approve` reply with a comment and fail the run.
 
 ## Enabling `/meow`
 
@@ -93,7 +114,7 @@ On a pull request the changed files are listed (for renames both the old and the
 
 - `/approve`: the commenter must be an `approver` for **every** changed file. The refusal names the first file that is not covered and the OWNERS files consulted for it.
 - `/lgtm`: the commenter must be a `reviewer` or `approver` for **at least one** changed file (Prow's lgtm rule).
-- On an issue there are no changed files, so the root `OWNERS` of the default branch is used as before.
+- On an issue there are no changed files, so the root `OWNERS` of the default branch is used.
 
 The `approvers` role does not grant `/lgtm` on its own for issues; on pull requests an approver of a changed file may also `/lgtm`.
 

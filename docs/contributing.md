@@ -6,27 +6,35 @@ All commits must be signed off (`git commit -s`) to satisfy the DCO check.
 
 ## Development
 
+Node 24 or newer is required.
+
 ```sh
 npm ci
 npm run all   # build, lint, pack the dist/ bundle, and test
 ```
 
+Note that `npm run all` runs `lint:fix` first, which rewrites files in place.
+
 The action runs from the committed `dist/index.js` (an `ncc` bundle of `src/`).
 Any change to `src/` must be followed by `npm run pack`, and the resulting
 `dist/index.js` committed alongside it; CI fails if `dist/` is out of date.
 
-`tsc` compiles `src/` to ES modules under `lib/`, and `ncc` bundles those into
-the CommonJS `dist/index.js` that the runner executes; `package.json`
-intentionally has no `"type": "module"`, since Node would then refuse to load
-the bundle. Never import from `@actions/github/lib/*` (only `.` and
-`./lib/utils` are exported); the `Context` type lives in `src/utils/context.ts`.
+`tsc` compiles `src/` to ES modules under `lib/` (which is gitignored), and
+`ncc` bundles those into the CommonJS `dist/index.js` that the runner executes;
+`package.json` intentionally has no `"type": "module"`, since Node would then
+refuse to load the bundle. Never import from `@actions/github/lib/*` (only `.`
+and `./lib/utils` are exported); the `Context` type lives in
+`src/utils/context.ts`.
+
+[Dependabot](../.github/dependabot.yml) keeps npm dependencies and pinned
+actions up to date on a weekly schedule.
 
 ## Testing
 
 | Command | What it runs |
 |---------|--------------|
 | `npm test` | The whole Vitest suite |
-| `npm run test:coverage` | The suite with v8 coverage and the thresholds in `vitest.config.mjs` |
+| `npm run test:coverage` | The suite with v8 coverage; CI enforces the thresholds in `vitest.config.mjs` (lines 85, branches 83, functions 91, statements 85) |
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API

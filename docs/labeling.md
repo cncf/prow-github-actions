@@ -1,6 +1,7 @@
 # Labeling
 
 Prow github actions expects the file `.prowlabels.yaml` to be in the root of the project.
+If it is absent, `.prowlabels.yml` is used as a fallback.
 This is needed for most labeling commands and jobs.
 All of the following examples can be placed simultaneously in the `.prowlabels.yaml` file.
 
@@ -20,51 +21,32 @@ optional `exclusive` flag:
 
 ```yaml
 # plain list: labels stack
-triage:
-  - accepted
-  - needs-information
+area:
+  - bug
+  - important
 
-# mapping: a later /level replaces any existing level/* label
-level:
+# mapping: a later /triage replaces any existing triage/* label
+triage:
   values:
-    - sandbox
-    - incubation
-    - graduation
-    - archived
+    - accepted
+    - needs-information
   exclusive: true
 ```
 
-With `prow-commands: /triage /level`, the commands `/triage accepted` and
-`/level incubation` label the issue or PR with `triage/accepted` and `level/incubation`.
-Because `level` is `exclusive`, `/level graduation` on that issue removes
-`level/incubation` before adding `level/graduation`.
+With `prow-commands: /area /triage`, the commands `/area bug` and
+`/triage accepted` label the issue or PR with `area/bug` and `triage/accepted`.
+Because `triage` is `exclusive`, `/triage needs-information` on that issue removes
+`triage/accepted` before adding `triage/needs-information`. Exclusivity applies to
+labels already on the issue, not to the current comment: every requested value is
+kept, so `/priority low high` adds both `priority/low` and `priority/high`.
 
 A key name must be lower case and consist of letters, digits and dashes
 (`^[a-z][a-z0-9-]*$`) to be usable as a command. Listing a `/<key>` in `prow-commands`
 whose section is missing from the yaml fails the run with
-`<key>: yaml malformed, expected '<key>' top level key`.
-
-## Area labels
-
-```yaml
-area:
-  - bug
-  - important
-```
-
-With the command `/area bug`,
-the issue or PR will be labeled with `area/bug`
-
-## Kind labels
-
-```yaml
-kind:
-  - failing-test
-  - cleanup
-```
-
-With the command `/kind cleanup`,
-the issue or PR will be labeled with `kind/cleanup`
+`could not get labels from yaml: Error: <key>: yaml malformed, expected '<key>' top level key`.
+A section that is neither a list of values nor a `{ values: [...], exclusive: bool }`
+mapping fails the run with
+`could not get labels from yaml: Error: <key>: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`.
 
 ## Priority labels
 
@@ -84,12 +66,12 @@ the issue or PR will be labeled with `priority/low`.
 
 ```yaml
 labels:
-  - good-first-issue
-  - help-wanted
+  - documentation
+  - question
 ```
 
-With the command `/label good-first-issue`,
-the issue or PR will be labeled with `good-first-issue` as written, with no prefix.
+With the command `/label documentation`,
+the issue or PR will be labeled with `documentation` as written, with no prefix.
 Values are split on spaces, so label names containing spaces cannot be listed here.
 
 ## Lifecycle, stage and status labels
@@ -129,18 +111,14 @@ Command | Adds | `/remove-` form removes
 `/help` | `help wanted` | `help wanted`, `good first issue`
 `/good-first-issue` | `good first issue`, `help wanted` | `good first issue`
 
+Removal matches label names **case-sensitively**, unlike the prefixed label
+commands: `/remove-help` does not remove a label spelled `Help Wanted`.
+
 ## Removing labels
 
-Every label command has a `/remove-` form that takes the same values:
-`/remove-area bug` removes `area/bug`, `/remove-kind cleanup` removes
-`kind/cleanup`, `/remove-priority low` removes `priority/low`,
-`/remove-label help-wanted` removes `help-wanted` and `/remove-level sandbox`
-removes `level/sandbox`.
-Only values listed under the matching key in `.prowlabels.yaml` are
-removed, so these commands can be used by anyone without exposing
-labels such as `lgtm`, `hold` or `approved`. A value that is not on
-the issue is ignored. Enabling `/kind` in `prow-commands` also enables
-`/remove-kind`, and listing only `/remove-kind` enables `/kind` as well.
+Every label command has a `/remove-` form that takes the same values and only
+removes values listed in `.prowlabels.yaml`. See
+[commands](./commands.md) for the full list and policy.
 
 ## Automatic PR labels
 

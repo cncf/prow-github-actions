@@ -1,58 +1,46 @@
 # Cron jobs
 
 The following jobs are supported through [cron Github workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
+The `jobs` input is space delimited on a single line (`jobs: lgtm`); multi-line `jobs:` blocks do not work.
+Both jobs page through the repository's pull requests, following pages until one comes back empty, and skip locked and closed PRs.
 
 Jobs | Description
 --- | ---
-`lgtm` | Will attempt to automatically merge a PR with the `lgtm` label. Blocked by the `hold` label. Removed by the [lgtm PR job on pr update](./pr-jobs.md)
-`pr-labeler` | **(DEPRECATED)** Labels PRs with labels based on file globs found in `.github/labels.yaml`. See [docs on PR labeler for more info](pr-labeling.md)
+`lgtm` | Will attempt to automatically merge a PR with the `lgtm` label. Blocked by the `hold` label. See [automatic PR merging](./automatic-merging.md). Removed by the [lgtm PR job on pr update](./pr-jobs.md)
+`pr-labeler` | **(DEPRECATED)** Labels PRs with labels based on file globs found in `.github/labels.yaml` (or `.yml`)
 
-> What is the Chron job PR labeler?
+## `pr-labeler` (deprecated)
 
-This job is a legacy feature of Github Prow bot which would label PRs
-based on a chron schedule. This was created since Github at the time did not provide a way
-to securely run actions (and therefore code) from PR forks, which could possibly be untrusted.
-This chron job runs from _the main branch_ and not forks, therefore preventing any
-forked malicious code from being run against the repository.
+The `pr-labeler` cron job predates GitHub's `pull_request_target` trigger, which lets
+[`actions/labeler`](https://github.com/actions/labeler) label PRs from forks securely on
+each event instead of sweeping every open PR on a schedule. Use `actions/labeler` for new
+setups; this job remains for repositories that need to batch label all their PRs.
 
-> Why don't you recommend using it anymore?
-
-Github now has a solution! You can use the [Github labeler](https://github.com/actions/labeler)
-which uses a newer action trigger: `pull_request_target`.
-This is [documented here](https://github.com/actions/labeler/blob/main/README.md).
-The new action trigger event does _not_ run from the forked branch
-but rather, runs from the _main branch_. It can be triggered on each occurence of a PR.
-
-Since this is officially supported by Github, I am recommending people use that to label their PRs.
-
-> Why not just remove the chron labeler all together?
-
-I'm keeping this job as part of the API since it may have additional purposes.
-The chron job will attempt to run on _all PRs_ in a repository
-which may be useful if a repository needs to batch label all their PRs.
-
-However, this has some known limitations. The chron labeler queries Github in 100 batch PRs.
-This can trigger github to rate limit the bot.
+The job reads `.github/labels.yaml` (or `.github/labels.yml`) from the repository, maps
+labels to file globs, and labels every open, unlocked PR whose changed files match.
 
 This job may be run with the following workflow configuration:
 
-```yml
+```yaml
 name: Label PRs from globs
 on:
   schedule:
     - cron: '0 * * * *'
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v1
+      - uses: cncf/prow-github-actions@v2
         with:
           jobs: pr-labeler
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-> Interesting! Where's the historical context?
-
-Refer to this thread and this comment for further discussion on the new action handler:
-https://github.com/actions/labeler/issues/12#issuecomment-670967607
+Querying every open PR on a schedule may hit GitHub rate limits on very large projects.
+For the historical discussion see
+[actions/labeler#12](https://github.com/actions/labeler/issues/12#issuecomment-670967607).

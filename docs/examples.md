@@ -1,8 +1,10 @@
 # Examples
 
 * [`.prowlabels.yaml`](#prowlabelsyaml)
-* [Review and Approve Pull Requests](#review-and-approve-pull-requests)
+* [Review and approve pull requests](#review-and-approve-pull-requests)
 * [All prow github actions](#all-prow-github-actions)
+* [A dynamic label command](#a-dynamic-label-command)
+* [`/meow`](#meow)
 * [PR Labeler](#pr-labeler)
 * [Automatic PR merger](#automatic-pr-merger)
 * [PR job to remove lgtm label on update](#pr-job-to-remove-lgtm-label-on-update)
@@ -24,9 +26,21 @@ priority:
   - low
   - mid
   - high
+
+# plain labels applied verbatim by /label
+labels:
+  - documentation
+  - question
+
+# mapping form: a later /triage replaces any existing triage/* label
+triage:
+  values:
+    - accepted
+    - needs-information
+  exclusive: true
 ```
 
-## Review and Approve Pull Requests
+## Review and approve pull requests
 
 Below is an example of how to use [OWNERS](./commands.md#owners) files with the Prow action.
 
@@ -70,20 +84,22 @@ permissions:
   issues: write
   # Allow adding a review to a pull request
   pull-requests: write
+  # Allow reading the repository
+  contents: read
 
 jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v1
+      - uses: cncf/prow-github-actions@v2
         with:
-          prow-commands: |
-            /approve
-            /lgtm
+          prow-commands: /approve /lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-### All prow github actions
+## All prow github actions
+
+The full list of available commands is kept in the [README quickstart](../README.md#quickstart). Aliases (`/unhold`, `/remove-kind`, ...) come with their base command. One short example:
 
 ```yaml
 name: Prow github actions
@@ -91,38 +107,85 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
 jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v1
+      - uses: cncf/prow-github-actions@v2
         with:
-          prow-commands: |
-            /assign
-            /unassign
-            /approve
-            /retitle
-            /area
-            /kind
-            /priority
-            /remove
-            /lgtm
-            /close
-            /reopen
-            /lock
-            /milestone
-            /hold
-            /cc
-            /uncc
+          prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-### PR Labeler
+## A dynamic label command
+
+Any top level key of `.prowlabels.yaml` becomes a `/<key>` command once listed in `prow-commands`:
+
+```yaml
+name: Triage commands
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          prow-commands: /triage
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+```
+
+With the `triage` section of the [`.prowlabels.yaml`](#prowlabelsyaml) above, `/triage accepted` labels the issue or PR with `triage/accepted`.
+
+## `/meow`
+
+`/meow` replies with a random cat image. It is opt in and calls a third party provider; see [Enabling `/meow`](./commands.md#enabling-meow).
+
+```yaml
+name: Meow
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          prow-commands: /meow
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+
+          # this is optional; provide it from a repository secret
+          cat-api-key: '${{ secrets.CAT_API_KEY }}'
+```
+
+## PR Labeler
 Use the Github actions/labeler which now supports `pull_request_target`
 ```yaml
 name: Pull Request Labeler
 on:
   - pull_request_target
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   triage:
@@ -133,34 +196,8 @@ jobs:
           repo-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-### Automatic PR merger
-```yaml
-name: Merge on lgtm label
-on:
-  schedule:
-    - cron: '0 * * * *'
+## Automatic PR merger
+See [automatic PR merging](./automatic-merging.md) for the full workflow.
 
-jobs:
-  execute:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cncf/prow-github-actions@v1
-        with:
-          jobs: lgtm
-          github-token: '${{ secrets.GITHUB_TOKEN }}'
-```
-
-### PR job to remove lgtm label on update
-```yaml
-name: Run Jobs on PR
-on: pull_request
-
-jobs:
-  execute:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cncf/prow-github-actions@v1
-        with:
-          jobs: lgtm
-          github-token: '${{ secrets.GITHUB_TOKEN }}'
-```
+## PR job to remove lgtm label on update
+See [PR jobs](./pr-jobs.md) for the full workflow.
