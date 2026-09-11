@@ -8,6 +8,8 @@ This project is inspired by [Prow](https://github.com/kubernetes/test-infra/tree
 
 Check out the _"EXAMPLE"_ issues and pull requests (open and closed) in this repo to see how this works!
 
+These docs describe `main`. Features added since the latest release (`v2.0.0`) ship in the next release, which also creates the floating `v2` tag; until then pin `@v2.0.0` for the released behaviour. The action requires the `node24` runtime (GitHub requires actions/runner 2.327.1 or newer for node24 on self-hosted runners) and works on GitHub Enterprise Server via `GITHUB_API_URL`.
+
 ---
 Run specified actions or jobs for issue and PR comments through a `workflow.yaml` file:
 
@@ -17,15 +19,22 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
 jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
       - uses: cncf/prow-github-actions@v2
         with:
-          prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc /lifecycle /help
+          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
+
+This is the full list of available commands. Prow-style aliases (`/unhold`, `/remove-kind`, ...) come with their base command, and listing an alias enables the whole command family.
 
 You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label:
 
@@ -34,6 +43,10 @@ name: Merge on lgtm label
 on:
   schedule:
     - cron: '0 * * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   execute:
@@ -54,6 +67,9 @@ Prow Github actions also supports removing the lgtm label when a PR is updated
 name: Run Jobs on PR
 on: pull_request
 
+permissions:
+  pull-requests: write
+
 jobs:
   execute:
     runs-on: ubuntu-latest
@@ -68,8 +84,7 @@ jobs:
 - [Overview](./docs/overview.md)
 - [Commands](./docs/commands.md)
 - [Labeling](./docs/labeling.md)
-- [PR Labeling](./docs/pr-labeling.md)
-- [Cron Jobs](./docs/cron-jobs.md)
+- [Cron Jobs](./docs/cron-jobs.md) (includes the deprecated PR labeler)
 - [Automatic PR merging](./docs/automatic-merging.md)
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)

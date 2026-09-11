@@ -15,9 +15,10 @@ that can be run with specific [Github "events"](https://docs.github.com/en/actio
 ## Read more
 - [Prow github actions available commands](./commands.md)
 - [Labeling issues](./labeling.md)
-- [Automatically Labeling PRs](./pr-labeling.md)
+- [Automatically Labeling PRs](./cron-jobs.md) (deprecated cron `pr-labeler` job)
 - [Automatic PR merging](./automatic-merging.md)
   - [Available cron jobs](./cron-jobs.md)
 - [Jobs to run on PR update](./pr-jobs.md)
 - [Examples](./examples.md)
 - [Releasing](./releasing.md)
+- [Contributing](./contributing.md)
