@@ -18,7 +18,8 @@ Both workflows:
    (`npm run pack`). The release fails if `dist/` is out of date.
 2. **Generate an SBOM** of the runtime dependencies in SPDX 2.3 JSON format
    using [waybill](https://github.com/kusari-oss/waybill) (pinned version,
-   SHA256-verified download; dev/build/test scopes excluded).
+   SHA256-verified download; dev/build/test scopes excluded, `dist/` excluded
+   via `--exclude-path dist`).
 3. **Sign the SBOM** with [cosign](https://github.com/sigstore/cosign)
    (keyless, via GitHub OIDC) and create a SLSA build provenance
    attestation covering both `dist/index.js` and the SBOM.
@@ -30,7 +31,9 @@ Both workflows:
 
 For stable releases, `release.yml` additionally moves the floating major tag
 (`v2`, `v3`, …) to the new release so that `uses: cncf/prow-github-actions@v2`
-tracks the latest `v2.x.y`. Pre-releases never move the floating tag.
+tracks the latest `v2.x.y`. Pre-releases never move the floating tag. The `v2`
+floating tag does not exist until the first stable tag is pushed by this
+workflow; until then pin an exact release such as `@v2.0.0`.
 
 ## Cutting a stable release
 
@@ -98,8 +101,8 @@ gh attestation verify prow-github-actions-${VERSION}.spdx.json \
 ## Versioning
 
 Releases follow [SemVer](https://semver.org/) with `v`-prefixed tags
-(`v1.0.0`, `v2.0.0-rc.1`, `v2.0.0`, …). The floating major tag (`v2`) always
-points at the latest stable `v2.x.y` release:
+(`v1.0.0`, `v2.0.0-rc.1`, `v2.0.0`, …). Once it exists, the floating major tag
+(`v2`) always points at the latest stable `v2.x.y` release:
 
 ```yaml
 # track the latest v2.x.y
