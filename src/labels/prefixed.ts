@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
-import type { LabelSection } from '../utils/labeling'
+import type { LabelConfig, LabelSection } from '../utils/labeling'
 import * as core from '@actions/core'
 
 import { getCommandArgs } from '../utils/command'
@@ -140,7 +140,32 @@ function requireIssueNumber(context: Context): number {
   return issueNumber
 }
 
-// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
+/**
+ * sectionFor resolves the label section a command reads: the yaml section
+ * wins over the built-in defaults, and a yaml `exclusive` wins over the
+ * registry. Undefined when neither exists.
+ *
+ * @param labels - the label sections of the prow configuration
+ * @param cmd - the command definition
+ */
+export function sectionFor(labels: LabelConfig, cmd: PrefixedLabelCommand): LabelSection | undefined {
+  const section = labels[cmd.allowlistKey]
+
+  if (section) {
+    return { ...section, exclusive: section.exclusive ?? cmd.exclusive }
+  }
+
+  if (cmd.defaultValues) {
+    return {
+      values: cmd.defaultValues,
+      exclusive: cmd.exclusive,
+      definitions: cmd.defaultValues.map(name => ({ name })),
+    }
+  }
+
+  return undefined
+}
+
 async function allowlistFor(
   octokit: Octokit,
   context: Context,
@@ -149,19 +174,15 @@ async function allowlistFor(
   const key = cmd.allowlistKey
 
   try {
-    const section = (await getLabelConfig(octokit, context))[key]
+    const labels = await getLabelConfig(octokit, context)
+    const section = sectionFor(labels, cmd)
 
-    if (section) {
-      core.debug(`${key}: found labels ${section.values}`)
-      return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false }
+    if (section === undefined) {
+      throw new Error(`${key}: yaml malformed, expected '${key}' top level key`)
     }
 
-    if (cmd.defaultValues) {
-      core.debug(`${key}: using built-in labels ${cmd.defaultValues}`)
-      return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false }
-    }
-
-    throw new Error(`${key}: yaml malformed, expected '${key}' top level key`)
+    core.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`)
+    return { values: section.values, exclusive: section.exclusive ?? false }
   }
   catch (e) {
     throw new Error(`could not get labels from yaml: ${e}`)

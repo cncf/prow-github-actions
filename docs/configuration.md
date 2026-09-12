@@ -111,8 +111,9 @@ Value form | Meaning
 `bug` | the label `key/bug`
 `{ name: bug, color: d73a4a, description: … }` | the same label with metadata; `color` is six hex digits, no `#`
 
-Only `name` is acted upon today. `color` and `description` are parsed and validated for a
-later release that reconciles labels on GitHub.
+`color` and `description` are applied by the [`label-sync` job](./cron-jobs.md#label-sync);
+label commands themselves only use `name`. Quote a color made only of digits
+(`color: '123456'`) so YAML keeps it a string.
 
 The `/label` allowlist is the section named `labels` inside `labels`:
 
@@ -122,10 +123,66 @@ labels:
     - documentation
 ```
 
+### The label catalogue
+
+The [`label-sync` job](./cron-jobs.md#label-sync) creates and updates the union of:
+
+Source | Labels | Color, description
+--- | --- | ---
+every `labels.<key>` section | `<key>/<value>`; the `/label` allowlist `labels.labels` verbatim | from the value's `color` and `description`
+built-in `/lifecycle`, `/stage`, `/status` values | `lifecycle/frozen`, `lifecycle/stale`, `lifecycle/rotten`, `stage/alpha`, `stage/beta`, `stage/stable`, `status/approved-for-milestone`, `status/in-progress`, `status/in-review` | only when the configuration has no section of that key
+the action's own commands | `lgtm`, `approved`, `hold` (and `hold.label` when set), `help wanted`, `good first issue` | built-in
+`require_matching_label` | every `missing_label` | `ededed` for `needs-*`
+
+Precedence per label: the configuration's `color`/`description`, then the built-in
+default, otherwise none (GitHub picks a color; no description is written). Built-in
+colors follow [kubernetes/test-infra `label_sync`](https://github.com/kubernetes/test-infra/blob/master/label_sync/labels.yaml)
+where the label exists there:
+
+Label | Color
+--- | ---
+`lgtm` | `15dd18`
+`approved` | `0ffa16`
+`hold`, `do-not-merge/hold` | `e11d21`
+`help wanted` | `006b75`
+`good first issue` | `7057ff`
+`lifecycle/frozen` | `d3e2f0`
+`lifecycle/stale` | `795548`
+`lifecycle/rotten` | `604460`
+`needs-*` | `ededed`
+
+Names are unique case-insensitively (the first definition wins) and the job never
+deletes or renames a label. Label commands refuse labels the repository does not have
+([labeling](./labeling.md#labels-must-exist-in-the-repository)), so run the job after
+changing the configuration:
+
+```yaml
+name: Sync labels from prow.yaml
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/prow.yaml]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          jobs: label-sync
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+```
+
 ### `require_matching_label`
 
 A list of rules, each modelled on Prow's plugin of the same name. Parsed and validated;
-enforcement lands in a later release.
+enforcement lands in a later release. Each `missing_label` is part of the
+[label catalogue](#the-label-catalogue).
 
 Field | Required | Meaning
 --- | --- | ---
@@ -149,7 +206,8 @@ Field | Meaning
 ### `hold`
 
 Parsed and validated; enforcement lands in a later release. Today `/hold` applies the
-`hold` label.
+`hold` label. A configured `label` is added to the [label catalogue](#the-label-catalogue)
+next to `hold`.
 
 Field | Meaning
 --- | ---

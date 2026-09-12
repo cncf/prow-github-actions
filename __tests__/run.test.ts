@@ -84,14 +84,25 @@ describe('run', () => {
     expect(mockedHandlePullReq).not.toHaveBeenCalled()
   })
 
+  it.each(['workflow_dispatch', 'push'])('dispatches %s to handleCronJobs', async (eventName) => {
+    github.context.eventName = eventName
+    mockedHandleCronJobs.mockResolvedValue()
+
+    await run()
+
+    expect(mockedHandleCronJobs).toHaveBeenCalledTimes(1)
+    expect(mockedHandle).not.toHaveBeenCalled()
+    expect(mockedHandlePullReq).not.toHaveBeenCalled()
+  })
+
   it('logs an error for an unsupported event without failing', async () => {
-    github.context.eventName = 'push'
+    github.context.eventName = 'issues'
     const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await expect(run()).resolves.toBeUndefined()
 
-    expect(logError).toHaveBeenCalledWith('push not yet supported')
+    expect(logError).toHaveBeenCalledWith('issues not yet supported')
     expect(setFailed).not.toHaveBeenCalled()
     expect(mockedHandle).not.toHaveBeenCalled()
     expect(mockedHandlePullReq).not.toHaveBeenCalled()

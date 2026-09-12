@@ -38,6 +38,30 @@ This is the full list of available commands. Prow-style aliases (`/unhold`, `/re
 
 Configuration can live in the repo or in your org's `.project`/`.github` repo — see [configuration](./docs/configuration.md).
 
+Label commands only apply labels the repository already has. Create them from the configuration with the `label-sync` job, on demand or whenever `prow.yaml` changes:
+
+```yaml
+name: Sync labels from prow.yaml
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/prow.yaml]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          jobs: label-sync
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+```
+
 You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label:
 
 ```yaml
@@ -87,7 +111,7 @@ jobs:
 - [Commands](./docs/commands.md)
 - [Configuration](./docs/configuration.md)
 - [Labeling](./docs/labeling.md)
-- [Cron Jobs](./docs/cron-jobs.md)
+- [Jobs (lgtm merger, label-sync)](./docs/cron-jobs.md)
 - [Automatic PR merging](./docs/automatic-merging.md)
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)

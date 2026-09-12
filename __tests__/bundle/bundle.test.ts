@@ -17,6 +17,8 @@ vi.setConfig({ testTimeout: 30_000 })
 
 const repo = '/repos/Codertocat/Hello-World'
 const token = { 'github-token': 'some-token' }
+// the read every label command makes before it applies a label
+const labelsRead = `GET ${repo}/labels?per_page=100`
 
 function comment(body: string, author = issueCommentEvent.issue.user.login) {
   const payload = structuredClone(issueCommentEvent)
@@ -28,6 +30,10 @@ function comment(body: string, author = issueCommentEvent.issue.user.login) {
 function openPr(labels: string[], overrides: Record<string, unknown> = {}) {
   const pr = structuredClone(pullReqListPulls[0])
   return { ...pr, labels: labels.map(name => ({ name })), ...overrides }
+}
+
+function repoLabels(...names: string[]) {
+  return { status: 200, body: names.map(name => ({ name })) }
 }
 
 function yamlFile(text: string) {
@@ -85,16 +91,17 @@ describe('dist/index.js', () => {
   })
 
   it('logs an error for an unsupported event without failing or calling the api', async () => {
-    const result = await runBundle({ eventName: 'push', payload: {}, inputs: token, apiUrl: gh.url })
+    const result = await runBundle({ eventName: 'issues', payload: {}, inputs: token, apiUrl: gh.url })
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain('push not yet supported')
-    expect(result.errors).toEqual(['push not yet supported'])
+    expect(result.stdout).toContain('issues not yet supported')
+    expect(result.errors).toEqual(['issues not yet supported'])
     expect(gh.requests).toEqual([])
   })
 
   it('issue_comment /kind adds a prefixed label from .prowlabels.yaml', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+    gh.route('GET', `${repo}/labels`, repoLabels('kind/cleanup'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await runBundle({
@@ -109,11 +116,30 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['kind/cleanup'] })
-    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [`POST ${repo}/issues/1/labels`])
+    expectRequests([...configReads({ repo: '.prowlabels.yaml' }), labelsRead], [`POST ${repo}/issues/1/labels`])
+  })
+
+  it('issue_comment /kind refuses a label the repository does not have without posting', async () => {
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+    gh.route('GET', `${repo}/labels`, repoLabels('kind/failing-test'))
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/kind cleanup'),
+      inputs: { ...token, 'prow-commands': '/kind' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes(`the label(s) kind/cleanup cannot be applied because the repository doesn't have them`))).toBe(true)
+    expect(gh.requestsMatching('POST', /./)).toEqual([])
+    expectRequests([...configReads({ repo: '.prowlabels.yaml' }), labelsRead], [])
   })
 
   it('issue_comment /kind reads labels from the organization .project repo when the repo has no configuration', async () => {
     gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
+    gh.route('GET', `${repo}/labels`, repoLabels('kind/cleanup'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await runBundle({
@@ -128,7 +154,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['kind/cleanup'] })
-    expectRequests(configReads({ org: '.project' }), [`POST ${repo}/issues/1/labels`])
+    expectRequests([...configReads({ org: '.project' }), labelsRead], [`POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment ignores a /kind inside a fenced code block without calling the api', async () => {
@@ -167,6 +193,7 @@ describe('dist/index.js', () => {
 
   it('issue_comment /label adds an allowlisted label verbatim', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+    gh.route('GET', `${repo}/labels`, repoLabels('good-first-issue'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await runBundle({
@@ -181,7 +208,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['good-first-issue'] })
-    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [`POST ${repo}/issues/1/labels`])
+    expectRequests([...configReads({ repo: '.prowlabels.yaml' }), labelsRead], [`POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /remove-label refuses lgtm even when .prowlabels.yaml lists it', async () => {
@@ -206,6 +233,7 @@ describe('dist/index.js', () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'level/sandbox' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/level%2Fsandbox`, { status: 200, body: [] })
+    gh.route('GET', `${repo}/labels`, repoLabels('level/sandbox', 'level/incubation'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await runBundle({
@@ -223,11 +251,13 @@ describe('dist/index.js', () => {
     expectRequests(configReads({ repo: '.prowlabels.yaml' }), [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/level%2Fsandbox`,
+      labelsRead,
       `POST ${repo}/issues/1/labels`,
     ])
   })
 
   it('issue_comment /help adds help wanted without reading .prowlabels.yaml', async () => {
+    gh.route('GET', `${repo}/labels`, repoLabels('help wanted'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await runBundle({
@@ -243,6 +273,7 @@ describe('dist/index.js', () => {
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      labelsRead,
       `POST ${repo}/issues/1/labels`,
     ])
   })
@@ -574,6 +605,61 @@ describe('dist/index.js', () => {
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
+    })
+  })
+
+  describe('workflow_dispatch label-sync job', () => {
+    const orgConfig = yamlFile('labels:\n  kind:\n    - name: bug\n      color: d73a4a\n      description: Something is not working\n    - cleanup\n')
+    const builtins = [
+      'approved',
+      'good first issue',
+      'help wanted',
+      'hold',
+      'lgtm',
+      'lifecycle/frozen',
+      'lifecycle/rotten',
+      'lifecycle/stale',
+      'stage/alpha',
+      'stage/beta',
+      'stage/stable',
+      'status/approved-for-milestone',
+      'status/in-progress',
+      'status/in-review',
+    ]
+
+    it('creates the missing labels, recolors the drifted one and deletes nothing', async () => {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, { name: 'unrelated', color: 'ffffff' }] })
+      gh.route('POST', `${repo}/labels`, { status: 201, body: {} })
+      gh.route('PATCH', new RegExp(`^${repo}/labels/`), { status: 200, body: {} })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const posts = gh.requestsMatching('POST', /\/labels$/)
+      expect(posts.map(p => (p.body as { name: string }).name)).toEqual([...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)))
+      expect(posts.find(p => (p.body as { name: string }).name === 'lgtm')!.body).toEqual({
+        name: 'lgtm',
+        color: '15dd18',
+        description: '"Looks good to me", indicates that a PR is ready to be merged.',
+      })
+      expect(posts.find(p => (p.body as { name: string }).name === 'kind/cleanup')!.body).toEqual({ name: 'kind/cleanup' })
+      const patches = gh.requestsMatching('PATCH', /./)
+      expect(patches).toHaveLength(1)
+      expect(patches[0].path).toBe(`${repo}/labels/kind%2Fbug`)
+      expect(patches[0].body).toEqual({ color: 'd73a4a' })
+      expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+      const desired = [...builtins, 'kind/bug', 'kind/cleanup'].sort((a, b) => a.localeCompare(b))
+      expectRequests(
+        [...configReads({ org: '.project' }), labelsRead],
+        desired.map(name => (name === 'kind/bug' ? `PATCH ${repo}/labels/kind%2Fbug` : `POST ${repo}/labels`)),
+      )
     })
   })
 })

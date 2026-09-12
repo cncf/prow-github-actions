@@ -7,7 +7,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
-import { addPrefix, getArgumentLabels, getLabelConfig } from '../../src/utils/labeling'
+import { addPrefix, assertLabelsExist, getArgumentLabels, getLabelConfig, labelIssue } from '../../src/utils/labeling'
 import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
@@ -39,6 +39,7 @@ describe('utils labeling', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['area/important']),
     )
 
     server.use(
@@ -89,6 +90,77 @@ describe('utils labeling', () => {
 
   it('addPrefix leaves args unchanged for an empty prefix', () => {
     expect(addPrefix('', ['good-first-issue'])).toEqual(['good-first-issue'])
+  })
+})
+
+describe('labelIssue refuses labels the repository does not have', () => {
+  const context = new utils.MockContext(issueCommentEvent)
+  const repo = `${utils.api}/repos/Codertocat/Hello-World`
+  let octokit: Octokit
+
+  beforeEach(() => {
+    utils.setupActionsEnv()
+    octokit = newOctokit('some-token')
+  })
+
+  it('throws naming exactly the missing labels and does not post', async () => {
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, null, observePost)),
+      utils.repoHasLabels(['kind/bug']),
+    )
+
+    await expect(labelIssue(octokit, context, 1, ['kind/bug', 'kind/cleanup', 'area/api'])).rejects.toThrow(
+      `the label(s) kind/cleanup, area/api cannot be applied because the repository doesn't have them. Run the label-sync job or create them.`,
+    )
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+  })
+
+  it('posts when every label exists, matching names case-insensitively', async () => {
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, null, observePost)),
+      utils.repoHasLabels(['Kind/Bug', 'help wanted']),
+    )
+
+    await labelIssue(octokit, context, 1, ['kind/bug'])
+
+    await observePost.called()
+    expect(await observePost.body()).toEqual({ labels: ['kind/bug'] })
+  })
+
+  it('reads the repository labels once per run', async () => {
+    const observeLabels = new utils.ObserveRequest()
+    let reads = 0
+    server.use(
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, null)),
+      http.get(`${repo}/labels`, async ({ request }) => {
+        reads++
+        observeLabels.ref = request
+        return new Response(JSON.stringify([{ name: 'lgtm' }]), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    await labelIssue(octokit, context, 1, ['lgtm'])
+    await labelIssue(octokit, context, 1, ['lgtm'])
+
+    expect(reads).toBe(1)
+    expect(new URL(observeLabels.ref!.url).searchParams.get('per_page')).toBe('100')
+  })
+
+  it('assertLabelsExist follows pagination', async () => {
+    server.use(
+      http.get(`${repo}/labels`, ({ request }) => {
+        const page = new URL(request.url).searchParams.get('page')
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (page === null) {
+          headers.Link = `<${repo}/labels?per_page=100&page=2>; rel="next"`
+        }
+        return new Response(JSON.stringify([{ name: page === null ? 'first' : 'second' }]), { status: 200, headers })
+      }),
+    )
+
+    await expect(assertLabelsExist(octokit, context, ['second', 'first'])).resolves.toBeUndefined()
   })
 })
 

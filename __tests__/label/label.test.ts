@@ -68,6 +68,7 @@ describe('protected labels', () => {
           `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
           utils.mockResponse(200, null, observePost),
         ),
+        utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
         http.get(
           `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
           utils.mockResponse(200, withProtected),
@@ -127,6 +128,7 @@ describe('protected labels', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, withProtected),
@@ -157,6 +159,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -181,6 +184,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -205,6 +209,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -233,6 +238,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, withoutLabels),
@@ -263,6 +269,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('help-wanted')),
@@ -350,6 +357,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, withSlash),
@@ -384,6 +392,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('tide/merge-method-squash')),
@@ -417,6 +426,7 @@ describe('label', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('help-wanted')),

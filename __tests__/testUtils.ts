@@ -3,6 +3,7 @@ import * as github from '@actions/github'
 import { http } from 'msw'
 
 import { resetProwConfigCache } from '../src/utils/config'
+import { resetLabelCache } from '../src/utils/labeling'
 
 type WebhookPayload = Context['payload']
 
@@ -45,6 +46,22 @@ export function noOrgOrRepoConfigExcept(...except: string[]) {
     .map(source => http.get(contentsUrl(source), mockResponse(404, { message: 'Not Found' })))
 }
 
+/**
+ * repoHasLabels serves `GET /repos/Codertocat/Hello-World/labels` with the
+ * given labels on a single page (any `per_page`/`page` query is ignored), so
+ * that label commands may apply them.
+ *
+ * @param labels - names, or `{ name, color?, description? }` entries
+ * @param observeReq - optionally records the request
+ */
+export function repoHasLabels(
+  labels: (string | { name: string, color?: string, description?: string | null })[],
+  observeReq?: ObserveRequest,
+) {
+  const body = labels.map(label => (typeof label === 'string' ? { name: label } : label))
+  return http.get(`${api}/repos/Codertocat/Hello-World/labels`, mockResponse(200, body, observeReq))
+}
+
 // @actions/github exports only the context instance; extend its class via the prototype
 const ContextClass = github.context.constructor as new () => Context
 
@@ -59,9 +76,10 @@ export class MockContext extends ContextClass {
 // Drop action inputs and the runner-provided GITHUB_* variables so that tests
 // are hermetic when they run inside GitHub Actions (github.context reads
 // GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
-// The configuration cache lives for one action run, so it is reset here too.
+// The configuration and repository label caches live for one action run, so they are reset here too.
 function clearActionEnv() {
   resetProwConfigCache()
+  resetLabelCache()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]

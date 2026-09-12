@@ -42,6 +42,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
     )
 
     server.use(
@@ -69,6 +70,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
     )
 
     server.use(
@@ -96,6 +98,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -122,6 +125,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
     )
 
     server.use(
@@ -149,6 +153,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -179,6 +184,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('kind/cleanup')),
@@ -295,6 +301,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('kind/cleanup')),
@@ -337,6 +344,7 @@ describe('kind', () => {
           return new Response(null, { status: 200 })
         },
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('kind/cleanup')),
@@ -364,6 +372,7 @@ describe('kind', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -430,6 +439,7 @@ describe('kind', () => {
           return new Response(null, { status: 200 })
         },
       ),
+      utils.repoHasLabels(['kind/cleanup', 'kind/failing-test']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('kind/cleanup', 'kind/failing-test')),

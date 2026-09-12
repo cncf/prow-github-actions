@@ -43,6 +43,7 @@ function serveIssueAndRecordMutations(currentLabels: string[]): string[] {
     }),
     http.get(`${repo}/issues/1`, utils.mockResponse(200, issueWithLabels(...currentLabels))),
     http.get(`${repo}/contents/.prowlabels.yaml`, utils.mockResponse(200, labelFileContents)),
+    utils.repoHasLabels(['level/incubation', 'level/graduation', 'triage/needs-information']),
 
     ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
   )

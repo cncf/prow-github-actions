@@ -63,7 +63,7 @@ Label Commands | Policy | Description
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
-The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
+Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 
 ## What happens when you are not authorized
 
