@@ -37189,231 +37189,6 @@ function getOctokit(token, options, ...additionalPlugins) {
     return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 //# sourceMappingURL=github.js.map
-;// CONCATENATED MODULE: external "node:process"
-const external_node_process_namespaceObject = require("node:process");
-var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
-;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/version.js
-const plugin_request_log_dist_src_version_VERSION = "6.0.0";
-
-
-;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/index.js
-
-function requestLog(octokit) {
-  octokit.hook.wrap("request", (request, options) => {
-    octokit.log.debug("request", options);
-    const start = Date.now();
-    const requestOptions = octokit.request.endpoint.parse(options);
-    const path = requestOptions.url.replace(options.baseUrl, "");
-    return request(options).then((response) => {
-      const requestId = response.headers["x-github-request-id"];
-      octokit.log.info(
-        `${requestOptions.method} ${path} - ${response.status} with id ${requestId} in ${Date.now() - start}ms`
-      );
-      return response;
-    }).catch((error) => {
-      const requestId = error.response?.headers["x-github-request-id"] || "UNKNOWN";
-      octokit.log.error(
-        `${requestOptions.method} ${path} - ${error.status} with id ${requestId} in ${Date.now() - start}ms`
-      );
-      throw error;
-    });
-  });
-}
-requestLog.VERSION = plugin_request_log_dist_src_version_VERSION;
-
-
-;// CONCATENATED MODULE: ./node_modules/@octokit/rest/dist-src/version.js
-const rest_dist_src_version_VERSION = "22.0.1";
-
-
-;// CONCATENATED MODULE: ./node_modules/@octokit/rest/dist-src/index.js
-
-
-
-
-
-const dist_src_Octokit = Octokit.plugin(requestLog, legacyRestEndpointMethods, paginateRest).defaults(
-  {
-    userAgent: `octokit-rest.js/${rest_dist_src_version_VERSION}`
-  }
-);
-
-
-;// CONCATENATED MODULE: ./lib/utils/octokit.js
-
-
-// GITHUB_API_URL is set by the runner and differs on GitHub Enterprise Server
-function newOctokit(token) {
-    return new dist_src_Octokit({
-        auth: token,
-        baseUrl: (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
-    });
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
-
-
-
-/**
- * Inspired by https://github.com/actions/stale
- * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label.
- * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused, listing the affected PRs.
- *
- * @param currentPage - the page to return from the github api
- * @param context - The github actions event context
- * @param progress - merges done and failures collected on earlier pages
- */
-async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
-    info(`starting lgtm merger page: ${currentPage}`);
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    // Get next batch
-    let prs;
-    try {
-        prs = await getOpenPrs(octokit, context, currentPage);
-    }
-    catch (e) {
-        throw new Error(`could not get PRs: ${e}`);
-    }
-    if (prs.length <= 0) {
-        // All done!
-        if (progress.failures.length > 0) {
-            const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
-            throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
-        }
-        return progress.jobsDone;
-    }
-    const results = await Promise.all(prs.map(async (pr) => {
-        info(`processing pr: ${pr.number}`);
-        if (pr.state === 'closed') {
-            return;
-        }
-        if (pr.locked) {
-            return;
-        }
-        try {
-            if (await tryMergePr(pr, octokit, context, progress.failures)) {
-                progress.jobsDone++;
-            }
-        }
-        catch (error) {
-            return error;
-        }
-    }));
-    for (const result of results) {
-        if (result instanceof Error) {
-            throw new TypeError(`error processing pr: ${result}`);
-        }
-    }
-    // Recurse, continue to next page
-    return await cronLgtm(currentPage + 1, context, progress);
-}
-/**
- * grabs pulls from github in baches of 100
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions workflow context
- * @param page - the page number to get from the api
- */
-async function getOpenPrs(octokit, context = github_context, page) {
-    core_debug(`getting prs page ${page}...`);
-    const prResults = await octokit.pulls.list({
-        ...context.repo,
-        state: 'open',
-        page,
-    });
-    core_debug(`got: ${prResults.data}`);
-    return prResults.data;
-}
-/**
- * Attempts to merge a PR if it has the lgtm label and not the hold label.
- * A refused merge is logged as an error annotation and recorded in
- * failures instead of aborting the run.
- *
- * @param pr - the PR to try and merge
- * @param octokit - a hydrated github api client
- * @param context - the github actions event context
- * @param failures - collects PRs whose merge the api refused
- * @returns whether the PR was merged
- */
-async function tryMergePr(pr, octokit, context = github_context, failures) {
-    const method = getInput('merge-method', { required: false });
-    const names = pr.labels.map(e => e.name);
-    if (!names.includes('lgtm') || names.includes('hold')) {
-        return false;
-    }
-    try {
-        await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: pr.number,
-            merge_method: mergeMethod(method),
-        });
-        return true;
-    }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        error(`could not merge pr #${pr.number}: ${message}`);
-        failures.push({ number: pr.number, message });
-        return false;
-    }
-}
-// an unknown merge-method input falls back to 'merge'
-function mergeMethod(input) {
-    switch (input) {
-        case 'squash':
-        case 'rebase':
-            return input;
-        default:
-            return 'merge';
-    }
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
-
-
-
-/**
- * This Method handles any cron job events.
- * A user should define which of the jobs they want to run in their workflow yaml
- *
- * @param context - the github context of the current action event
- */
-async function handleCronJobs(context = github_context) {
-    const runConfig = getInput('jobs', { required: false })
-        .split(/\s+/)
-        .filter(command => command !== '')
-        .map(command => command.toLowerCase());
-    if (runConfig.length === 0) {
-        runConfig.push('');
-    }
-    await Promise.all(runConfig.map(async (command) => {
-        switch (command) {
-            case 'lgtm':
-                core_debug('running cronLgtm job');
-                return await cronLgtm(1, context).catch(async (e) => {
-                    return e;
-                });
-            case '':
-                return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
-            default:
-                return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
-        }
-    }))
-        .then((results) => {
-        // Check to see if any of the promises failed
-        for (const result of results) {
-            if (result instanceof Error) {
-                throw new TypeError(`error handling issue comment: ${result}`);
-            }
-        }
-    })
-        .catch((e) => {
-        setFailed(`${e}`);
-    });
-}
-
 // EXTERNAL MODULE: external "node:buffer"
 var external_node_buffer_ = __nccwpck_require__(4573);
 ;// CONCATENATED MODULE: ./node_modules/js-yaml/dist/js-yaml.mjs
@@ -41352,6 +41127,158 @@ function stripUndefined(value) {
     return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 }
 
+;// CONCATENATED MODULE: ./lib/utils/command.js
+/**
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandArgs(command, body).length > 0;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
+ * Ex return: 'some-user some-other-user'
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getLineArgs(command, body) {
+    return findCommandArgs(command, body).at(-1) ?? '';
+}
+/**
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
+ * Ex return: [`some-user', 'some-other-user']
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getCommandArgs(command, body) {
+    const rests = findCommandArgs(command, body);
+    if (rests.length === 0) {
+        throw new Error(`command ${command} missing from body`);
+    }
+    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
+    return [...new Set(stripAtSign(args))];
+}
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
+function findCommandArgs(command, body) {
+    const pattern = commandPattern(command);
+    const found = [];
+    for (const line of commandLines(body)) {
+        const match = pattern.exec(line);
+        if (match) {
+            found.push((match[1] ?? '').trim());
+        }
+    }
+    return found;
+}
+const indentedCode = /^(?: {4}| {0,3}\t)/;
+// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
+const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/;
+/**
+ * commandLines returns the lines of the body that can carry a command:
+ * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
+ *
+ * @param body - the full body of the comment
+ */
+function commandLines(body) {
+    const visible = [];
+    let fence;
+    let inIndentedCode = false;
+    let afterBlockBoundary = true;
+    for (const line of splitLines(body)) {
+        if (fence) {
+            if (closesFence(line, fence)) {
+                fence = undefined;
+                afterBlockBoundary = true;
+            }
+            continue;
+        }
+        if (line.trim() === '') {
+            visible.push(line);
+            inIndentedCode = false;
+            afterBlockBoundary = true;
+            continue;
+        }
+        // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
+        if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
+            inIndentedCode = true;
+            continue;
+        }
+        inIndentedCode = false;
+        afterBlockBoundary = false;
+        const opener = fenceOpener(line);
+        if (opener) {
+            fence = opener;
+            continue;
+        }
+        visible.push(line);
+    }
+    return visible;
+}
+function fenceOpener(line) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return undefined;
+    const char = match[1][0];
+    if (char === '`' && match[2].includes('`'))
+        return undefined;
+    return { char, length: match[1].length };
+}
+function closesFence(line, fence) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return false;
+    return match[1][0] === fence.char
+        && match[1].length >= fence.length
+        && match[2].trim() === '';
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
+}
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body) {
+    return body.replace(/\r\n?/g, '\n').split('\n');
+}
+/**
+ * stripAtSign will remove a leading '@' sign from the arguments array
+ * This is necessary as some commands may have arguments with users tagged with
+ * a leading at sign. Ex: /assign @some-user
+ *
+ * @param args - the array to remove at signs from
+ */
+function stripAtSign(args) {
+    const toReturn = [];
+    for (const e of args) {
+        if (e.startsWith('@')) {
+            toReturn.push(e.replace('@', ''));
+        }
+        else {
+            toReturn.push(e);
+        }
+    }
+    return toReturn;
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
 
 
@@ -41560,156 +41487,65 @@ function labeling_isNotFound(error) {
         && error.status === 404);
 }
 
-;// CONCATENATED MODULE: ./lib/utils/command.js
-/**
- * hasCommand reports whether the command starts a line of the body
- * (leading whitespace allowed) so that mentions mid-sentence and
- * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
- *
- * @param command - the command to look for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function hasCommand(command, body) {
-    return findCommandArgs(command, body).length > 0;
+;// CONCATENATED MODULE: external "node:process"
+const external_node_process_namespaceObject = require("node:process");
+var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/version.js
+const plugin_request_log_dist_src_version_VERSION = "6.0.0";
+
+
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/index.js
+
+function requestLog(octokit) {
+  octokit.hook.wrap("request", (request, options) => {
+    octokit.log.debug("request", options);
+    const start = Date.now();
+    const requestOptions = octokit.request.endpoint.parse(options);
+    const path = requestOptions.url.replace(options.baseUrl, "");
+    return request(options).then((response) => {
+      const requestId = response.headers["x-github-request-id"];
+      octokit.log.info(
+        `${requestOptions.method} ${path} - ${response.status} with id ${requestId} in ${Date.now() - start}ms`
+      );
+      return response;
+    }).catch((error) => {
+      const requestId = error.response?.headers["x-github-request-id"] || "UNKNOWN";
+      octokit.log.error(
+        `${requestOptions.method} ${path} - ${error.status} with id ${requestId} in ${Date.now() - start}ms`
+      );
+      throw error;
+    });
+  });
 }
-/**
- * getLineArgs will return the trimmed text following the command on its line.
- * When the command appears on several lines the last one wins, which suits
- * single-valued commands such as /milestone and /retitle
- * Ex return: 'some-user some-other-user'
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getLineArgs(command, body) {
-    return findCommandArgs(command, body).at(-1) ?? '';
-}
-/**
- * getCommandArgs will return an array of the arguments associated with a command,
- * collected in order from every line that carries it and de-duplicated
- * Ex return: [`some-user', 'some-other-user']
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getCommandArgs(command, body) {
-    const rests = findCommandArgs(command, body);
-    if (rests.length === 0) {
-        throw new Error(`command ${command} missing from body`);
-    }
-    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
-    return [...new Set(stripAtSign(args))];
-}
-/**
- * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
- * is among the arguments, ignoring case like Prow's (?i) plugin regexes
- *
- * @param args - the arguments returned by getCommandArgs
- * @param keyword - the lowercase keyword to look for
- */
-function hasKeyword(args, keyword) {
-    return args.some(arg => arg.toLowerCase() === keyword);
-}
-function findCommandArgs(command, body) {
-    const pattern = commandPattern(command);
-    const found = [];
-    for (const line of commandLines(body)) {
-        const match = pattern.exec(line);
-        if (match) {
-            found.push((match[1] ?? '').trim());
-        }
-    }
-    return found;
-}
-const indentedCode = /^(?: {4}| {0,3}\t)/;
-// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
-const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/;
-/**
- * commandLines returns the lines of the body that can carry a command:
- * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
- *
- * @param body - the full body of the comment
- */
-function commandLines(body) {
-    const visible = [];
-    let fence;
-    let inIndentedCode = false;
-    let afterBlockBoundary = true;
-    for (const line of splitLines(body)) {
-        if (fence) {
-            if (closesFence(line, fence)) {
-                fence = undefined;
-                afterBlockBoundary = true;
-            }
-            continue;
-        }
-        if (line.trim() === '') {
-            visible.push(line);
-            inIndentedCode = false;
-            afterBlockBoundary = true;
-            continue;
-        }
-        // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
-        if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
-            inIndentedCode = true;
-            continue;
-        }
-        inIndentedCode = false;
-        afterBlockBoundary = false;
-        const opener = fenceOpener(line);
-        if (opener) {
-            fence = opener;
-            continue;
-        }
-        visible.push(line);
-    }
-    return visible;
-}
-function fenceOpener(line) {
-    const match = fenceLine.exec(line);
-    if (!match)
-        return undefined;
-    const char = match[1][0];
-    if (char === '`' && match[2].includes('`'))
-        return undefined;
-    return { char, length: match[1].length };
-}
-function closesFence(line, fence) {
-    const match = fenceLine.exec(line);
-    if (!match)
-        return false;
-    return match[1][0] === fence.char
-        && match[1].length >= fence.length
-        && match[2].trim() === '';
-}
-function commandPattern(command) {
-    // escape regex metacharacters so a command is matched literally
-    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
-}
-// splitLines splits a comment body into lines, tolerating CRLF and CR endings
-function splitLines(body) {
-    return body.replace(/\r\n?/g, '\n').split('\n');
-}
-/**
- * stripAtSign will remove a leading '@' sign from the arguments array
- * This is necessary as some commands may have arguments with users tagged with
- * a leading at sign. Ex: /assign @some-user
- *
- * @param args - the array to remove at signs from
- */
-function stripAtSign(args) {
-    const toReturn = [];
-    for (const e of args) {
-        if (e.startsWith('@')) {
-            toReturn.push(e.replace('@', ''));
-        }
-        else {
-            toReturn.push(e);
-        }
-    }
-    return toReturn;
+requestLog.VERSION = plugin_request_log_dist_src_version_VERSION;
+
+
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/dist-src/version.js
+const rest_dist_src_version_VERSION = "22.0.1";
+
+
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/dist-src/index.js
+
+
+
+
+
+const dist_src_Octokit = Octokit.plugin(requestLog, legacyRestEndpointMethods, paginateRest).defaults(
+  {
+    userAgent: `octokit-rest.js/${rest_dist_src_version_VERSION}`
+  }
+);
+
+
+;// CONCATENATED MODULE: ./lib/utils/octokit.js
+
+
+// GITHUB_API_URL is set by the runner and differs on GitHub Enterprise Server
+function newOctokit(token) {
+    return new dist_src_Octokit({
+        auth: token,
+        baseUrl: (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
+    });
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
@@ -41813,20 +41649,38 @@ function requireIssueNumber(context) {
     }
     return issueNumber;
 }
-// the yaml section wins over the built-in defaults; a yaml `exclusive` wins over the registry
+/**
+ * sectionFor resolves the label section a command reads: the yaml section
+ * wins over the built-in defaults, and a yaml `exclusive` wins over the
+ * registry. Undefined when neither exists.
+ *
+ * @param labels - the label sections of the prow configuration
+ * @param cmd - the command definition
+ */
+function sectionFor(labels, cmd) {
+    const section = labels[cmd.allowlistKey];
+    if (section) {
+        return { ...section, exclusive: section.exclusive ?? cmd.exclusive };
+    }
+    if (cmd.defaultValues) {
+        return {
+            values: cmd.defaultValues,
+            exclusive: cmd.exclusive,
+            definitions: cmd.defaultValues.map(name => ({ name })),
+        };
+    }
+    return undefined;
+}
 async function allowlistFor(octokit, context, cmd) {
     const key = cmd.allowlistKey;
     try {
-        const section = (await getLabelConfig(octokit, context))[key];
-        if (section) {
-            core_debug(`${key}: found labels ${section.values}`);
-            return { values: section.values, exclusive: section.exclusive ?? cmd.exclusive ?? false };
+        const labels = await getLabelConfig(octokit, context);
+        const section = sectionFor(labels, cmd);
+        if (section === undefined) {
+            throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
         }
-        if (cmd.defaultValues) {
-            core_debug(`${key}: using built-in labels ${cmd.defaultValues}`);
-            return { values: cmd.defaultValues, exclusive: cmd.exclusive ?? false };
-        }
-        throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
+        core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
+        return { values: section.values, exclusive: section.exclusive ?? false };
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
@@ -41864,6 +41718,356 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
     }
+}
+
+;// CONCATENATED MODULE: ./lib/utils/labelCatalog.js
+
+/**
+ * Colors and descriptions of the labels the action manages itself. They
+ * follow kubernetes/test-infra's label_sync where a label exists there;
+ * `hold` mirrors `do-not-merge/hold`.
+ */
+const builtinLabelDefaults = {
+    'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
+    'approved': { color: '0ffa16', description: 'Indicates a PR has been approved by an approver from all required OWNERS files.' },
+    'hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
+    'do-not-merge/hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
+    'help wanted': { color: '006b75', description: 'Denotes an issue that needs help from a contributor. Must meet "help wanted" guidelines.' },
+    'good first issue': { color: '7057ff', description: 'Denotes an issue ready for a new contributor, according to the "help wanted" guidelines.' },
+    'lifecycle/frozen': { color: 'd3e2f0', description: 'Indicates that an issue or PR should not be auto-closed due to staleness.' },
+    'lifecycle/stale': { color: '795548', description: 'Denotes an issue or PR has remained open with no activity and has become stale.' },
+    'lifecycle/rotten': { color: '604460', description: 'Denotes an issue or PR that has aged beyond stale and will be auto-closed.' },
+};
+const needsLabelColor = 'ededed';
+/**
+ * desiredLabels lists every label the prow configuration describes, with the
+ * color and description the label-sync job should give it: the label
+ * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
+ * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
+ * section, the labels the action's own commands apply, and every
+ * `require_matching_label` missing label. Names are unique
+ * case-insensitively (first definition wins) and sorted.
+ *
+ * @param config - the merged prow configuration
+ */
+function desiredLabels(config) {
+    const registryKeys = new Set(prefixedLabelCommands.map(cmd => cmd.allowlistKey));
+    const labels = [];
+    for (const cmd of prefixedLabelCommands) {
+        const section = sectionFor(config.labels, cmd);
+        if (section) {
+            labels.push(...section.definitions.map(value => prefixed(cmd.prefix, value)));
+        }
+    }
+    for (const [key, section] of Object.entries(config.labels)) {
+        if (!registryKeys.has(key)) {
+            labels.push(...section.definitions.map(value => prefixed(key, value)));
+        }
+    }
+    const holdLabels = config.hold.label === undefined ? ['hold'] : ['hold', config.hold.label];
+    for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
+        labels.push({ name });
+    }
+    for (const rule of config.require_matching_label) {
+        labels.push({ name: rule.missing_label });
+    }
+    const seen = new Set();
+    const unique = labels.filter((label) => {
+        const key = label.name.toLowerCase();
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+    return unique
+        .map(labelCatalog_withDefaults)
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+function prefixed(prefix, value) {
+    return prefix === '' ? { ...value } : { ...value, name: `${prefix}/${value.name}` };
+}
+// the configuration wins over the built-in defaults; a label with neither gets no color
+function labelCatalog_withDefaults(label) {
+    const defaults = builtinLabelDefaults[label.name.toLowerCase()]
+        ?? (label.name.toLowerCase().startsWith('needs-') ? { color: needsLabelColor } : {});
+    const merged = { name: label.name };
+    const color = label.color ?? defaults.color;
+    const description = label.description ?? defaults.description;
+    if (color !== undefined) {
+        merged.color = color.toLowerCase();
+    }
+    if (description !== undefined) {
+        merged.description = description;
+    }
+    return merged;
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/labelSync.js
+
+
+
+
+
+/**
+ * labelSync creates the labels the prow configuration describes and updates
+ * the color or description of those that drifted. It never deletes or
+ * renames a label. With the `dry-run` input set it only logs what would
+ * change. Every label is attempted; the run fails at the end if any write
+ * was refused.
+ *
+ * @param context - the github actions event context
+ */
+async function labelSync(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const dryRun = getInput('dry-run', { required: false }).trim().toLowerCase() === 'true';
+    const config = await loadProwConfig(octokit, context);
+    const desired = desiredLabels(config);
+    core_debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`);
+    let existing;
+    try {
+        existing = await octokit.paginate(octokit.issues.listLabelsForRepo, { ...context.repo, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const byName = new Map(existing.map(label => [label.name.toLowerCase(), label]));
+    const result = { created: [], updated: [], unchanged: 0, failures: [] };
+    const plan = { create: [], update: [] };
+    for (const label of desired) {
+        const current = byName.get(label.name.toLowerCase());
+        if (current === undefined) {
+            plan.create.push(label.name);
+            if (!dryRun) {
+                await write(result, label.name, result.created, () => createLabel(octokit, context, label));
+            }
+            continue;
+        }
+        const patch = drift(label, current);
+        if (patch === undefined) {
+            result.unchanged++;
+            continue;
+        }
+        plan.update.push(`${current.name} (${Object.keys(patch).join(', ')})`);
+        if (!dryRun) {
+            await write(result, current.name, result.updated, () => updateLabel(octokit, context, current.name, patch));
+        }
+    }
+    if (dryRun) {
+        info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`);
+        return result;
+    }
+    info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`);
+    if (result.failures.length > 0) {
+        const list = result.failures.map(f => `${f.name} (${f.message})`).join(', ');
+        throw new Error(`${result.failures.length} label(s) could not be synced: ${list}`);
+    }
+    return result;
+}
+// a refused write is logged and recorded so the remaining labels are still attempted
+async function write(result, name, done, action) {
+    try {
+        await action();
+        done.push(name);
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        error(`label-sync: could not sync ${name}: ${message}`);
+        result.failures.push({ name, message });
+    }
+}
+function createLabel(octokit, context, label) {
+    return octokit.issues.createLabel({
+        ...context.repo,
+        name: label.name,
+        ...(label.color === undefined ? {} : { color: label.color }),
+        ...(label.description === undefined ? {} : { description: label.description }),
+    });
+}
+function updateLabel(octokit, context, name, patch) {
+    return octokit.issues.updateLabel({ ...context.repo, name, ...patch });
+}
+// the fields of `desired` that the repository's label does not match; undefined when in sync
+function drift(desired, current) {
+    const patch = {};
+    if (desired.color !== undefined && desired.color.toLowerCase() !== current.color.toLowerCase()) {
+        patch.color = desired.color;
+    }
+    if (desired.description !== undefined && desired.description !== (current.description ?? '')) {
+        patch.description = desired.description;
+    }
+    return Object.keys(patch).length === 0 ? undefined : patch;
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
+
+
+
+/**
+ * Inspired by https://github.com/actions/stale
+ * this will recurse through the pages of PRs for a repo
+ * and attempt to merge them if they have the "lgtm" label.
+ * Every PR is attempted; once all pages are processed the run fails
+ * if any merge was refused, listing the affected PRs.
+ *
+ * @param currentPage - the page to return from the github api
+ * @param context - The github actions event context
+ * @param progress - merges done and failures collected on earlier pages
+ */
+async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
+    info(`starting lgtm merger page: ${currentPage}`);
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    // Get next batch
+    let prs;
+    try {
+        prs = await getOpenPrs(octokit, context, currentPage);
+    }
+    catch (e) {
+        throw new Error(`could not get PRs: ${e}`);
+    }
+    if (prs.length <= 0) {
+        // All done!
+        if (progress.failures.length > 0) {
+            const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+            throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
+        }
+        return progress.jobsDone;
+    }
+    const results = await Promise.all(prs.map(async (pr) => {
+        info(`processing pr: ${pr.number}`);
+        if (pr.state === 'closed') {
+            return;
+        }
+        if (pr.locked) {
+            return;
+        }
+        try {
+            if (await tryMergePr(pr, octokit, context, progress.failures)) {
+                progress.jobsDone++;
+            }
+        }
+        catch (error) {
+            return error;
+        }
+    }));
+    for (const result of results) {
+        if (result instanceof Error) {
+            throw new TypeError(`error processing pr: ${result}`);
+        }
+    }
+    // Recurse, continue to next page
+    return await cronLgtm(currentPage + 1, context, progress);
+}
+/**
+ * grabs pulls from github in baches of 100
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions workflow context
+ * @param page - the page number to get from the api
+ */
+async function getOpenPrs(octokit, context = github_context, page) {
+    core_debug(`getting prs page ${page}...`);
+    const prResults = await octokit.pulls.list({
+        ...context.repo,
+        state: 'open',
+        page,
+    });
+    core_debug(`got: ${prResults.data}`);
+    return prResults.data;
+}
+/**
+ * Attempts to merge a PR if it has the lgtm label and not the hold label.
+ * A refused merge is logged as an error annotation and recorded in
+ * failures instead of aborting the run.
+ *
+ * @param pr - the PR to try and merge
+ * @param octokit - a hydrated github api client
+ * @param context - the github actions event context
+ * @param failures - collects PRs whose merge the api refused
+ * @returns whether the PR was merged
+ */
+async function tryMergePr(pr, octokit, context = github_context, failures) {
+    const method = getInput('merge-method', { required: false });
+    const names = pr.labels.map(e => e.name);
+    if (!names.includes('lgtm') || names.includes('hold')) {
+        return false;
+    }
+    try {
+        await octokit.pulls.merge({
+            ...context.repo,
+            pull_number: pr.number,
+            merge_method: mergeMethod(method),
+        });
+        return true;
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        error(`could not merge pr #${pr.number}: ${message}`);
+        failures.push({ number: pr.number, message });
+        return false;
+    }
+}
+// an unknown merge-method input falls back to 'merge'
+function mergeMethod(input) {
+    switch (input) {
+        case 'squash':
+        case 'rebase':
+            return input;
+        default:
+            return 'merge';
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
+
+
+
+
+/**
+ * This Method handles any cron job events.
+ * A user should define which of the jobs they want to run in their workflow yaml
+ *
+ * @param context - the github context of the current action event
+ */
+async function handleCronJobs(context = github_context) {
+    const runConfig = getInput('jobs', { required: false })
+        .split(/\s+/)
+        .filter(command => command !== '')
+        .map(command => command.toLowerCase());
+    if (runConfig.length === 0) {
+        runConfig.push('');
+    }
+    await Promise.all(runConfig.map(async (command) => {
+        switch (command) {
+            case 'lgtm':
+                core_debug('running cronLgtm job');
+                return await cronLgtm(1, context).catch(async (e) => {
+                    return e;
+                });
+            case 'label-sync':
+                core_debug('running label-sync job');
+                return await labelSync(context).catch(async (e) => {
+                    return e;
+                });
+            case '':
+                return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
+            default:
+                return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+        }
+    }))
+        .then((results) => {
+        // Check to see if any of the promises failed
+        for (const result of results) {
+            if (result instanceof Error) {
+                throw new TypeError(`error handling issue comment: ${result}`);
+            }
+        }
+    })
+        .catch((e) => {
+        setFailed(`${e}`);
+    });
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/fixed.js
@@ -43574,6 +43778,8 @@ async function run() {
                 await handlePullReq();
                 break;
             case 'schedule':
+            case 'workflow_dispatch':
+            case 'push':
                 await handleCronJobs();
                 break;
             default:

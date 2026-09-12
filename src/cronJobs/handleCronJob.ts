@@ -4,6 +4,7 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
+import { labelSync } from './labelSync'
 import { cronLgtm } from './lgtm'
 
 /**
@@ -29,6 +30,12 @@ export async function handleCronJobs(context: Context = github.context): Promise
         case 'lgtm':
           core.debug('running cronLgtm job')
           return await cronLgtm(1, context).catch(async (e) => {
+            return e
+          })
+
+        case 'label-sync':
+          core.debug('running label-sync job')
+          return await labelSync(context).catch(async (e) => {
             return e
           })
 

@@ -91,11 +91,11 @@ describe('dist/index.js', () => {
   })
 
   it('logs an error for an unsupported event without failing or calling the api', async () => {
-    const result = await runBundle({ eventName: 'push', payload: {}, inputs: token, apiUrl: gh.url })
+    const result = await runBundle({ eventName: 'issues', payload: {}, inputs: token, apiUrl: gh.url })
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain('push not yet supported')
-    expect(result.errors).toEqual(['push not yet supported'])
+    expect(result.stdout).toContain('issues not yet supported')
+    expect(result.errors).toEqual(['issues not yet supported'])
     expect(gh.requests).toEqual([])
   })
 
@@ -605,6 +605,61 @@ describe('dist/index.js', () => {
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
+    })
+  })
+
+  describe('workflow_dispatch label-sync job', () => {
+    const orgConfig = yamlFile('labels:\n  kind:\n    - name: bug\n      color: d73a4a\n      description: Something is not working\n    - cleanup\n')
+    const builtins = [
+      'approved',
+      'good first issue',
+      'help wanted',
+      'hold',
+      'lgtm',
+      'lifecycle/frozen',
+      'lifecycle/rotten',
+      'lifecycle/stale',
+      'stage/alpha',
+      'stage/beta',
+      'stage/stable',
+      'status/approved-for-milestone',
+      'status/in-progress',
+      'status/in-review',
+    ]
+
+    it('creates the missing labels, recolors the drifted one and deletes nothing', async () => {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, { name: 'unrelated', color: 'ffffff' }] })
+      gh.route('POST', `${repo}/labels`, { status: 201, body: {} })
+      gh.route('PATCH', new RegExp(`^${repo}/labels/`), { status: 200, body: {} })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const posts = gh.requestsMatching('POST', /\/labels$/)
+      expect(posts.map(p => (p.body as { name: string }).name)).toEqual([...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)))
+      expect(posts.find(p => (p.body as { name: string }).name === 'lgtm')!.body).toEqual({
+        name: 'lgtm',
+        color: '15dd18',
+        description: '"Looks good to me", indicates that a PR is ready to be merged.',
+      })
+      expect(posts.find(p => (p.body as { name: string }).name === 'kind/cleanup')!.body).toEqual({ name: 'kind/cleanup' })
+      const patches = gh.requestsMatching('PATCH', /./)
+      expect(patches).toHaveLength(1)
+      expect(patches[0].path).toBe(`${repo}/labels/kind%2Fbug`)
+      expect(patches[0].body).toEqual({ color: 'd73a4a' })
+      expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+      const desired = [...builtins, 'kind/bug', 'kind/cleanup'].sort((a, b) => a.localeCompare(b))
+      expectRequests(
+        [...configReads({ org: '.project' }), labelsRead],
+        desired.map(name => (name === 'kind/bug' ? `PATCH ${repo}/labels/kind%2Fbug` : `POST ${repo}/labels`)),
+      )
     })
   })
 })

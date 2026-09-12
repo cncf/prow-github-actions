@@ -108,7 +108,8 @@ Command | Built-in values
 `/status` | `approved-for-milestone`, `in-progress`, `in-review`
 
 All three are exclusive, so `/lifecycle stale` removes an existing `lifecycle/rotten`.
-A `lifecycle`, `stage` or `status` key in the yaml replaces the built-in values;
+A `lifecycle`, `stage` or `status` key in the yaml replaces the built-in values, for
+the commands and for the [`label-sync` job](./cron-jobs.md#label-sync) alike;
 the mapping form can also set `exclusive: false`:
 
 ```yaml

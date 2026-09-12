@@ -4,16 +4,24 @@ labels:
     - important
 
   kind:
-    - failing-test
-    - cleanup
+    - name: failing-test
+      color: e11d21
+      description: Categorizes issue or PR as related to a consistently or frequently failing test.
+    - name: cleanup
+      color: c5def5
+      description: Categorizes issue or PR as related to cleaning up code, process, or technical debt.
 
   priority:
-    - low
-    - high
+    - name: low
+      color: fef2c0
+    - name: high
+      color: eb6420
 
   # the /label allowlist: applied verbatim, without a prefix
   labels:
-    - documentation
+    - name: documentation
+      color: 0075ca
+      description: Improvements or additions to documentation
     - question
 
   triage:

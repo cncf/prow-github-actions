@@ -17,6 +17,8 @@ export async function run(): Promise<void> {
         break
 
       case 'schedule':
+      case 'workflow_dispatch':
+      case 'push':
         await handleCronJobs()
         break
 
