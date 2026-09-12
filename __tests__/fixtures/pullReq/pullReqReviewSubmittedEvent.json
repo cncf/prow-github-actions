@@ -1,0 +1,77 @@
+{
+  "action": "submitted",
+  "review": {
+    "id": 237895671,
+    "node_id": "MDE3OlB1bGxSZXF1ZXN0UmV2aWV3MjM3ODk1Njcx",
+    "user": {
+      "login": "Codertocat",
+      "id": 21031067,
+      "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+      "html_url": "https://github.com/Codertocat",
+      "type": "User",
+      "site_admin": false
+    },
+    "body": null,
+    "state": "approved",
+    "html_url": "https://github.com/Codertocat/Hello-World/pull/2#pullrequestreview-237895671",
+    "commit_id": "ec26c3e57ca3a959ca5aad62de7213c562f8c821",
+    "submitted_at": "2019-05-15T15:20:38Z",
+    "author_association": "OWNER"
+  },
+  "pull_request": {
+    "url": "https://api.github.com/repos/Codertocat/Hello-World/pulls/1",
+    "html_url": "https://github.com/Codertocat/Hello-World/pull/2",
+    "id": 279147437,
+    "node_id": "MDExOlB1bGxSZXF1ZXN0Mjc5MTQ3NDM3",
+    "number": 1,
+    "state": "open",
+    "locked": false,
+    "title": "Update the README with new information.",
+    "body": "This is a pretty simple change that we need to pull into master.",
+    "draft": false,
+    "labels": [],
+    "user": {
+      "login": "Codertocat",
+      "id": 21031067,
+      "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+      "html_url": "https://github.com/Codertocat",
+      "type": "User",
+      "site_admin": false
+    },
+    "head": {
+      "label": "Codertocat:changes",
+      "ref": "changes",
+      "sha": "ec26c3e57ca3a959ca5aad62de7213c562f8c821"
+    },
+    "base": {
+      "label": "Codertocat:master",
+      "ref": "master",
+      "sha": "f95f852bd8fca8fcc58a9a2d6c842781e32a215e"
+    }
+  },
+  "repository": {
+    "id": 186853002,
+    "node_id": "MDEwOlJlcG9zaXRvcnkxODY4NTMwMDI=",
+    "name": "Hello-World",
+    "full_name": "Codertocat/Hello-World",
+    "private": false,
+    "html_url": "https://github.com/Codertocat/Hello-World",
+    "default_branch": "master",
+    "owner": {
+      "login": "Codertocat",
+      "id": 21031067,
+      "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+      "html_url": "https://github.com/Codertocat",
+      "type": "User",
+      "site_admin": false
+    }
+  },
+  "sender": {
+    "login": "Codertocat",
+    "id": 21031067,
+    "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+    "html_url": "https://github.com/Codertocat",
+    "type": "User",
+    "site_admin": false
+  }
+}

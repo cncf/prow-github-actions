@@ -2,7 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
-import { handlePullReq } from '../../src/pullReq/handlePullReq'
+import { handlePullReq, pullRequestHandlers } from '../../src/pullReq/handlePullReq'
 
 import issuePayload from '../fixtures/issues/issue.json'
 import prOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -15,7 +15,10 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  pullRequestHandlers.length = 0
+})
 afterAll(() => server.close())
 
 // the lgtm PR job only acts on new commits; the fixture is an `opened` event
@@ -113,4 +116,26 @@ it('still fails on an unknown job name when the lgtm job is skipped', async () =
   expect(setFailed).toHaveBeenCalledWith(
     expect.stringContaining('could not execute pr-labeler'),
   )
+})
+
+it('runs the registered pull_request handlers before the jobs', async () => {
+  utils.setupJobsEnv('lgtm')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const handler = vi.fn().mockResolvedValue(undefined)
+  pullRequestHandlers.push(handler)
+
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(handler).toHaveBeenCalledWith(runContext)
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('fails the run when a registered pull_request handler rejects', async () => {
+  utils.setupJobsEnv('lgtm')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  pullRequestHandlers.push(vi.fn().mockRejectedValue(new Error('plugin boom')))
+
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(setFailed).toHaveBeenCalledWith('error handling pull_request event: plugin boom')
 })

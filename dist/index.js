@@ -43689,6 +43689,80 @@ function normalizeError(error) {
     return error instanceof Error ? error : new Error(String(error));
 }
 
+;// CONCATENATED MODULE: ./lib/utils/events.js
+
+/**
+ * Runs every registered handler for an event and fails the run once with the
+ * collected rejections. An empty registry is a debug-logged no-op.
+ *
+ * @param event - the github event name
+ * @param handlers - the registry to run
+ * @param context - the github context of the current action event
+ */
+async function runEventHandlers(event, handlers, context) {
+    const action = context.payload.action;
+    if (handlers.length === 0) {
+        core_debug(`${event} event ${action} received; no handlers registered yet`);
+        return;
+    }
+    const results = await Promise.all(handlers.map(handler => handler(context).catch((e) => (e instanceof Error ? e : new Error(String(e))))));
+    const errors = results.filter((result) => result instanceof Error);
+    if (errors.length > 0) {
+        setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/issues/handleIssues.js
+
+
+/** handlers that run on every `issues` event; empty until require-matching-label lands */
+const issueEventHandlers = [];
+/**
+ * Dispatches an `issues` event to the registered handlers.
+ *
+ * @param context - the github context of the current action event
+ */
+async function handleIssues(context = github_context) {
+    await runEventHandlers('issues', issueEventHandlers, context);
+}
+
+;// CONCATENATED MODULE: ./lib/pullReq/handleCheckSuite.js
+
+
+/** handlers that run on every `check_suite` and `status` event; empty until event-driven merging lands */
+const checkSuiteHandlers = [];
+/**
+ * Dispatches a `check_suite` or legacy commit `status` event to the registered handlers.
+ *
+ * @param context - the github context of the current action event
+ */
+async function handleCheckSuite(context = github_context) {
+    await runEventHandlers(context.eventName, checkSuiteHandlers, context);
+}
+/**
+ * Lists the numbers of the open pull requests whose head is the given commit,
+ * paging through `pulls.list` until a page comes back empty.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param sha - the head commit to look up
+ */
+async function pullRequestsForSha(octokit, context, sha) {
+    const numbers = [];
+    for (let page = 1;; page++) {
+        const { data } = await octokit.pulls.list({
+            ...context.repo,
+            state: 'open',
+            per_page: 100,
+            page,
+        });
+        if (data.length === 0) {
+            return numbers;
+        }
+        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
+    }
+}
+
 ;// CONCATENATED MODULE: ./lib/pullReq/onPrLgtm.js
 
 
@@ -43722,10 +43796,13 @@ async function onPrLgtm(context) {
 
 
 
+
+/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input; empty for now */
+const pullRequestHandlers = [];
 /**
- * This method handles any pull-request configuration for configured workflows.
- * The `lgtm` job only acts on `synchronize` (new commits); every other
- * activity type is logged and skipped.
+ * This method handles any pull-request configuration for configured workflows:
+ * the registered handlers and the `jobs` input. The `lgtm` job only acts on
+ * `synchronize` (new commits); every other activity type is logged and skipped.
  *
  * @param context - the github context of the current action event
  */
@@ -43738,6 +43815,7 @@ async function handlePullReq(context = github_context) {
     if (runConfig.length === 0) {
         runConfig.push('');
     }
+    await runEventHandlers('pull_request', pullRequestHandlers, context);
     await Promise.all(runConfig.map(async (command) => {
         core_debug(`${context}`);
         switch (command) {
@@ -43768,30 +43846,52 @@ async function handlePullReq(context = github_context) {
     });
 }
 
+;// CONCATENATED MODULE: ./lib/pullReq/handlePullReqReview.js
+
+
+/** handlers that run on every `pull_request_review` event; empty for now */
+const pullRequestReviewHandlers = [];
+/**
+ * Dispatches a `pull_request_review` event to the registered handlers.
+ *
+ * @param context - the github context of the current action event
+ */
+async function handlePullReqReview(context = github_context) {
+    await runEventHandlers('pull_request_review', pullRequestReviewHandlers, context);
+}
+
 ;// CONCATENATED MODULE: ./lib/run.js
 
 
 
 
 
+
+
+
+// one row per github event; pull_request_target shares the pull_request payload,
+// status is the legacy commit status that check_suite superseded
+const eventHandlers = {
+    issue_comment: handleIssueComment,
+    issues: handleIssues,
+    pull_request: handlePullReq,
+    pull_request_target: handlePullReq,
+    pull_request_review: handlePullReqReview,
+    check_suite: handleCheckSuite,
+    status: handleCheckSuite,
+    schedule: handleCronJobs,
+    workflow_dispatch: handleCronJobs,
+    push: handleCronJobs,
+};
 async function run() {
     try {
-        switch (github_context.eventName) {
-            case 'issue_comment':
-                await handleIssueComment();
-                break;
-            case 'pull_request':
-                await handlePullReq();
-                break;
-            case 'schedule':
-            case 'workflow_dispatch':
-            case 'push':
-                await handleCronJobs();
-                break;
-            default:
-                error(`${github_context.eventName} not yet supported`);
-                break;
+        const context = github_context;
+        const handler = Object.hasOwn(eventHandlers, context.eventName) ? eventHandlers[context.eventName] : undefined;
+        if (!handler) {
+            error(`${context.eventName} not yet supported`);
+            return;
         }
+        await handler(context);
     }
     catch (error) {
         setFailed(error instanceof Error ? error.message : String(error));

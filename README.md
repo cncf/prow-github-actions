@@ -108,6 +108,7 @@ jobs:
 
 ## Documentation
 - [Overview](./docs/overview.md)
+- [Events](./docs/events.md)
 - [Commands](./docs/commands.md)
 - [Configuration](./docs/configuration.md)
 - [Labeling](./docs/labeling.md)

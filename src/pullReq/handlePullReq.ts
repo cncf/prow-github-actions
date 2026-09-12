@@ -1,14 +1,19 @@
 import type { Context } from '../utils/context'
+import type { EventHandler } from '../utils/events'
 
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
+import { runEventHandlers } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
+/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input; empty for now */
+export const pullRequestHandlers: EventHandler[] = []
+
 /**
- * This method handles any pull-request configuration for configured workflows.
- * The `lgtm` job only acts on `synchronize` (new commits); every other
- * activity type is logged and skipped.
+ * This method handles any pull-request configuration for configured workflows:
+ * the registered handlers and the `jobs` input. The `lgtm` job only acts on
+ * `synchronize` (new commits); every other activity type is logged and skipped.
  *
  * @param context - the github context of the current action event
  */
@@ -23,6 +28,8 @@ export async function handlePullReq(context: Context = github.context): Promise<
   if (runConfig.length === 0) {
     runConfig.push('')
   }
+
+  await runEventHandlers('pull_request', pullRequestHandlers, context)
 
   await Promise.all(
     runConfig.map(async (command) => {

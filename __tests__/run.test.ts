@@ -5,14 +5,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../src/cronJobs/handleCronJob'
 import { handleIssueComment } from '../src/issueComment/handleIssueComment'
+import { handleIssues } from '../src/issues/handleIssues'
+import { handleCheckSuite } from '../src/pullReq/handleCheckSuite'
 import { handlePullReq } from '../src/pullReq/handlePullReq'
+import { handlePullReqReview } from '../src/pullReq/handlePullReqReview'
 import { run } from '../src/run'
 
 vi.mock('../src/issueComment/handleIssueComment', () => ({
   handleIssueComment: vi.fn(),
 }))
+vi.mock('../src/issues/handleIssues', () => ({
+  handleIssues: vi.fn(),
+}))
 vi.mock('../src/pullReq/handlePullReq', () => ({
   handlePullReq: vi.fn(),
+}))
+vi.mock('../src/pullReq/handlePullReqReview', () => ({
+  handlePullReqReview: vi.fn(),
+}))
+vi.mock('../src/pullReq/handleCheckSuite', () => ({
+  handleCheckSuite: vi.fn(),
 }))
 vi.mock('../src/cronJobs/handleCronJob', () => ({
   handleCronJobs: vi.fn(),
@@ -23,6 +35,29 @@ const mockedHandle = handleIssueComment as MockedFunction<
 >
 const mockedHandlePullReq = handlePullReq as MockedFunction<typeof handlePullReq>
 const mockedHandleCronJobs = handleCronJobs as MockedFunction<typeof handleCronJobs>
+
+const handlers = {
+  handleIssueComment: mockedHandle,
+  handleIssues: handleIssues as MockedFunction<typeof handleIssues>,
+  handlePullReq: mockedHandlePullReq,
+  handlePullReqReview: handlePullReqReview as MockedFunction<typeof handlePullReqReview>,
+  handleCheckSuite: handleCheckSuite as MockedFunction<typeof handleCheckSuite>,
+  handleCronJobs: mockedHandleCronJobs,
+}
+type HandlerName = keyof typeof handlers
+
+const dispatchTable: [string, HandlerName][] = [
+  ['issue_comment', 'handleIssueComment'],
+  ['issues', 'handleIssues'],
+  ['pull_request', 'handlePullReq'],
+  ['pull_request_target', 'handlePullReq'],
+  ['pull_request_review', 'handlePullReqReview'],
+  ['check_suite', 'handleCheckSuite'],
+  ['status', 'handleCheckSuite'],
+  ['schedule', 'handleCronJobs'],
+  ['workflow_dispatch', 'handleCronJobs'],
+  ['push', 'handleCronJobs'],
+]
 
 describe('run', () => {
   beforeEach(() => {
@@ -52,61 +87,33 @@ describe('run', () => {
     expect(resolved).toBe(true)
   })
 
-  it('dispatches issue_comment to handleIssueComment', async () => {
-    mockedHandle.mockResolvedValue()
-
-    await run()
-
-    expect(mockedHandle).toHaveBeenCalledTimes(1)
-    expect(mockedHandlePullReq).not.toHaveBeenCalled()
-    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
-  })
-
-  it('dispatches pull_request to handlePullReq', async () => {
-    github.context.eventName = 'pull_request'
-    mockedHandlePullReq.mockResolvedValue()
-
-    await run()
-
-    expect(mockedHandlePullReq).toHaveBeenCalledTimes(1)
-    expect(mockedHandle).not.toHaveBeenCalled()
-    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
-  })
-
-  it('dispatches schedule to handleCronJobs', async () => {
-    github.context.eventName = 'schedule'
-    mockedHandleCronJobs.mockResolvedValue()
-
-    await run()
-
-    expect(mockedHandleCronJobs).toHaveBeenCalledTimes(1)
-    expect(mockedHandle).not.toHaveBeenCalled()
-    expect(mockedHandlePullReq).not.toHaveBeenCalled()
-  })
-
-  it.each(['workflow_dispatch', 'push'])('dispatches %s to handleCronJobs', async (eventName) => {
+  it.each(dispatchTable)('dispatches %s to %s with the github context', async (eventName, handlerName) => {
     github.context.eventName = eventName
-    mockedHandleCronJobs.mockResolvedValue()
+    handlers[handlerName].mockResolvedValue()
 
     await run()
 
-    expect(mockedHandleCronJobs).toHaveBeenCalledTimes(1)
-    expect(mockedHandle).not.toHaveBeenCalled()
-    expect(mockedHandlePullReq).not.toHaveBeenCalled()
+    expect(handlers[handlerName]).toHaveBeenCalledTimes(1)
+    expect(handlers[handlerName]).toHaveBeenCalledWith(github.context)
+    for (const [name, handler] of Object.entries(handlers)) {
+      if (name !== handlerName) {
+        expect(handler, name).not.toHaveBeenCalled()
+      }
+    }
   })
 
-  it('logs an error for an unsupported event without failing', async () => {
-    github.context.eventName = 'issues'
+  it.each(['release', 'toString', 'constructor'])('logs an error for the unsupported event %s without failing', async (eventName) => {
+    github.context.eventName = eventName
     const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await expect(run()).resolves.toBeUndefined()
 
-    expect(logError).toHaveBeenCalledWith('issues not yet supported')
+    expect(logError).toHaveBeenCalledWith(`${eventName} not yet supported`)
     expect(setFailed).not.toHaveBeenCalled()
-    expect(mockedHandle).not.toHaveBeenCalled()
-    expect(mockedHandlePullReq).not.toHaveBeenCalled()
-    expect(mockedHandleCronJobs).not.toHaveBeenCalled()
+    for (const handler of Object.values(handlers)) {
+      expect(handler).not.toHaveBeenCalled()
+    }
   })
 
   it('reports a dispatched handler rejection through setFailed', async () => {
