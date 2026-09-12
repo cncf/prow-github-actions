@@ -42,6 +42,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
     )
 
     server.use(
@@ -69,6 +70,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
     )
 
     server.use(
@@ -96,6 +98,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
     )
 
     server.use(
@@ -123,6 +126,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -154,6 +158,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(500),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -194,6 +199,7 @@ describe('area', () => {
           return new Response(null, { status: 200 })
         },
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
     )
 
     let resolved = false
@@ -225,6 +231,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('area/important')),
@@ -314,6 +321,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['area/bug', 'area/important']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issueWithLabels('area/important')),

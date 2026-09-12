@@ -10,6 +10,21 @@ The examples below use the legacy flat form, where every top level key is a labe
 section. In a `prow.yaml` with other sections the same keys sit under `labels:`; the
 `/label` allowlist is then `labels: { labels: [...] }`.
 
+## Labels must exist in the repository
+
+Like Prow's `label` plugin, a command only applies labels the repository already
+defines; GitHub is never left to create one with a default color. Names are compared
+case-insensitively. When any requested label is missing the run fails without adding
+anything:
+
+```text
+the label(s) kind/cleanup, area/api cannot be applied because the repository doesn't have them. Run the label-sync job or create them.
+```
+
+Run the [`label-sync` job](./cron-jobs.md#label-sync) to create every label the
+configuration describes, or create them by hand. `/remove-` forms are not gated.
+The repository's labels are read once per run.
+
 ## Any key is a command
 
 Every label section can be used as a `/<key>` command once it is

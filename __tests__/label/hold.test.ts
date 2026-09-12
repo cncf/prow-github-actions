@@ -33,6 +33,7 @@ describe('hold', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['hold']),
     )
 
     await handleIssueComment(commentContext)
@@ -52,6 +53,7 @@ describe('hold', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['hold']),
     )
 
     await handleIssueComment(commentContext)
@@ -137,6 +139,7 @@ describe('hold', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReqAdd),
       ),
+      utils.repoHasLabels(['hold']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -176,6 +179,7 @@ describe('hold', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReqAdd),
       ),
+      utils.repoHasLabels(['hold']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),

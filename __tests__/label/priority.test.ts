@@ -34,6 +34,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),
@@ -62,6 +63,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),
@@ -90,6 +92,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),
@@ -134,6 +137,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReqPost),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -179,6 +183,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReqPost),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -246,6 +251,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
@@ -279,6 +285,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -374,6 +381,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observePost),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -419,6 +427,7 @@ describe('priority', () => {
           return new Response(null, { status: 200 })
         },
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),

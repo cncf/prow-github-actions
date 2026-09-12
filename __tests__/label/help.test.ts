@@ -43,6 +43,7 @@ function serveIssueAndRecordMutations(currentLabels: string[]) {
     }),
     http.get(`${repo}/issues/1`, utils.mockResponse(200, issueWithLabels(...currentLabels))),
     http.get(`${repo}/contents/:path`, utils.mockResponse(404, null, yamlFetch)),
+    utils.repoHasLabels(['help wanted', 'good first issue']),
   )
   return { mutations, yamlFetch }
 }

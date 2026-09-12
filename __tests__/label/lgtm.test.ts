@@ -40,6 +40,7 @@ describe('lgtm', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['lgtm']),
     )
 
     server.use(
@@ -133,6 +134,7 @@ describe('lgtm', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeAdd),
       ),
+      utils.repoHasLabels(['lgtm']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -252,6 +254,7 @@ describe('lgtm', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeAdd),
       ),
+      utils.repoHasLabels(['lgtm']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -287,6 +290,7 @@ describe('lgtm', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['lgtm']),
     )
 
     server.use(
@@ -399,6 +403,7 @@ approvers:
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['lgtm']),
     )
 
     const owners = Buffer.from(
@@ -477,6 +482,7 @@ reviewers:
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['lgtm']),
       http.get(
         `${utils.api}/orgs/Codertocat/members/Codertocat`,
         utils.mockResponse(204),
@@ -516,6 +522,7 @@ reviewers:
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeAdd),
       ),
+      utils.repoHasLabels(['lgtm']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -559,6 +566,7 @@ reviewers:
           `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
           utils.mockResponse(200, null, observeAdd),
         ),
+        utils.repoHasLabels(['lgtm']),
         http.post(
           `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
           utils.mockResponse(200, null, observeComment),
@@ -669,6 +677,7 @@ reviewers:
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeReq),
       ),
+      utils.repoHasLabels(['lgtm']),
       ...prHandlers(
         { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- ryan\n' },
         ['sdk/x.go', 'docs/y.md'],
@@ -694,6 +703,7 @@ reviewers:
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
         utils.mockResponse(200, null, observeAdd),
       ),
+      utils.repoHasLabels(['lgtm']),
       http.post(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
         utils.mockResponse(200, null, observeComment),

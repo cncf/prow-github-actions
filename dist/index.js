@@ -41390,7 +41390,9 @@ async function getArgumentLabels(octokit, context, arg) {
     return section.values;
 }
 /**
- * labelIssue will label the issue with the labels provided
+ * labelIssue will label the issue with the labels provided. Like Prow, a
+ * label the repository does not have is refused rather than created by
+ * GitHub with a default color.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -41398,6 +41400,7 @@ async function getArgumentLabels(octokit, context, arg) {
  * @param labels - the labels to add to the issue
  */
 async function labelIssue(octokit, context, issueNum, labels) {
+    await assertLabelsExist(octokit, context, labels);
     try {
         await octokit.issues.addLabels({
             ...context.repo,
@@ -41407,6 +41410,50 @@ async function labelIssue(octokit, context, issueNum, labels) {
     }
     catch (e) {
         throw new Error(`could not add labels: ${e}`);
+    }
+}
+const repoLabelCache = new Map();
+/**
+ * repoLabelNames lists the names of every label of the event repository,
+ * memoized per repository for the lifetime of the process.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+function repoLabelNames(octokit, context) {
+    const key = `${context.repo.owner}/${context.repo.repo}`;
+    let pending = repoLabelCache.get(key);
+    if (pending === undefined) {
+        pending = octokit
+            .paginate(octokit.issues.listLabelsForRepo, { ...context.repo, per_page: 100 })
+            .then(labels => labels.map(label => label.name));
+        repoLabelCache.set(key, pending);
+    }
+    return pending;
+}
+function resetLabelCache() {
+    repoLabelCache.clear();
+}
+/**
+ * assertLabelsExist throws, naming every offender, when one of the labels is
+ * not defined in the repository. Names compare case-insensitively.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param labels - the labels about to be applied
+ */
+async function assertLabelsExist(octokit, context, labels) {
+    let existing;
+    try {
+        existing = await repoLabelNames(octokit, context);
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const known = new Set(existing.map(name => name.toLowerCase()));
+    const missing = labels.filter(label => !known.has(label.toLowerCase()));
+    if (missing.length > 0) {
+        throw new Error(`the label(s) ${missing.join(', ')} cannot be applied because the repository doesn't have them. Run the label-sync job or create them.`);
     }
 }
 /**
