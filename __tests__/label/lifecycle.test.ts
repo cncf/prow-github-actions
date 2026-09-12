@@ -50,6 +50,8 @@ function serveIssueAndRecordMutations(currentLabels: string[], yaml = labelFileC
     }),
     http.get(`${repo}/issues/1`, utils.mockResponse(200, issueWithLabels(...currentLabels))),
     http.get(`${repo}/contents/.prowlabels.yaml`, utils.mockResponse(200, yaml)),
+
+    ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
   )
   return mutations
 }

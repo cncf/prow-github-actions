@@ -50,6 +50,7 @@ describe('utils labeling', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(404),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yml', '.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -74,6 +75,7 @@ describe('utils labeling', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(404),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yml', '.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -107,6 +109,7 @@ describe('getLabelConfig', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, file),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
   }
 
@@ -114,7 +117,11 @@ describe('getLabelConfig', () => {
     serveYaml('triage:\n  - accepted\n  - needs-information\n')
 
     await expect(getLabelConfig(octokit, context)).resolves.toEqual({
-      triage: { values: ['accepted', 'needs-information'], exclusive: undefined },
+      triage: {
+        values: ['accepted', 'needs-information'],
+        exclusive: undefined,
+        definitions: [{ name: 'accepted' }, { name: 'needs-information' }],
+      },
     })
   })
 
@@ -122,8 +129,8 @@ describe('getLabelConfig', () => {
     serveYaml('level:\n  values: [sandbox, incubation]\n  exclusive: true\nkind:\n  values: [bug]\n')
 
     await expect(getLabelConfig(octokit, context)).resolves.toEqual({
-      level: { values: ['sandbox', 'incubation'], exclusive: true },
-      kind: { values: ['bug'], exclusive: undefined },
+      level: { values: ['sandbox', 'incubation'], exclusive: true, definitions: [{ name: 'sandbox' }, { name: 'incubation' }] },
+      kind: { values: ['bug'], exclusive: undefined, definitions: [{ name: 'bug' }] },
     })
   })
 

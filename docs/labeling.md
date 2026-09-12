@@ -1,13 +1,18 @@
 # Labeling
 
-Prow github actions expects the file `.prowlabels.yaml` to be in the root of the project.
-If it is absent, `.prowlabels.yml` is used as a fallback.
-This is needed for most labeling commands and jobs.
-All of the following examples can be placed simultaneously in the `.prowlabels.yaml` file.
+Label commands read the `labels` sections of the prow configuration. The configuration
+lives in the repository (`.github/prow.yaml` or the legacy `.prowlabels.yaml`), in your
+organization's `.project` or `.github` repository, or at an explicit `config` source;
+see [configuration](./configuration.md) for locations, precedence and the full schema.
+All of the following examples can be placed simultaneously in one file.
+
+The examples below use the legacy flat form, where every top level key is a label
+section. In a `prow.yaml` with other sections the same keys sit under `labels:`; the
+`/label` allowlist is then `labels: { labels: [...] }`.
 
 ## Any key is a command
 
-Every top level key of `.prowlabels.yaml` can be used as a `/<key>` command once it is
+Every label section can be used as a `/<key>` command once it is
 listed in `prow-commands`, so a repository needs no code changes to add its own label
 families. `/<key> value` adds the label `<key>/value` and `/remove-<key> value` removes it.
 Only values listed under the key are accepted; anything else is ignored and, when nothing
@@ -79,7 +84,7 @@ Values are split on spaces, so label names containing spaces cannot be listed he
 ## Lifecycle, stage and status labels
 
 `/lifecycle`, `/stage` and `/status` ship with Prow's values and need no
-`.prowlabels.yaml` section:
+configured section:
 
 Command | Built-in values
 --- | ---
@@ -100,13 +105,13 @@ status:
   exclusive: true
 ```
 
-The file itself must still exist, as it does for every other label command.
+A configuration file must still exist in some tier, as it must for every other label command.
 
 ## Help wanted and good first issue
 
 `/help` and `/good-first-issue` mirror Prow's help plugin and use GitHub's default
-label names, which contain spaces and therefore cannot be listed in
-`.prowlabels.yaml`. They are fixed and do not read the file at all. Removal
+label names, which contain spaces and therefore cannot be listed in a label section.
+They are fixed and do not read the configuration at all. Removal
 matches labels case-insensitively and deletes them with the casing on the issue:
 
 Command | Adds | `/remove-` form removes
@@ -120,7 +125,7 @@ commands: `/remove-help` removes a label spelled `Help Wanted` as it appears on 
 ## Removing labels
 
 Every label command has a `/remove-` form that takes the same values and only
-removes values listed in `.prowlabels.yaml`. See
+removes values listed in the configuration. See
 [commands](./commands.md) for the full list and policy.
 
 ## Automatic PR labels

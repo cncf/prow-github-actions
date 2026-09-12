@@ -12,7 +12,7 @@ export interface PrefixedLabelCommand {
   command: string
   /** label prefix, ex: 'kind' yields 'kind/<value>'; '' applies labels verbatim */
   prefix: string
-  /** top level key in .prowlabels.yaml listing the allowed values */
+  /** label section of the prow configuration listing the allowed values */
   allowlistKey: string
   /** replace any existing '<prefix>/*' labels instead of stacking them */
   exclusive?: boolean
@@ -30,7 +30,7 @@ export const prefixedLabelCommands: PrefixedLabelCommand[] = [
   { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
 ]
 
-// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
+// a label section name usable as a slash command: lower-case letters, digits and dashes
 export const labelCommandName = /^[a-z][a-z0-9-]*$/
 
 // labels with dedicated, authorization-gated commands; never reachable through /label
@@ -43,8 +43,8 @@ export function isProtectedLabel(label: string): boolean {
 }
 
 /**
- * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
- * key so that `/<key> value` labels the issue with '<key>/value'
+ * dynamicPrefixedCommand builds the command for an arbitrary label section
+ * so that `/<key> value` labels the issue with '<key>/value'
  *
  * @param name - the top level key, ex: 'level'
  */
@@ -64,7 +64,7 @@ export function removeCommandFor(command: string): string {
 
 /**
  * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
- * that is both in the comment and in the .prowlabels.yaml allowlist.
+ * that is both in the comment and in the configured allowlist.
  * When the command is exclusive, existing '<prefix>/*' labels that were not
  * requested are removed first.
  *
@@ -99,7 +99,7 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
 
 /**
  * removePrefixedLabels removes '<prefix>/<value>' for every value in the
- * /remove-<command> line that is in the .prowlabels.yaml allowlist and
+ * /remove-<command> line that is in the configured allowlist and
  * currently on the issue. Labels owned by other commands (lgtm, hold,
  * approved, do-not-merge/*) are refused even when the allowlist names them.
  *
@@ -145,7 +145,7 @@ async function allowlistFor(
   octokit: Octokit,
   context: Context,
   cmd: PrefixedLabelCommand,
-): Promise<Required<LabelSection>> {
+): Promise<Required<Pick<LabelSection, 'values' | 'exclusive'>>> {
   const key = cmd.allowlistKey
 
   try {

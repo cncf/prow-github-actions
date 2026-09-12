@@ -30,6 +30,35 @@ function openPr(labels: string[], overrides: Record<string, unknown> = {}) {
   return { ...pr, labels: labels.map(name => ({ name })), ...overrides }
 }
 
+function yamlFile(text: string) {
+  const file = structuredClone(labelFileContents)
+  file.content = Buffer.from(text).toString('base64')
+  return file
+}
+
+const orgConfigRepos = ['.project', '.github']
+const repoConfigFiles = [
+  '.github/prow.yaml',
+  '.github/prowlabels.yaml',
+  'prow.yaml',
+  '.prowlabels.yaml',
+  '.github/prow.yml',
+  '.github/prowlabels.yml',
+  'prow.yml',
+  '.prowlabels.yml',
+]
+
+// the configuration reads the loader makes before it finds `org` and `repo` (or gives up on a tier)
+function configReads({ org, repo: file }: { org?: string, repo?: string } = {}): string[] {
+  const orgReads = orgConfigRepos
+    .slice(0, org ? orgConfigRepos.indexOf(org) + 1 : orgConfigRepos.length)
+    .map(name => `GET /repos/Codertocat/${name}/contents/prow.yaml`)
+  const repoReads = repoConfigFiles
+    .slice(0, file ? repoConfigFiles.indexOf(file) + 1 : repoConfigFiles.length)
+    .map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`)
+  return [...orgReads, ...repoReads]
+}
+
 describe('dist/index.js', () => {
   let gh: FakeGithub
 
@@ -38,6 +67,13 @@ describe('dist/index.js', () => {
   })
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
+
+  // the org and repo tiers are probed concurrently, so the reads have no fixed order among themselves
+  function expectRequests(reads: string[], rest: string[]) {
+    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+    expect(calls.slice(0, reads.length).sort()).toEqual([...reads].sort())
+    expect(calls.slice(reads.length)).toEqual(rest)
+  }
 
   it('is a syntactically valid bundle with no unresolved modules', () => {
     expect(fs.existsSync(bundlePath)).toBe(true)
@@ -73,10 +109,26 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['kind/cleanup'] })
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      `GET ${repo}/contents/.prowlabels.yaml`,
-      `POST ${repo}/issues/1/labels`,
-    ])
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [`POST ${repo}/issues/1/labels`])
+  })
+
+  it('issue_comment /kind reads labels from the organization .project repo when the repo has no configuration', async () => {
+    gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/kind cleanup'),
+      inputs: { ...token, 'prow-commands': '/kind' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ labels: ['kind/cleanup'] })
+    expectRequests(configReads({ org: '.project' }), [`POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment ignores a /kind inside a fenced code block without calling the api', async () => {
@@ -107,8 +159,7 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      `GET ${repo}/contents/.prowlabels.yaml`,
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/kind%2Fcleanup`,
     ])
@@ -130,16 +181,11 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['good-first-issue'] })
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      `GET ${repo}/contents/.prowlabels.yaml`,
-      `POST ${repo}/issues/1/labels`,
-    ])
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [`POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /remove-label refuses lgtm even when .prowlabels.yaml lists it', async () => {
-    const listsLgtm = structuredClone(labelFileContents)
-    listsLgtm.content = Buffer.from('labels:\n  - lgtm\n  - documentation\n').toString('base64')
-    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: listsLgtm })
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: yamlFile('labels:\n  - lgtm\n  - documentation\n') })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
 
@@ -153,9 +199,7 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('managed by its own command'))).toBe(true)
     expect(gh.requestsMatching('DELETE', /./)).toEqual([])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      `GET ${repo}/contents/.prowlabels.yaml`,
-    ])
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [])
   })
 
   it('issue_comment /level uses a mapping-form yaml key as an exclusive label command', async () => {
@@ -176,8 +220,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['level/incubation'] })
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      `GET ${repo}/contents/.prowlabels.yaml`,
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/level%2Fsandbox`,
       `POST ${repo}/issues/1/labels`,

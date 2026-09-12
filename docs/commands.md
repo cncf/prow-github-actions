@@ -6,13 +6,13 @@ These docs describe `main`. Features added since the latest release (`v2.0.0`) s
 
 - A command must start a line of the comment; leading whitespace is allowed. A command mentioned mid-sentence is ignored.
 - Commands and their keywords (`cancel`, `clear`, `not-planned`) are case-insensitive: `/LGTM cancel` works.
-- **Label values** are matched case-insensitively against `.prowlabels.yaml` (or `.prowlabels.yml`, see [labeling](./labeling.md)) and applied with the casing written in the file: `/kind Bug` adds `kind/bug`.
+- **Label values** are matched case-insensitively against the prow configuration ([configuration](./configuration.md), [labeling](./labeling.md)) and applied with the casing written in the file: `/kind Bug` adds `kind/bug`.
 - Commands inside Markdown code (fenced ``` / ~~~ blocks, indented code, inline `code`) and blockquotes are ignored.
 - When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins.
 - A `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
 - Milestone titles are matched exactly.
 - Prow-style aliases (`/remove-lgtm`, `/unhold`, ...) are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`.
-- Any other lower-case `/<key>` listed in `prow-commands` is a [label command](./labeling.md#any-key-is-a-command) backed by the `<key>` section of `.prowlabels.yaml`.
+- Any other lower-case `/<key>` listed in `prow-commands` is a [label command](./labeling.md#any-key-is-a-command) backed by the `<key>` label section of the prow configuration ([configuration](./configuration.md)).
 
 Commands | Policy | Description
 --- | --- | ---
@@ -35,35 +35,35 @@ Commands | Policy | Description
 
 Label Commands | Policy | Description
 --- | --- | ---
-`/area [label1 label2 ...]` | anyone | adds an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
+`/area [label1 label2 ...]` | anyone | adds an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
 `/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `hold` label
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
-`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md). Exclusive by default: replaces any existing `priority/*` labels
-`/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in [the `.prowlabels.yaml` file](./labeling.md)
-`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
-`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in [the `.prowlabels.yaml` file](./labeling.md). Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
-`/lifecycle [frozen / stale / rotten]` | anyone | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
+`/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
+`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
+`/lifecycle [frozen / stale / rotten]` | anyone | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
 `/remove-lifecycle [frozen / stale / rotten]` | anyone | removes the `lifecycle/<>` label
-`/stage [alpha / beta / stable]` | anyone | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/stage [alpha / beta / stable]` | anyone | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
 `/remove-stage [alpha / beta / stable]` | anyone | removes the `stage/<>` label
-`/status [approved-for-milestone / in-progress / in-review]` | anyone | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in `.prowlabels.yaml`](./labeling.md#lifecycle-stage-and-status-labels)
+`/status [approved-for-milestone / in-progress / in-review]` | anyone | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
 `/remove-status [approved-for-milestone / in-progress / in-review]` | anyone | removes the `status/<>` label
 `/help` | anyone | adds the `help wanted` label
 `/remove-help` | anyone | removes the `help wanted` and `good first issue` labels
 `/good-first-issue` | anyone | adds the `good first issue` and `help wanted` labels
 `/remove-good-first-issue` | anyone | removes the `good first issue` label
-`/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other top level `<key>` of [the `.prowlabels.yaml` file](./labeling.md) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
-`/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in [the `.prowlabels.yaml` file](./labeling.md)
+`/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
+`/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
-The `/remove-<key>` commands are enabled together with their base command and only remove values listed in `.prowlabels.yaml`, so anyone may use them. `lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
+The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 
 ## What happens when you are not authorized
 
