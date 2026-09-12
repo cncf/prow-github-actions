@@ -49,6 +49,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -75,6 +76,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -101,6 +103,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -124,6 +127,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -143,6 +147,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
     server.use(
       http.post(
@@ -169,6 +174,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     let signalWriteStarted!: () => void
@@ -227,6 +233,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -254,6 +261,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -282,6 +290,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -313,6 +322,7 @@ describe('area', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})

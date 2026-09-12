@@ -1,3 +1,6 @@
+import type { Octokit } from '@octokit/rest'
+import type { Context } from './context'
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import * as yaml from 'js-yaml'
 
@@ -43,6 +46,8 @@ export interface ProwConfig {
   require_matching_label: RequireMatchingLabel[]
   tide: TideConfig
   hold: HoldConfig
+  /** every file that contributed, lowest precedence first, as `owner/repo:path` or a url */
+  sources: string[]
 }
 
 const mergeMethods = ['merge', 'squash', 'rebase'] as const
@@ -50,6 +55,186 @@ const colorPattern = /^[0-9a-f]{6}$/i
 
 // top level keys of the new form other than `labels`
 const reservedKeys = ['require_matching_label', 'tide', 'hold'] as const
+
+/** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
+export const orgConfigRepos = ['.project', '.github']
+export const orgConfigPath = 'prow.yaml'
+
+/** paths probed in the event repository, in precedence order */
+export const repoConfigPaths = [
+  '.github/prow.yaml',
+  '.github/prowlabels.yaml',
+  'prow.yaml',
+  '.prowlabels.yaml',
+  '.github/prow.yml',
+  '.github/prowlabels.yml',
+  'prow.yml',
+  '.prowlabels.yml',
+]
+
+const explicitSourcePattern = /^([^/\s:@]+)\/([^/\s:@]+):([^@\s]+)(?:@(\S+))?$/
+
+interface Tier {
+  source: string
+  config: Partial<ProwConfig>
+}
+
+const cache = new Map<string, Promise<ProwConfig>>()
+
+/**
+ * loadProwConfig resolves the configuration that applies to the event
+ * repository: an organization tier (`<owner>/.project` then `<owner>/.github`,
+ * `prow.yaml`) or, when the `config` input is set, that explicit source
+ * instead; then the repository's own file layered on top. The result is
+ * memoized per repository for the lifetime of the process.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+export function loadProwConfig(octokit: Octokit, context: Context): Promise<ProwConfig> {
+  const key = `${context.repo.owner}/${context.repo.repo}`
+  let pending = cache.get(key)
+  if (pending === undefined) {
+    pending = load(octokit, context)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
+export function resetProwConfigCache(): void {
+  cache.clear()
+}
+
+async function load(octokit: Octokit, context: Context): Promise<ProwConfig> {
+  const explicit = core.getInput('config', { required: false }).trim()
+
+  // the org and repo tiers do not depend on each other, so probe both at once
+  const [base, repo] = await Promise.all([
+    explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+    loadRepoTier(octokit, context),
+  ])
+
+  const tiers = [base, repo].filter((tier): tier is Tier => tier !== undefined)
+  const merged = tiers.reduce<Partial<ProwConfig>>((acc, tier) => mergeProwConfig(acc, tier.config), {})
+  const sources = tiers.map(tier => tier.source)
+
+  core.debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`)
+
+  return { ...mergeProwConfig({}, merged), sources }
+}
+
+async function loadOrgTier(octokit: Octokit, context: Context): Promise<Tier | undefined> {
+  const { owner } = context.repo
+
+  // the event repository is the org config repo itself: its file is the repo tier
+  for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
+    const source = `${owner}/${repo}:${orgConfigPath}`
+    let text: string | undefined
+    try {
+      text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath })
+    }
+    catch (e) {
+      throw new Error(`could not load organization prow config from ${source}: ${e}`)
+    }
+
+    if (text !== undefined) {
+      return { source, config: parseProwConfig(source, text) }
+    }
+  }
+
+  return undefined
+}
+
+async function loadRepoTier(octokit: Octokit, context: Context): Promise<Tier | undefined> {
+  for (const path of repoConfigPaths) {
+    const source = `${context.repo.owner}/${context.repo.repo}:${path}`
+    let text: string | undefined
+    try {
+      text = await fetchRepoFile(octokit, { ...context.repo, path })
+    }
+    catch (e) {
+      throw new Error(`could not load prow config from ${source}: ${e}`)
+    }
+
+    if (text !== undefined) {
+      return { source, config: parseProwConfig(source, text) }
+    }
+  }
+
+  return undefined
+}
+
+async function loadExplicitTier(octokit: Octokit, input: string): Promise<Tier> {
+  if (input.startsWith('http://')) {
+    throw new Error('config: http:// sources are not allowed, use https://')
+  }
+
+  if (input.startsWith('https://')) {
+    return { source: input, config: parseProwConfig(input, await fetchUrl(input)) }
+  }
+
+  const match = explicitSourcePattern.exec(input)
+  if (match === null) {
+    throw new Error(`config: expected owner/repo:path[@ref] or an https:// url, got '${input}'`)
+  }
+
+  const [, owner, repo, path, ref] = match
+  let text: string | undefined
+  try {
+    text = await fetchRepoFile(octokit, { owner, repo, path, ref })
+  }
+  catch (e) {
+    throw new Error(`could not load prow config from ${input}: ${e}`)
+  }
+  if (text === undefined) {
+    throw new Error(`could not load prow config from ${input}: not found`)
+  }
+
+  return { source: input, config: parseProwConfig(input, text) }
+}
+
+// resolves to undefined when the repository or the file does not exist
+async function fetchRepoFile(
+  octokit: Octokit,
+  file: { owner: string, repo: string, path: string, ref?: string },
+): Promise<string | undefined> {
+  let data: unknown
+  try {
+    data = (await octokit.repos.getContent(file)).data
+  }
+  catch (e) {
+    if (isNotFound(e)) {
+      return undefined
+    }
+    throw e
+  }
+
+  if (!isMapping(data) || typeof data.content !== 'string' || typeof data.encoding !== 'string') {
+    throw new TypeError(`${file.path} is not a file`)
+  }
+
+  return Buffer.from(data.content, data.encoding as BufferEncoding).toString()
+}
+
+async function fetchUrl(url: string): Promise<string> {
+  let response: Response
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+  }
+  catch (e) {
+    throw new Error(`could not load prow config from ${url}: ${e}`)
+  }
+
+  if (!response.ok) {
+    throw new Error(`could not load prow config from ${url}: HTTP ${response.status}`)
+  }
+
+  return response.text()
+}
+
+function isNotFound(error: unknown): boolean {
+  return isMapping(error) && error.status === 404
+}
 
 /**
  * parseProwConfig parses one prow.yaml (or legacy .prowlabels.yaml) document.
@@ -258,7 +443,7 @@ function normalizeHold(source: string, raw: unknown): HoldConfig {
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
  */
-export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwConfig>): ProwConfig {
+export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwConfig>): Omit<ProwConfig, 'sources'> {
   return {
     labels: { ...base.labels, ...over.labels },
     require_matching_label: [...(base.require_matching_label ?? []), ...(over.require_matching_label ?? [])],

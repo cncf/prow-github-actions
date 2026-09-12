@@ -1,29 +1,20 @@
 import type { Octokit } from '@octokit/rest'
+import type { LabelSection } from './config'
 import type { Context } from './context'
-
-import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import * as yaml from 'js-yaml'
+import { loadProwConfig, orgConfigPath, orgConfigRepos, repoConfigPaths } from './config'
 
-/** one top level key of .prowlabels.yaml */
-export interface LabelSection {
-  /** the allowed values, ex: ['bug', 'cleanup'] */
-  values: string[]
-  /** replace any existing '<prefix>/*' labels instead of stacking them */
-  exclusive?: boolean
-}
+export type { LabelSection } from './config'
 
 export type LabelConfig = Record<string, LabelSection>
 
 /**
- * getLabelConfig fetches .prowlabels.yaml (or .prowlabels.yml) and returns
- * every top level key as a LabelSection. A key may be written as a plain
- * list of values or as a mapping `{ values: [...], exclusive: bool }`.
- *
- * This method has some eslint ignores related to
- * no explicit typing in octokit for content response - https://github.com/octokit/rest.js/issues/1516
+ * getLabelConfig returns the label sections of the merged prow configuration
+ * (organization or explicit source, then the repository). Label commands need
+ * a configuration file to exist somewhere, so an entirely absent configuration
+ * is an error that names every location that was probed.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -32,48 +23,22 @@ export async function getLabelConfig(
   octokit: Octokit,
   context: Context,
 ): Promise<LabelConfig> {
-  let response: any
-  try {
-    response = await octokit.repos.getContent({
-      ...context.repo,
-      path: '.prowlabels.yaml',
-    })
-  }
-  catch (e) {
-    try {
-      response = await octokit.repos.getContent({
-        ...context.repo,
-        path: '.prowlabels.yml',
-      })
-    }
-    catch (e2) {
-      throw new Error(
-        `could not get .prowlabels.yaml or .prowlabels.yml: ${e} ${e2}`,
-      )
-    }
-  }
+  const config = await loadProwConfig(octokit, context)
 
-  if (!response.data.content || !response.data.encoding) {
+  if (config.sources.length === 0) {
+    const { owner, repo } = context.repo
+    const orgRepos = orgConfigRepos.map(name => `${owner}/${name}`).join(' and ')
+    const repoFiles = repoConfigPaths.filter(path => path.endsWith('.yaml')).join(', ')
     throw new Error(
-      `area: error parsing data from content response: ${response.data}`,
+      `no prow configuration found: looked for ${orgConfigPath} in ${orgRepos}, and ${repoFiles} (.yaml/.yml) in ${owner}/${repo}`,
     )
   }
 
-  const decoded = Buffer.from(
-    response.data.content,
-    response.data.encoding,
-  ).toString()
-
-  const content: unknown = yaml.load(decoded)
-  const sections: Record<string, unknown> = isMapping(content) ? content : {}
-
-  return Object.fromEntries(
-    Object.entries(sections).map(([key, section]) => [key, normalizeSection(key, section)]),
-  )
+  return config.labels
 }
 
 /**
- * getArgumentLabels returns the allowed values of one .prowlabels.yaml section
+ * getArgumentLabels returns the allowed values of one label section
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -92,32 +57,6 @@ export async function getArgumentLabels(
   }
 
   return section.values
-}
-
-function normalizeSection(key: string, section: unknown): LabelSection {
-  if (isStringList(section)) {
-    return { values: section }
-  }
-
-  if (
-    isMapping(section)
-    && isStringList(section.values)
-    && (section.exclusive === undefined || typeof section.exclusive === 'boolean')
-  ) {
-    return { values: section.values, exclusive: section.exclusive }
-  }
-
-  throw new Error(
-    `${key}: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`,
-  )
-}
-
-function isMapping(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isStringList(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
 /**

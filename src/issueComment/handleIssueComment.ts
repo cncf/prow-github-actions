@@ -52,7 +52,7 @@ const commandAliases: Record<string, string[]> = {
   ),
 }
 
-// any other /<key> names a .prowlabels.yaml section
+// any other /<key> names a label section of the prow configuration
 function isDynamicLabelCommand(command: string): boolean {
   return command.startsWith('/')
     && labelCommandName.test(command.slice(1))

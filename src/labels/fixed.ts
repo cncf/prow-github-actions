@@ -14,7 +14,7 @@ export interface FixedLabelCommand {
   remove: string[]
 }
 
-// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
+// Prow's help plugin: label names contain spaces so they bypass the label configuration
 export const fixedLabelCommands: FixedLabelCommand[] = [
   { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
   { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },

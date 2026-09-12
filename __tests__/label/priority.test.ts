@@ -42,6 +42,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -69,6 +70,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -96,6 +98,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -139,6 +142,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -183,6 +187,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     await handleIssueComment(commentContext)
@@ -221,6 +226,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -244,6 +250,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -280,6 +287,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -310,6 +318,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -338,6 +347,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -372,6 +382,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -416,6 +427,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
         utils.mockResponse(200, labelFileContents),
       ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})

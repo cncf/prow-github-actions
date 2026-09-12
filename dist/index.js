@@ -41015,50 +41015,367 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 
 //# sourceMappingURL=js-yaml.mjs.map
+;// CONCATENATED MODULE: ./lib/utils/config.js
+
+
+
+const mergeMethods = ['merge', 'squash', 'rebase'];
+const colorPattern = /^[0-9a-f]{6}$/i;
+// top level keys of the new form other than `labels`
+const reservedKeys = ['require_matching_label', 'tide', 'hold'];
+/** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
+const orgConfigRepos = ['.project', '.github'];
+const orgConfigPath = 'prow.yaml';
+/** paths probed in the event repository, in precedence order */
+const repoConfigPaths = [
+    '.github/prow.yaml',
+    '.github/prowlabels.yaml',
+    'prow.yaml',
+    '.prowlabels.yaml',
+    '.github/prow.yml',
+    '.github/prowlabels.yml',
+    'prow.yml',
+    '.prowlabels.yml',
+];
+const explicitSourcePattern = /^([^/\s:@]+)\/([^/\s:@]+):([^@\s]+)(?:@(\S+))?$/;
+const cache = new Map();
+/**
+ * loadProwConfig resolves the configuration that applies to the event
+ * repository: an organization tier (`<owner>/.project` then `<owner>/.github`,
+ * `prow.yaml`) or, when the `config` input is set, that explicit source
+ * instead; then the repository's own file layered on top. The result is
+ * memoized per repository for the lifetime of the process.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+function loadProwConfig(octokit, context) {
+    const key = `${context.repo.owner}/${context.repo.repo}`;
+    let pending = cache.get(key);
+    if (pending === undefined) {
+        pending = config_load(octokit, context);
+        cache.set(key, pending);
+    }
+    return pending;
+}
+function resetProwConfigCache() {
+    cache.clear();
+}
+async function config_load(octokit, context) {
+    const explicit = getInput('config', { required: false }).trim();
+    // the org and repo tiers do not depend on each other, so probe both at once
+    const [base, repo] = await Promise.all([
+        explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+        loadRepoTier(octokit, context),
+    ]);
+    const tiers = [base, repo].filter((tier) => tier !== undefined);
+    const merged = tiers.reduce((acc, tier) => mergeProwConfig(acc, tier.config), {});
+    const sources = tiers.map(tier => tier.source);
+    core_debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`);
+    return { ...mergeProwConfig({}, merged), sources };
+}
+async function loadOrgTier(octokit, context) {
+    const { owner } = context.repo;
+    // the event repository is the org config repo itself: its file is the repo tier
+    for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
+        const source = `${owner}/${repo}:${orgConfigPath}`;
+        let text;
+        try {
+            text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath });
+        }
+        catch (e) {
+            throw new Error(`could not load organization prow config from ${source}: ${e}`);
+        }
+        if (text !== undefined) {
+            return { source, config: parseProwConfig(source, text) };
+        }
+    }
+    return undefined;
+}
+async function loadRepoTier(octokit, context) {
+    for (const path of repoConfigPaths) {
+        const source = `${context.repo.owner}/${context.repo.repo}:${path}`;
+        let text;
+        try {
+            text = await fetchRepoFile(octokit, { ...context.repo, path });
+        }
+        catch (e) {
+            throw new Error(`could not load prow config from ${source}: ${e}`);
+        }
+        if (text !== undefined) {
+            return { source, config: parseProwConfig(source, text) };
+        }
+    }
+    return undefined;
+}
+async function loadExplicitTier(octokit, input) {
+    if (input.startsWith('http://')) {
+        throw new Error('config: http:// sources are not allowed, use https://');
+    }
+    if (input.startsWith('https://')) {
+        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+    }
+    const match = explicitSourcePattern.exec(input);
+    if (match === null) {
+        throw new Error(`config: expected owner/repo:path[@ref] or an https:// url, got '${input}'`);
+    }
+    const [, owner, repo, path, ref] = match;
+    let text;
+    try {
+        text = await fetchRepoFile(octokit, { owner, repo, path, ref });
+    }
+    catch (e) {
+        throw new Error(`could not load prow config from ${input}: ${e}`);
+    }
+    if (text === undefined) {
+        throw new Error(`could not load prow config from ${input}: not found`);
+    }
+    return { source: input, config: parseProwConfig(input, text) };
+}
+// resolves to undefined when the repository or the file does not exist
+async function fetchRepoFile(octokit, file) {
+    let data;
+    try {
+        data = (await octokit.repos.getContent(file)).data;
+    }
+    catch (e) {
+        if (isNotFound(e)) {
+            return undefined;
+        }
+        throw e;
+    }
+    if (!isMapping(data) || typeof data.content !== 'string' || typeof data.encoding !== 'string') {
+        throw new TypeError(`${file.path} is not a file`);
+    }
+    return external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
+}
+async function fetchUrl(url) {
+    let response;
+    try {
+        response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    }
+    catch (e) {
+        throw new Error(`could not load prow config from ${url}: ${e}`);
+    }
+    if (!response.ok) {
+        throw new Error(`could not load prow config from ${url}: HTTP ${response.status}`);
+    }
+    return response.text();
+}
+function isNotFound(error) {
+    return isMapping(error) && error.status === 404;
+}
+/**
+ * parseProwConfig parses one prow.yaml (or legacy .prowlabels.yaml) document.
+ *
+ * Both forms share one file. Legacy documents are a flat map of label
+ * sections, and one of those sections is commonly named `labels` (the /label
+ * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
+ * the new form, where `require_matching_label`, `tide` and `hold` may sit
+ * alongside it and the /label allowlist is the section `labels.labels`. A
+ * document without `labels` that carries one of those reserved keys is also
+ * the new form. Anything else is a legacy document and every key must be a
+ * label section.
+ *
+ * @param source - where the document came from, used in error messages only
+ * @param text - the yaml text
+ */
+function parseProwConfig(source, text) {
+    const loaded = text.trim() === '' ? undefined : load(text);
+    if (loaded === undefined || loaded === null) {
+        return {};
+    }
+    if (!isMapping(loaded)) {
+        throw new Error(`${source}: yaml malformed, expected a mapping at the top level`);
+    }
+    const isNewForm = isMapping(loaded.labels)
+        || (loaded.labels === undefined && reservedKeys.some(key => key in loaded));
+    if (!isNewForm) {
+        return { labels: normalizeSections(loaded) };
+    }
+    const config = {};
+    if (loaded.labels !== undefined) {
+        config.labels = normalizeSections(loaded.labels);
+    }
+    if (loaded.require_matching_label !== undefined) {
+        config.require_matching_label = normalizeRequireMatchingLabel(source, loaded.require_matching_label);
+    }
+    if (loaded.tide !== undefined) {
+        config.tide = normalizeTide(source, loaded.tide);
+    }
+    if (loaded.hold !== undefined) {
+        config.hold = normalizeHold(source, loaded.hold);
+    }
+    const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
+    if (unknown.length > 0) {
+        core_debug(`${source}: ignoring unknown top level keys: ${unknown.join(', ')}`);
+    }
+    return config;
+}
+function normalizeSections(sections) {
+    return Object.fromEntries(Object.entries(sections).map(([key, section]) => [key, normalizeSection(key, section)]));
+}
+/**
+ * normalizeSection accepts a plain list of values or a mapping
+ * `{ values: [...], exclusive: bool }`; a value is a string or
+ * `{ name, color?, description? }`.
+ *
+ * @param key - the section name, used in error messages
+ * @param section - the raw yaml value
+ */
+function normalizeSection(key, section) {
+    if (Array.isArray(section)) {
+        const definitions = normalizeValues(key, section);
+        return { values: definitions.map(d => d.name), definitions };
+    }
+    if (isMapping(section)
+        && Array.isArray(section.values)
+        && (section.exclusive === undefined || typeof section.exclusive === 'boolean')) {
+        const definitions = normalizeValues(key, section.values);
+        return { values: definitions.map(d => d.name), exclusive: section.exclusive, definitions };
+    }
+    throw malformedSection(key);
+}
+function normalizeValues(key, values) {
+    return values.map((value) => {
+        if (typeof value === 'string') {
+            return { name: value };
+        }
+        if (isMapping(value)
+            && typeof value.name === 'string'
+            && (value.color === undefined || typeof value.color === 'string')
+            && (value.description === undefined || typeof value.description === 'string')) {
+            if (value.color !== undefined && !colorPattern.test(value.color)) {
+                throw new Error(`${key}: invalid color '${value.color}' for label '${value.name}', expected 6 hex digits`);
+            }
+            return stripUndefined({ name: value.name, color: value.color, description: value.description });
+        }
+        throw malformedSection(key);
+    });
+}
+function malformedSection(key) {
+    return new Error(`${key}: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`);
+}
+function normalizeRequireMatchingLabel(source, raw) {
+    if (!Array.isArray(raw)) {
+        throw new TypeError(`${source}: require_matching_label must be a list`);
+    }
+    return raw.map((entry, i) => {
+        const at = `${source}: require_matching_label[${i}]`;
+        if (!isMapping(entry)) {
+            throw new Error(`${at}: expected a mapping with regexp and missing_label`);
+        }
+        if (typeof entry.regexp !== 'string') {
+            throw new TypeError(`${at}: regexp must be a string`);
+        }
+        try {
+            void new RegExp(entry.regexp);
+        }
+        catch (e) {
+            throw new Error(`${at}: regexp does not compile: ${e}`);
+        }
+        if (typeof entry.missing_label !== 'string' || entry.missing_label === '') {
+            throw new Error(`${at}: missing_label must be a non-empty string`);
+        }
+        for (const flag of ['issues', 'prs']) {
+            if (entry[flag] !== undefined && typeof entry[flag] !== 'boolean') {
+                throw new Error(`${at}: ${flag} must be a boolean`);
+            }
+        }
+        for (const field of ['missing_comment', 'grace_period_duration']) {
+            if (entry[field] !== undefined && typeof entry[field] !== 'string') {
+                throw new Error(`${at}: ${field} must be a string`);
+            }
+        }
+        // like Prow's plugin, a rule that names neither applies to both
+        const neither = entry.issues === undefined && entry.prs === undefined;
+        return stripUndefined({
+            regexp: entry.regexp,
+            missing_label: entry.missing_label,
+            issues: neither ? true : entry.issues,
+            prs: neither ? true : entry.prs,
+            missing_comment: entry.missing_comment,
+            grace_period_duration: entry.grace_period_duration,
+        });
+    });
+}
+function normalizeTide(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: tide must be a mapping`);
+    }
+    for (const field of ['labels', 'missing_labels']) {
+        if (raw[field] !== undefined && !isStringList(raw[field])) {
+            throw new Error(`${source}: tide.${field} must be a list of label names`);
+        }
+    }
+    if (raw.merge_method !== undefined && !mergeMethods.includes(raw.merge_method)) {
+        throw new Error(`${source}: tide.merge_method must be one of ${mergeMethods.join(', ')}`);
+    }
+    return stripUndefined({
+        labels: raw.labels,
+        missing_labels: raw.missing_labels,
+        merge_method: raw.merge_method,
+    });
+}
+function normalizeHold(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: hold must be a mapping`);
+    }
+    if (raw.label !== undefined && (typeof raw.label !== 'string' || raw.label === '')) {
+        throw new Error(`${source}: hold.label must be a non-empty string`);
+    }
+    return stripUndefined({ label: raw.label });
+}
+/**
+ * mergeProwConfig layers `over` on top of `base`: label sections replace per
+ * key, require_matching_label rules concatenate, tide and hold shallow-merge.
+ *
+ * @param base - the lower precedence tier
+ * @param over - the higher precedence tier
+ */
+function mergeProwConfig(base, over) {
+    return {
+        labels: { ...base.labels, ...over.labels },
+        require_matching_label: [...(base.require_matching_label ?? []), ...(over.require_matching_label ?? [])],
+        tide: { ...base.tide, ...over.tide },
+        hold: { ...base.hold, ...over.hold },
+    };
+}
+function isMapping(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function isStringList(value) {
+    return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+// keeps parsed objects comparable with `toEqual` and free of `key: undefined` noise
+function stripUndefined(value) {
+    return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
 
 
-
 /**
- * getLabelConfig fetches .prowlabels.yaml (or .prowlabels.yml) and returns
- * every top level key as a LabelSection. A key may be written as a plain
- * list of values or as a mapping `{ values: [...], exclusive: bool }`.
- *
- * This method has some eslint ignores related to
- * no explicit typing in octokit for content response - https://github.com/octokit/rest.js/issues/1516
+ * getLabelConfig returns the label sections of the merged prow configuration
+ * (organization or explicit source, then the repository). Label commands need
+ * a configuration file to exist somewhere, so an entirely absent configuration
+ * is an error that names every location that was probed.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 async function getLabelConfig(octokit, context) {
-    let response;
-    try {
-        response = await octokit.repos.getContent({
-            ...context.repo,
-            path: '.prowlabels.yaml',
-        });
+    const config = await loadProwConfig(octokit, context);
+    if (config.sources.length === 0) {
+        const { owner, repo } = context.repo;
+        const orgRepos = orgConfigRepos.map(name => `${owner}/${name}`).join(' and ');
+        const repoFiles = repoConfigPaths.filter(path => path.endsWith('.yaml')).join(', ');
+        throw new Error(`no prow configuration found: looked for ${orgConfigPath} in ${orgRepos}, and ${repoFiles} (.yaml/.yml) in ${owner}/${repo}`);
     }
-    catch (e) {
-        try {
-            response = await octokit.repos.getContent({
-                ...context.repo,
-                path: '.prowlabels.yml',
-            });
-        }
-        catch (e2) {
-            throw new Error(`could not get .prowlabels.yaml or .prowlabels.yml: ${e} ${e2}`);
-        }
-    }
-    if (!response.data.content || !response.data.encoding) {
-        throw new Error(`area: error parsing data from content response: ${response.data}`);
-    }
-    const decoded = external_node_buffer_.Buffer.from(response.data.content, response.data.encoding).toString();
-    const content = load(decoded);
-    const sections = isMapping(content) ? content : {};
-    return Object.fromEntries(Object.entries(sections).map(([key, section]) => [key, normalizeSection(key, section)]));
+    return config.labels;
 }
 /**
- * getArgumentLabels returns the allowed values of one .prowlabels.yaml section
+ * getArgumentLabels returns the allowed values of one label section
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -41071,23 +41388,6 @@ async function getArgumentLabels(octokit, context, arg) {
         throw new Error(`${arg}: yaml malformed, expected '${arg}' top level key`);
     }
     return section.values;
-}
-function normalizeSection(key, section) {
-    if (isStringList(section)) {
-        return { values: section };
-    }
-    if (isMapping(section)
-        && isStringList(section.values)
-        && (section.exclusive === undefined || typeof section.exclusive === 'boolean')) {
-        return { values: section.values, exclusive: section.exclusive };
-    }
-    throw new Error(`${key}: yaml malformed, expected a list of values or { values: [...], exclusive: bool }`);
-}
-function isMapping(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function isStringList(value) {
-    return Array.isArray(value) && value.every(item => typeof item === 'string');
 }
 /**
  * labelIssue will label the issue with the labels provided
@@ -41152,7 +41452,7 @@ async function removeLabels(octokit, context, issueNum, labels) {
         }
         catch (e) {
             // a gone label is a benign race; anything else is a real failure
-            if (isNotFound(e))
+            if (labeling_isNotFound(e))
                 core_debug(`label ${label} was already absent: ${e}`);
             else
                 throw new Error(`could not remove label ${label}: ${e}`);
@@ -41206,7 +41506,7 @@ async function cancelLabel(octokit, context, issueNum, label) {
     }
 }
 // isNotFound reports whether an octokit error is a 404
-function isNotFound(error) {
+function labeling_isNotFound(error) {
     return (typeof error === 'object'
         && error !== null
         && 'status' in error
@@ -41379,7 +41679,7 @@ const prefixedLabelCommands = [
     { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
     { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
 ];
-// a .prowlabels.yaml key usable as a slash command: lower-case letters, digits and dashes
+// a label section name usable as a slash command: lower-case letters, digits and dashes
 const labelCommandName = /^[a-z][a-z0-9-]*$/;
 // labels with dedicated, authorization-gated commands; never reachable through /label
 const protectedLabels = ['lgtm', 'hold', 'approved'];
@@ -41389,8 +41689,8 @@ function isProtectedLabel(label) {
     return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix));
 }
 /**
- * dynamicPrefixedCommand builds the command for an arbitrary .prowlabels.yaml
- * key so that `/<key> value` labels the issue with '<key>/value'
+ * dynamicPrefixedCommand builds the command for an arbitrary label section
+ * so that `/<key> value` labels the issue with '<key>/value'
  *
  * @param name - the top level key, ex: 'level'
  */
@@ -41408,7 +41708,7 @@ function removeCommandFor(command) {
 }
 /**
  * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
- * that is both in the comment and in the .prowlabels.yaml allowlist.
+ * that is both in the comment and in the configured allowlist.
  * When the command is exclusive, existing '<prefix>/*' labels that were not
  * requested are removed first.
  *
@@ -41436,7 +41736,7 @@ async function addPrefixedLabels(context, cmd) {
 }
 /**
  * removePrefixedLabels removes '<prefix>/<value>' for every value in the
- * /remove-<command> line that is in the .prowlabels.yaml allowlist and
+ * /remove-<command> line that is in the configured allowlist and
  * currently on the issue. Labels owned by other commands (lgtm, hold,
  * approved, do-not-merge/*) are refused even when the allowlist names them.
  *
@@ -41524,7 +41824,7 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
 
 
 
-// Prow's help plugin: label names contain spaces so they bypass .prowlabels.yaml
+// Prow's help plugin: label names contain spaces so they bypass the label configuration
 const fixedLabelCommands = [
     { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
     { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
@@ -43045,7 +43345,7 @@ const commandAliases = {
     ...Object.fromEntries([...prefixedLabelCommands, ...fixedLabelCommands]
         .map(cmd => [cmd.command, [removeCommandFor(cmd.command)]])),
 };
-// any other /<key> names a .prowlabels.yaml section
+// any other /<key> names a label section of the prow configuration
 function isDynamicLabelCommand(command) {
     return command.startsWith('/')
         && labelCommandName.test(command.slice(1))
