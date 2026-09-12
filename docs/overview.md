@@ -10,9 +10,11 @@ This is achieved through utilizing Github actions CI/CD system
 and removes much of the overhead and infrastructure needed for running the Prow bot.
 
 Workflows are broken down into commands and jobs
-that can be run with specific [Github "events"](https://docs.github.com/en/actions/reference/events-that-trigger-workflows)
+that can be run with specific [Github "events"](https://docs.github.com/en/actions/reference/events-that-trigger-workflows);
+[events](./events.md) lists which ones the action routes.
 
 ## Read more
+- [Events the action routes](./events.md)
 - [Prow github actions available commands](./commands.md)
 - [Labeling issues](./labeling.md)
 - [Automatically Labeling PRs](./examples.md#pr-labeler) (via `actions/labeler` with `pull_request_target`)

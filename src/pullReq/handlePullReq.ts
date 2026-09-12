@@ -1,17 +1,24 @@
 import type { Context } from '../utils/context'
+import type { EventHandler } from '../utils/events'
 
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
+import { runEventHandlers } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
+/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input; empty for now */
+export const pullRequestHandlers: EventHandler[] = []
+
 /**
- * This method handles any pull-request configuration for configured workflows.
- * At this time, there are no commands for prow-github-actions
+ * This method handles any pull-request configuration for configured workflows:
+ * the registered handlers and the `jobs` input. The `lgtm` job only acts on
+ * `synchronize` (new commits); every other activity type is logged and skipped.
  *
  * @param context - the github context of the current action event
  */
 export async function handlePullReq(context: Context = github.context): Promise<void> {
+  const action: string | undefined = context.payload.action
   const runConfig = core
     .getInput('jobs', { required: false })
     .split(/\s+/)
@@ -22,11 +29,17 @@ export async function handlePullReq(context: Context = github.context): Promise<
     runConfig.push('')
   }
 
+  await runEventHandlers('pull_request', pullRequestHandlers, context)
+
   await Promise.all(
     runConfig.map(async (command) => {
       core.debug(`${context}`)
       switch (command) {
         case 'lgtm':
+          if (action !== 'synchronize') {
+            core.debug(`skipping pr lgtm job: ${action} pushes no new commits`)
+            return
+          }
           core.debug('running pr lgtm new commit job')
           return await onPrLgtm(context).catch(async (e) => {
             return e

@@ -6,9 +6,12 @@ import process from 'node:process'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
+import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
+import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
 import { bundlePath, runBundle } from './runBundle'
@@ -91,11 +94,25 @@ describe('dist/index.js', () => {
   })
 
   it('logs an error for an unsupported event without failing or calling the api', async () => {
-    const result = await runBundle({ eventName: 'issues', payload: {}, inputs: token, apiUrl: gh.url })
+    const result = await runBundle({ eventName: 'release', payload: {}, inputs: token, apiUrl: gh.url })
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain('issues not yet supported')
-    expect(result.errors).toEqual(['issues not yet supported'])
+    expect(result.stdout).toContain('release not yet supported')
+    expect(result.errors).toEqual(['release not yet supported'])
+    expect(gh.requests).toEqual([])
+  })
+
+  it.each([
+    ['issues', issuesLabeledEvent],
+    ['pull_request_review', pullReqReviewSubmittedEvent],
+    ['check_suite', checkSuiteCompletedEvent],
+    ['status', checkSuiteCompletedEvent],
+  ])('%s is routed and exits 0 without calling the api while no handlers are registered', async (eventName, payload) => {
+    const result = await runBundle({ eventName, payload, inputs: token, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).not.toContain('not yet supported')
     expect(gh.requests).toEqual([])
   })
 
@@ -515,7 +532,7 @@ describe('dist/index.js', () => {
 
     const result = await runBundle({
       eventName: 'pull_request',
-      payload: pullReqOpenedEvent,
+      payload: { ...pullReqOpenedEvent, action: 'synchronize' },
       inputs: { ...token, jobs: 'lgtm' },
       apiUrl: gh.url,
     })
@@ -526,6 +543,41 @@ describe('dist/index.js', () => {
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
+  })
+
+  it('pull_request_target lgtm job removes the lgtm label on a new push', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'pull_request_target',
+      payload: { ...pullReqOpenedEvent, action: 'synchronize' },
+      inputs: { ...token, jobs: 'lgtm' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/issues/1`,
+      `DELETE ${repo}/issues/1/labels/lgtm`,
+    ])
+  })
+
+  it('pull_request lgtm job leaves the lgtm label alone when the pr is labeled', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'pull_request',
+      payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } },
+      inputs: { ...token, jobs: 'lgtm' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests).toEqual([])
   })
 
   describe('schedule lgtm job', () => {

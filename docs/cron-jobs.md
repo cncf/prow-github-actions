@@ -1,7 +1,7 @@
 # Jobs
 
 Jobs run from the `jobs` input on `schedule`, `workflow_dispatch` and `push` events
-(`pull_request` runs the [PR jobs](./pr-jobs.md)). The input is space or newline
+(`pull_request` and `pull_request_target` run the [PR jobs](./pr-jobs.md)). The input is space or newline
 delimited and case-insensitive (`jobs: lgtm label-sync`). Every listed job runs; an
 unknown name fails the run with `could not execute <job>`.
 

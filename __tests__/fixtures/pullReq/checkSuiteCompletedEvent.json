@@ -1,0 +1,44 @@
+{
+  "action": "completed",
+  "check_suite": {
+    "id": 118578147,
+    "node_id": "MDEwOkNoZWNrU3VpdGUxMTg1NzgxNDc=",
+    "head_branch": "changes",
+    "head_sha": "ec26c3e57ca3a959ca5aad62de7213c562f8c821",
+    "status": "completed",
+    "conclusion": "success",
+    "before": "f95f852bd8fca8fcc58a9a2d6c842781e32a215e",
+    "after": "ec26c3e57ca3a959ca5aad62de7213c562f8c821",
+    "pull_requests": [],
+    "app": {
+      "id": 29310,
+      "slug": "octocoders-linter",
+      "name": "octocoders-linter"
+    }
+  },
+  "repository": {
+    "id": 186853002,
+    "node_id": "MDEwOlJlcG9zaXRvcnkxODY4NTMwMDI=",
+    "name": "Hello-World",
+    "full_name": "Codertocat/Hello-World",
+    "private": false,
+    "html_url": "https://github.com/Codertocat/Hello-World",
+    "default_branch": "master",
+    "owner": {
+      "login": "Codertocat",
+      "id": 21031067,
+      "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+      "html_url": "https://github.com/Codertocat",
+      "type": "User",
+      "site_admin": false
+    }
+  },
+  "sender": {
+    "login": "Codertocat",
+    "id": 21031067,
+    "node_id": "MDQ6VXNlcjIxMDMxMDY3",
+    "html_url": "https://github.com/Codertocat",
+    "type": "User",
+    "site_admin": false
+  }
+}
