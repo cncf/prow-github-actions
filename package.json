@@ -36,7 +36,7 @@
     "@antfu/eslint-config": "^9.5.1",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.0.0",
     "eslint": "^9.32.0",
     "js-yaml": "^5.4.1",
     "msw": "^2.15.0",
