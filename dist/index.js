@@ -43724,11 +43724,13 @@ async function onPrLgtm(context) {
 
 /**
  * This method handles any pull-request configuration for configured workflows.
- * At this time, there are no commands for prow-github-actions
+ * The `lgtm` job only acts on `synchronize` (new commits); every other
+ * activity type is logged and skipped.
  *
  * @param context - the github context of the current action event
  */
 async function handlePullReq(context = github_context) {
+    const action = context.payload.action;
     const runConfig = getInput('jobs', { required: false })
         .split(/\s+/)
         .filter(command => command !== '')
@@ -43740,6 +43742,10 @@ async function handlePullReq(context = github_context) {
         core_debug(`${context}`);
         switch (command) {
             case 'lgtm':
+                if (action !== 'synchronize') {
+                    core_debug(`skipping pr lgtm job: ${action} pushes no new commits`);
+                    return;
+                }
                 core_debug('running pr lgtm new commit job');
                 return await onPrLgtm(context).catch(async (e) => {
                     return e;

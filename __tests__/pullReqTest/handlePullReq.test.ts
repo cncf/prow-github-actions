@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 
 import issuePayload from '../fixtures/issues/issue.json'
-import prCreatedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
+import prOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 
 import * as utils from '../testUtils'
 
@@ -18,13 +18,17 @@ beforeAll(() =>
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
+// the lgtm PR job only acts on new commits; the fixture is an `opened` event
+const prSynchronizeEvent = { ...prOpenedEvent, action: 'synchronize' }
+
 function serveLgtmRemoval() {
   const payload = structuredClone(issuePayload)
   payload.labels.push({ ...payload.labels[0], name: 'lgtm' })
+  const getReq = new utils.ObserveRequest()
   server.use(
     http.get(
       `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-      utils.mockResponse(200, payload),
+      utils.mockResponse(200, payload, getReq),
     ),
   )
   const deleteReq = new utils.ObserveRequest()
@@ -34,7 +38,7 @@ function serveLgtmRemoval() {
       utils.mockResponse(200, null, deleteReq),
     ),
   )
-  return deleteReq
+  return { getReq, deleteReq }
 }
 
 it('ignores the jobs if not setup in environment', async () => {
@@ -42,7 +46,7 @@ it('ignores the jobs if not setup in environment', async () => {
 
   utils.setupActionsEnv('/assign')
 
-  const runContext = new utils.MockContext(prCreatedEvent)
+  const runContext = new utils.MockContext(prSynchronizeEvent)
 
   await handlePullReq(runContext)
   expect(spy).toHaveBeenCalled()
@@ -50,8 +54,8 @@ it('ignores the jobs if not setup in environment', async () => {
 
 it('dispatches jobs delimited by newlines', async () => {
   utils.setupJobsEnv('lgtm\n')
-  const runContext = new utils.MockContext(prCreatedEvent)
-  const deleteReq = serveLgtmRemoval()
+  const runContext = new utils.MockContext(prSynchronizeEvent)
+  const { deleteReq } = serveLgtmRemoval()
 
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
   await expect(handlePullReq(runContext)).resolves.toBeUndefined()
@@ -61,8 +65,8 @@ it('dispatches jobs delimited by newlines', async () => {
 
 it('dispatches jobs delimited by newlines and extra spaces', async () => {
   utils.setupJobsEnv('lgtm  pr-labeler\n')
-  const runContext = new utils.MockContext(prCreatedEvent)
-  const deleteReq = serveLgtmRemoval()
+  const runContext = new utils.MockContext(prSynchronizeEvent)
+  const { deleteReq } = serveLgtmRemoval()
 
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
   await expect(handlePullReq(runContext)).resolves.toBeUndefined()
@@ -74,11 +78,39 @@ it('dispatches jobs delimited by newlines and extra spaces', async () => {
 
 it('matches job names case-insensitively', async () => {
   utils.setupJobsEnv('LGTM')
-  const runContext = new utils.MockContext(prCreatedEvent)
-  const deleteReq = serveLgtmRemoval()
+  const runContext = new utils.MockContext(prSynchronizeEvent)
+  const { deleteReq } = serveLgtmRemoval()
 
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
   await expect(handlePullReq(runContext)).resolves.toBeUndefined()
   await expect(deleteReq.called()).resolves.toBe('called')
   expect(setFailed).not.toHaveBeenCalled()
+})
+
+it.each(['opened', 'reopened', 'labeled', 'unlabeled', 'ready_for_review', 'edited', 'closed'])(
+  'lgtm job does not touch the pr on a %s action',
+  async (action) => {
+    utils.setupJobsEnv('lgtm')
+    const runContext = new utils.MockContext({ ...prOpenedEvent, action })
+    const { getReq, deleteReq } = serveLgtmRemoval()
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+    await expect(deleteReq.notCalled()).resolves.toBe('not called')
+    expect(getReq.ref).toBeNull()
+    expect(setFailed).not.toHaveBeenCalled()
+  },
+)
+
+it('still fails on an unknown job name when the lgtm job is skipped', async () => {
+  utils.setupJobsEnv('lgtm pr-labeler')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const { deleteReq } = serveLgtmRemoval()
+
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  await expect(deleteReq.notCalled()).resolves.toBe('not called')
+  expect(setFailed).toHaveBeenCalledWith(
+    expect.stringContaining('could not execute pr-labeler'),
+  )
 })

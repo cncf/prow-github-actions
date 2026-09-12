@@ -515,7 +515,7 @@ describe('dist/index.js', () => {
 
     const result = await runBundle({
       eventName: 'pull_request',
-      payload: pullReqOpenedEvent,
+      payload: { ...pullReqOpenedEvent, action: 'synchronize' },
       inputs: { ...token, jobs: 'lgtm' },
       apiUrl: gh.url,
     })
@@ -526,6 +526,22 @@ describe('dist/index.js', () => {
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
+  })
+
+  it('pull_request lgtm job leaves the lgtm label alone when the pr is labeled', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
+    gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'pull_request',
+      payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } },
+      inputs: { ...token, jobs: 'lgtm' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests).toEqual([])
   })
 
   describe('schedule lgtm job', () => {

@@ -87,7 +87,7 @@ jobs:
           merge-method: squash
 ```
 
-Prow Github actions also supports removing the lgtm label when a PR is updated
+Prow Github actions also supports removing the lgtm label when new commits are pushed to a PR (the `synchronize` activity type; other types are skipped)
 
 ```yaml
 name: Run Jobs on PR

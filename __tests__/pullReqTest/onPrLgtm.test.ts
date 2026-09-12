@@ -6,8 +6,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import issuePayload from '../fixtures/issues/issue.json'
 
-import pullReqEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
+import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
+
+// removal is tied to new commits, so the cases below run on `synchronize`
+const pullReqEvent = { ...pullReqOpenedEvent, action: 'synchronize' }
 
 const server = setupServer()
 beforeAll(() =>
@@ -61,6 +64,30 @@ describe('onPrLgtm', () => {
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),
+      ),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handlePullReq(prContext)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it.each(['opened', 'labeled', 'unlabeled'])('leaves lgtm in place on a %s action', async (action) => {
+    const prContext = new utils.MockContext({ ...pullReqOpenedEvent, action })
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'lgtm' })
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
       ),
       http.delete(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
