@@ -36,6 +36,8 @@ jobs:
 
 This is the full list of available commands. Prow-style aliases (`/unhold`, `/remove-kind`, ...) come with their base command, and listing an alias enables the whole command family.
 
+Configuration can live in the repo or in your org's `.project`/`.github` repo — see [configuration](./docs/configuration.md).
+
 You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label:
 
 ```yaml
@@ -83,6 +85,7 @@ jobs:
 ## Documentation
 - [Overview](./docs/overview.md)
 - [Commands](./docs/commands.md)
+- [Configuration](./docs/configuration.md)
 - [Labeling](./docs/labeling.md)
 - [Cron Jobs](./docs/cron-jobs.md)
 - [Automatic PR merging](./docs/automatic-merging.md)

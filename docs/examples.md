@@ -1,6 +1,6 @@
 # Examples
 
-* [`.prowlabels.yaml`](#prowlabelsyaml)
+* [`prow.yaml`](#prowyaml)
 * [Review and approve pull requests](#review-and-approve-pull-requests)
 * [All prow github actions](#all-prow-github-actions)
 * [A dynamic label command](#a-dynamic-label-command)
@@ -9,35 +9,38 @@
 * [Automatic PR merger](#automatic-pr-merger)
 * [PR job to remove lgtm label on update](#pr-job-to-remove-lgtm-label-on-update)
 
-## `.prowlabels.yaml`
+## `prow.yaml`
 
-A `.prowlabels.yaml` file is necessary for most of the labeling commands & jobs:
+A configuration file is necessary for most of the labeling commands & jobs. It can live in
+the repository as `.github/prow.yaml` (or the legacy `.prowlabels.yaml`) or in the
+organization's `.project`/`.github` repository; see [configuration](./configuration.md):
 
 ```yaml
-area:
-  - bug
-  - important
-
-kind:
-  - failing-test
-  - cleanup
-
-priority:
-  - low
-  - mid
-  - high
-
-# plain labels applied verbatim by /label
 labels:
-  - documentation
-  - question
+  area:
+    - bug
+    - important
 
-# mapping form: a later /triage replaces any existing triage/* label
-triage:
-  values:
-    - accepted
-    - needs-information
-  exclusive: true
+  kind:
+    - failing-test
+    - cleanup
+
+  priority:
+    - low
+    - mid
+    - high
+
+  # plain labels applied verbatim by /label
+  labels:
+    - documentation
+    - question
+
+  # mapping form: a later /triage replaces any existing triage/* label
+  triage:
+    values:
+      - accepted
+      - needs-information
+    exclusive: true
 ```
 
 ## Review and approve pull requests
@@ -124,7 +127,7 @@ jobs:
 
 ## A dynamic label command
 
-Any top level key of `.prowlabels.yaml` becomes a `/<key>` command once listed in `prow-commands`:
+Any label section of the prow configuration becomes a `/<key>` command once listed in `prow-commands`:
 
 ```yaml
 name: Triage commands
@@ -147,7 +150,7 @@ jobs:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-With the `triage` section of the [`.prowlabels.yaml`](#prowlabelsyaml) above, `/triage accepted` labels the issue or PR with `triage/accepted`.
+With the `triage` section of the [`prow.yaml`](#prowyaml) above, `/triage accepted` labels the issue or PR with `triage/accepted`.
 
 ## `/meow`
 

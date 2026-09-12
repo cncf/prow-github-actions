@@ -1,0 +1,23 @@
+labels:
+  area:
+    - bug
+    - important
+
+  kind:
+    - failing-test
+    - cleanup
+
+  priority:
+    - low
+    - high
+
+  # the /label allowlist: applied verbatim, without a prefix
+  labels:
+    - documentation
+    - question
+
+  triage:
+    values:
+      - accepted
+      - needs-information
+    exclusive: true
