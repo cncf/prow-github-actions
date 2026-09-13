@@ -15,8 +15,25 @@ describe('parseOwners', () => {
       path: 'OWNERS',
       approvers: ['alice'],
       reviewers: ['bob', 'carol'],
+      labels: [],
       noParentOwners: false,
     })
+  })
+
+  it('reads labels verbatim and defaults them to an empty list', () => {
+    expect(parseOwners('sdk/OWNERS', 'reviewers:\n- bob\nlabels:\n- area/SDK\n- kind/cleanup\n').labels).toEqual(['area/SDK', 'kind/cleanup'])
+    expect(parseOwners('sdk/OWNERS', 'reviewers:\n- bob\n').labels).toEqual([])
+    expect(parseOwners('sdk/OWNERS', 'labels:\n').labels).toEqual([])
+  })
+
+  it.each([
+    'labels: area/sdk\n',
+    'labels:\n  area/sdk: true\n',
+    'labels:\n- area/sdk\n- 7\n',
+  ])('rejects labels that are not a list of strings: %j', (contents) => {
+    expect(() => parseOwners('sdk/OWNERS', contents)).toThrow(
+      'OWNERS at sdk/OWNERS: labels must be a list of label names',
+    )
   })
 
   it('defaults a missing role to an empty list', () => {
@@ -47,8 +64,6 @@ describe('parseOwners', () => {
         '- zed',
         'emeritus_reviewers:',
         '- yan',
-        'labels:',
-        '- sig/foo',
         'something_else: 42',
       ].join('\n'),
     )
@@ -113,10 +128,10 @@ describe('ownersDir', () => {
 })
 
 describe('effectiveOwners', () => {
-  const root = parseOwners('OWNERS', 'approvers:\n- alice\nreviewers:\n- rita\n')
-  const sdk = parseOwners('sdk/OWNERS', 'approvers:\n- bob\nreviewers:\n- ryan\n')
-  const olm = parseOwners('olm/OWNERS', 'options:\n  no_parent_owners: true\napprovers:\n- carol\n')
-  const deep = parseOwners('sdk/internal/OWNERS', 'approvers:\n- dave\n')
+  const root = parseOwners('OWNERS', 'approvers:\n- alice\nreviewers:\n- rita\nlabels:\n- kind/root\n')
+  const sdk = parseOwners('sdk/OWNERS', 'approvers:\n- bob\nreviewers:\n- ryan\nlabels:\n- area/sdk\n')
+  const olm = parseOwners('olm/OWNERS', 'options:\n  no_parent_owners: true\napprovers:\n- carol\nlabels:\n- area/olm\n')
+  const deep = parseOwners('sdk/internal/OWNERS', 'approvers:\n- dave\nlabels:\n- area/sdk\n- area/internal\n')
 
   it('unions the file with its parents, nearest first', () => {
     const owners = new Map([['', root], ['sdk', sdk], ['sdk/internal', deep]])
@@ -126,6 +141,7 @@ describe('effectiveOwners', () => {
     expect(set).toBeDefined()
     expect([...set!.approvers]).toEqual(['dave', 'bob', 'alice'])
     expect([...set!.reviewers]).toEqual(['ryan', 'rita'])
+    expect([...set!.labels]).toEqual(['area/sdk', 'area/internal', 'kind/root'])
     expect(set!.sources).toEqual(['sdk/internal/OWNERS', 'sdk/OWNERS', 'OWNERS'])
   })
 
@@ -135,6 +151,7 @@ describe('effectiveOwners', () => {
     const set = effectiveOwners('docs/x.md', owners)
 
     expect([...set!.approvers]).toEqual(['alice'])
+    expect([...set!.labels]).toEqual(['kind/root'])
     expect(set!.sources).toEqual(['OWNERS'])
   })
 
@@ -145,6 +162,7 @@ describe('effectiveOwners', () => {
 
     expect([...set!.approvers]).toEqual(['carol'])
     expect([...set!.reviewers]).toEqual([])
+    expect([...set!.labels]).toEqual(['area/olm'])
     expect(set!.sources).toEqual(['olm/OWNERS'])
   })
 

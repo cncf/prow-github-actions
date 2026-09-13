@@ -42188,18 +42188,22 @@ function parseOwners(path, contents) {
         path,
         approvers: roleList(path, doc, 'approvers'),
         reviewers: roleList(path, doc, 'reviewers'),
+        labels: stringList(path, doc, 'labels', 'label names'),
         noParentOwners,
     };
 }
 function roleList(path, doc, role) {
-    const value = doc[role];
+    return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase());
+}
+function stringList(path, doc, key, what) {
+    const value = doc[key];
     if (value === undefined || value === null) {
         return [];
     }
     if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
-        throw new Error(`OWNERS at ${path}: ${role} must be a list of GitHub usernames`);
+        throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
     }
-    return value.map(v => v.toLowerCase());
+    return value;
 }
 /**
  * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
@@ -42213,7 +42217,8 @@ function ownersDir(path) {
 /**
  * Resolve the OWNERS that apply to a file: walk from its directory up to the
  * root, taking the union of every OWNERS file on the way. A file with
- * options.no_parent_owners stops the walk.
+ * options.no_parent_owners stops the walk. Labels union along the walk too,
+ * where Prow's owners-label uses only the deepest file's labels.
  *
  * @param file - the changed file
  * @param owners - OWNERS files keyed by directory
@@ -42222,6 +42227,7 @@ function ownersDir(path) {
 function effectiveOwners(file, owners) {
     const approvers = new Set();
     const reviewers = new Set();
+    const labels = new Set();
     const sources = [];
     let dir = ownersDir(file);
     for (;;) {
@@ -42229,6 +42235,7 @@ function effectiveOwners(file, owners) {
         if (found !== undefined) {
             found.approvers.forEach(a => approvers.add(a));
             found.reviewers.forEach(r => reviewers.add(r));
+            found.labels.forEach(l => labels.add(l));
             sources.push(found.path);
             if (found.noParentOwners) {
                 break;
@@ -42242,7 +42249,7 @@ function effectiveOwners(file, owners) {
     if (sources.length === 0) {
         return undefined;
     }
-    return { approvers, reviewers, sources };
+    return { approvers, reviewers, labels, sources };
 }
 function ancestorDirs(paths) {
     const dirs = new Set(['']);
@@ -42337,7 +42344,60 @@ async function probeOwners(octokit, context, ref, dirs) {
     return { owners, hasOwners: owners.size > 0 };
 }
 
+;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
+
+const pullRequestOwners_cache = new Map();
+/**
+ * loadPullRequestOwners reads the pull request, its changed files and the
+ * OWNERS files of the base branch that cover them. The result is memoized per
+ * pull request for the lifetime of the process, so every plugin acting on the
+ * same event shares one fetch.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param pullNumber - the pull request
+ */
+function loadPullRequestOwners(octokit, context, pullNumber) {
+    const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
+    let pending = pullRequestOwners_cache.get(key);
+    if (pending === undefined) {
+        pending = pullRequestOwners_load(octokit, context, pullNumber);
+        pullRequestOwners_cache.set(key, pending);
+    }
+    return pending;
+}
+function resetPullRequestOwnersCache() {
+    pullRequestOwners_cache.clear();
+}
+async function pullRequestOwners_load(octokit, context, pullNumber) {
+    const { data: pull } = await octokit.pulls.get({
+        ...context.repo,
+        pull_number: pullNumber,
+    });
+    const changed = await octokit.paginate(octokit.pulls.listFiles, {
+        ...context.repo,
+        pull_number: pullNumber,
+        per_page: 100,
+    });
+    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
+    // OWNERS come from the base branch so a PR cannot grant itself approvers
+    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
+    const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]));
+    return {
+        number: pullNumber,
+        baseSha: pull.base.sha,
+        author: (pull.user?.login ?? '').toLowerCase(),
+        draft: pull.draft === true,
+        requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+        assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+        files,
+        tree,
+        perFile,
+    };
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/auth.js
+
 
 
 
@@ -42542,26 +42602,14 @@ async function assertRootOwner(octokit, context, role, username) {
  * @returns false when the repository has no OWNERS files at all
  */
 async function assertPullRequestOwner(octokit, context, role, username) {
-    const pullNumber = context.payload.issue.number;
-    const { data: pull } = await octokit.pulls.get({
-        ...context.repo,
-        pull_number: pullNumber,
-    });
-    const changed = await octokit.paginate(octokit.pulls.listFiles, {
-        ...context.repo,
-        pull_number: pullNumber,
-        per_page: 100,
-    });
-    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
-    // OWNERS come from the base branch so a PR cannot grant itself approvers
-    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
+    const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
     if (!tree.hasOwners) {
         core_debug('No OWNERS files found');
         return false;
     }
     const login = username.toLowerCase();
     const covered = files.map((file) => {
-        const owners = effectiveOwners(file, tree.owners);
+        const owners = perFile.get(file);
         if (owners === undefined) {
             throw new Error(`no OWNERS file covers ${file}`);
         }

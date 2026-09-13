@@ -11,12 +11,15 @@ export interface OwnersFile {
   path: string
   approvers: string[]
   reviewers: string[]
+  /** labels the owners-label plugin applies to a PR touching this directory */
+  labels: string[]
   noParentOwners: boolean
 }
 
 export interface OwnersSet {
   approvers: Set<string>
   reviewers: Set<string>
+  labels: Set<string>
   sources: string[]
 }
 
@@ -53,6 +56,7 @@ export function parseOwners(path: string, contents: string): OwnersFile {
     path,
     approvers: roleList(path, doc, 'approvers'),
     reviewers: roleList(path, doc, 'reviewers'),
+    labels: stringList(path, doc, 'labels', 'label names'),
     noParentOwners,
   }
 }
@@ -62,18 +66,27 @@ function roleList(
   doc: Record<string, unknown>,
   role: OwnersRole,
 ): string[] {
-  const value = doc[role]
+  return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase())
+}
+
+function stringList(
+  path: string,
+  doc: Record<string, unknown>,
+  key: string,
+  what: string,
+): string[] {
+  const value = doc[key]
   if (value === undefined || value === null) {
     return []
   }
 
   if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
     throw new Error(
-      `OWNERS at ${path}: ${role} must be a list of GitHub usernames`,
+      `OWNERS at ${path}: ${key} must be a list of ${what}`,
     )
   }
 
-  return value.map(v => v.toLowerCase())
+  return value
 }
 
 /**
@@ -89,7 +102,8 @@ export function ownersDir(path: string): string {
 /**
  * Resolve the OWNERS that apply to a file: walk from its directory up to the
  * root, taking the union of every OWNERS file on the way. A file with
- * options.no_parent_owners stops the walk.
+ * options.no_parent_owners stops the walk. Labels union along the walk too,
+ * where Prow's owners-label uses only the deepest file's labels.
  *
  * @param file - the changed file
  * @param owners - OWNERS files keyed by directory
@@ -101,6 +115,7 @@ export function effectiveOwners(
 ): OwnersSet | undefined {
   const approvers = new Set<string>()
   const reviewers = new Set<string>()
+  const labels = new Set<string>()
   const sources: string[] = []
 
   let dir = ownersDir(file)
@@ -109,6 +124,7 @@ export function effectiveOwners(
     if (found !== undefined) {
       found.approvers.forEach(a => approvers.add(a))
       found.reviewers.forEach(r => reviewers.add(r))
+      found.labels.forEach(l => labels.add(l))
       sources.push(found.path)
       if (found.noParentOwners) {
         break
@@ -125,7 +141,7 @@ export function effectiveOwners(
     return undefined
   }
 
-  return { approvers, reviewers, sources }
+  return { approvers, reviewers, labels, sources }
 }
 
 function ancestorDirs(paths: string[]): Set<string> {

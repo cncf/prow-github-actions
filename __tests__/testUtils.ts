@@ -4,6 +4,7 @@ import { http } from 'msw'
 
 import { resetProwConfigCache } from '../src/utils/config'
 import { resetLabelCache } from '../src/utils/labeling'
+import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
 
 type WebhookPayload = Context['payload']
 
@@ -76,10 +77,11 @@ export class MockContext extends ContextClass {
 // Drop action inputs and the runner-provided GITHUB_* variables so that tests
 // are hermetic when they run inside GitHub Actions (github.context reads
 // GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
-// The configuration and repository label caches live for one action run, so they are reset here too.
+// The configuration, repository label and pull request OWNERS caches live for one action run, so they are reset here too.
 function clearActionEnv() {
   resetProwConfigCache()
   resetLabelCache()
+  resetPullRequestOwnersCache()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]
