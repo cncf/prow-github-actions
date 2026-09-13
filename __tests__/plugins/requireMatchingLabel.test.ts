@@ -101,7 +101,7 @@ function commentEvent(body: string, overrides: Record<string, unknown> = {}) {
 }
 
 function configWith(...rules: RequireMatchingLabel[]): ProwConfig {
-  return { labels: {}, require_matching_label: rules, tide: {}, hold: {}, sources: [] }
+  return { labels: {}, require_matching_label: rules, tide: {}, hold: {}, blunderbuss: {}, sources: [] }
 }
 
 const botComment = { id: 11, body: `Please add a kind label.\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } }

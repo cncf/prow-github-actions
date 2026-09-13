@@ -10,6 +10,7 @@ import { hold } from '../labels/hold'
 import { lgtm } from '../labels/lgtm'
 import { addPrefixedLabels, dynamicPrefixedCommand, labelCommandName, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
 import { remove } from '../labels/remove'
+import { autoCc } from '../plugins/blunderbuss'
 import { checkRequiredLabels } from '../plugins/requireMatchingLabel'
 import { hasCommand } from '../utils/command'
 import { approve } from './approve'
@@ -41,6 +42,7 @@ const handlers: Record<string, (context: Context) => Promise<void>> = {
   '/milestone': context => milestone(context),
   '/meow': context => meow(context),
   '/check-required-labels': context => checkRequiredLabels(context),
+  '/auto-cc': context => autoCc(context),
 }
 
 // Prow-style spellings that are handled by the canonical command's module

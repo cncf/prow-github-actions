@@ -225,6 +225,52 @@ describe('parseProwConfig', () => {
     })
   })
 
+  describe('blunderbuss', () => {
+    it('accepts every field', () => {
+      expect(parseProwConfig('x', [
+        'blunderbuss:',
+        '  request_count: 1',
+        '  max_request_count: 3',
+        '  exclude_approvers: true',
+        '  ignore_drafts: false',
+        '  ignore_authors: [\'dependabot[bot]\', renovate]',
+      ].join('\n'))).toEqual({
+        blunderbuss: {
+          request_count: 1,
+          max_request_count: 3,
+          exclude_approvers: true,
+          ignore_drafts: false,
+          ignore_authors: ['dependabot[bot]', 'renovate'],
+        },
+      })
+    })
+
+    it('accepts an empty mapping and a max_request_count equal to request_count', () => {
+      expect(parseProwConfig('x', 'blunderbuss: {}\n')).toEqual({ blunderbuss: {} })
+      expect(parseProwConfig('x', 'blunderbuss:\n  request_count: 2\n  max_request_count: 2\n')).toEqual({
+        blunderbuss: { request_count: 2, max_request_count: 2 },
+      })
+    })
+
+    it.each([
+      ['a non-mapping', 'blunderbuss: 2\n', 'x: blunderbuss must be a mapping'],
+      ['a zero request_count', 'blunderbuss:\n  request_count: 0\n', 'x: blunderbuss.request_count must be an integer of at least 1'],
+      ['a fractional request_count', 'blunderbuss:\n  request_count: 1.5\n', 'x: blunderbuss.request_count must be an integer of at least 1'],
+      ['a string request_count', 'blunderbuss:\n  request_count: two\n', 'x: blunderbuss.request_count must be an integer of at least 1'],
+      ['a zero max_request_count', 'blunderbuss:\n  max_request_count: 0\n', 'x: blunderbuss.max_request_count must be an integer of at least 1'],
+      ['a max_request_count below request_count', 'blunderbuss:\n  request_count: 3\n  max_request_count: 2\n', 'x: blunderbuss.max_request_count must not be lower than request_count'],
+      ['a non-boolean exclude_approvers', 'blunderbuss:\n  exclude_approvers: yes please\n', 'x: blunderbuss.exclude_approvers must be a boolean'],
+      ['a non-boolean ignore_drafts', 'blunderbuss:\n  ignore_drafts: 1\n', 'x: blunderbuss.ignore_drafts must be a boolean'],
+      ['a non-list ignore_authors', 'blunderbuss:\n  ignore_authors: bot\n', 'x: blunderbuss.ignore_authors must be a list of GitHub usernames'],
+    ])('rejects %s', (_, text, error) => {
+      expect(() => parseProwConfig('x', text)).toThrow(error)
+    })
+
+    it('marks a document as the new form on its own', () => {
+      expect(parseProwConfig('x', 'blunderbuss:\n  request_count: 1\n')).toEqual({ blunderbuss: { request_count: 1 } })
+    })
+  })
+
   it('tolerates unknown top level keys in the new form and logs them once', () => {
     const debug = vi.spyOn(core, 'debug')
 
@@ -252,7 +298,7 @@ describe('parseProwConfig', () => {
 })
 
 describe('mergeProwConfig', () => {
-  it('replaces label sections per key, concatenates rules and shallow-merges tide and hold', () => {
+  it('replaces label sections per key, concatenates rules and shallow-merges tide, hold and blunderbuss', () => {
     const org = parseProwConfig('org', [
       'labels:',
       '  kind: [bug, cleanup]',
@@ -264,6 +310,9 @@ describe('mergeProwConfig', () => {
       '  merge_method: merge',
       'hold:',
       '  label: hold',
+      'blunderbuss:',
+      '  request_count: 1',
+      '  ignore_authors: [bot]',
     ].join('\n'))
     const repo = parseProwConfig('repo', [
       'labels:',
@@ -272,6 +321,8 @@ describe('mergeProwConfig', () => {
       '  - { regexp: ^area/, missing_label: needs-area }',
       'tide:',
       '  merge_method: squash',
+      'blunderbuss:',
+      '  request_count: 3',
     ].join('\n'))
 
     expect(mergeProwConfig(org, repo)).toEqual({
@@ -285,10 +336,11 @@ describe('mergeProwConfig', () => {
       ],
       tide: { labels: ['lgtm'], merge_method: 'squash' },
       hold: { label: 'hold' },
+      blunderbuss: { request_count: 3, ignore_authors: ['bot'] },
     })
   })
 
   it('fills every section when both sides are empty', () => {
-    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {} })
+    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {} })
   })
 })

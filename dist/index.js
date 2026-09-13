@@ -40797,7 +40797,7 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40946,8 +40946,8 @@ function isNotFound(error) {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide` and `hold` may sit
- * alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold` and
+ * `blunderbuss` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40980,6 +40980,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.hold !== undefined) {
         config.hold = normalizeHold(source, loaded.hold);
+    }
+    if (loaded.blunderbuss !== undefined) {
+        config.blunderbuss = normalizeBlunderbuss(source, loaded.blunderbuss);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41101,9 +41104,38 @@ function normalizeHold(source, raw) {
     }
     return stripUndefined({ label: raw.label });
 }
+function normalizeBlunderbuss(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: blunderbuss must be a mapping`);
+    }
+    for (const field of ['request_count', 'max_request_count']) {
+        if (raw[field] !== undefined && !(Number.isInteger(raw[field]) && raw[field] >= 1)) {
+            throw new Error(`${source}: blunderbuss.${field} must be an integer of at least 1`);
+        }
+    }
+    if (raw.max_request_count !== undefined && raw.max_request_count < (raw.request_count ?? 1)) {
+        throw new Error(`${source}: blunderbuss.max_request_count must not be lower than request_count`);
+    }
+    for (const field of ['exclude_approvers', 'ignore_drafts']) {
+        if (raw[field] !== undefined && typeof raw[field] !== 'boolean') {
+            throw new Error(`${source}: blunderbuss.${field} must be a boolean`);
+        }
+    }
+    if (raw.ignore_authors !== undefined && !isStringList(raw.ignore_authors)) {
+        throw new Error(`${source}: blunderbuss.ignore_authors must be a list of GitHub usernames`);
+    }
+    return stripUndefined({
+        request_count: raw.request_count,
+        max_request_count: raw.max_request_count,
+        exclude_approvers: raw.exclude_approvers,
+        ignore_drafts: raw.ignore_drafts,
+        ignore_authors: raw.ignore_authors,
+    });
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide and hold shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold and blunderbuss
+ * shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41114,6 +41146,7 @@ function mergeProwConfig(base, over) {
         require_matching_label: [...(base.require_matching_label ?? []), ...(over.require_matching_label ?? [])],
         tide: { ...base.tide, ...over.tide },
         hold: { ...base.hold, ...over.hold },
+        blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
     };
 }
 function isMapping(value) {
@@ -42796,6 +42829,153 @@ async function remove(context = github_context) {
     await removeLabels(octokit, context, issueNumber, toRemove);
 }
 
+;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
+
+
+
+
+
+/**
+ * blunderbussSettings resolves the `blunderbuss` configuration with Prow's
+ * defaults: two reviewers, approvers count, drafts wait for ready_for_review.
+ *
+ * @param config - the merged prow configuration
+ */
+function blunderbussSettings(config) {
+    const raw = config.blunderbuss;
+    return {
+        request_count: raw.request_count ?? 2,
+        max_request_count: raw.max_request_count,
+        exclude_approvers: raw.exclude_approvers ?? false,
+        ignore_drafts: raw.ignore_drafts ?? true,
+        ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
+    };
+}
+/**
+ * pickReviewers chooses `count` logins. Like Prow, a reviewer is weighted by
+ * the number of changed files they cover: candidates are tiered by that count
+ * and the request is filled from the highest tier down, drawing at random
+ * within the tier that would overflow it.
+ *
+ * @param coverage - login to the number of changed files the login covers
+ * @param count - how many reviewers to pick
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+function pickReviewers(coverage, count, rng = Math.random) {
+    const tiers = new Map();
+    for (const [login, files] of coverage) {
+        tiers.set(files, [...(tiers.get(files) ?? []), login]);
+    }
+    const picked = [];
+    for (const files of [...tiers.keys()].sort((a, b) => b - a)) {
+        const remaining = count - picked.length;
+        if (remaining <= 0) {
+            break;
+        }
+        const tier = [...tiers.get(files)].sort();
+        picked.push(...(tier.length <= remaining ? tier : sample(tier, remaining, rng)));
+    }
+    return picked;
+}
+function sample(items, count, rng) {
+    const pool = [...items];
+    const drawn = [];
+    while (drawn.length < count && pool.length > 0) {
+        const [item] = pool.splice(Math.floor(rng() * pool.length), 1);
+        drawn.push(item);
+    }
+    return drawn;
+}
+/**
+ * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
+ * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
+ * requests reviews from the OWNERS reviewers covering the changed files.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function blunderbuss(context = github_context, rng = Math.random) {
+    const action = context.payload.action;
+    if (action !== 'opened' && action !== 'ready_for_review') {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    if (action === 'ready_for_review' && !settings.ignore_drafts) {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
+}
+/**
+ * autoCc is the `/auto-cc` comment command: it runs the blunderbuss selection
+ * on the pull request regardless of its draft state or author.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function autoCc(context = github_context, rng = Math.random) {
+    const issue = context.payload.issue;
+    if (issue?.pull_request === undefined) {
+        core_debug('blunderbuss: /auto-cc only applies to pull requests');
+        return;
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
+}
+async function requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit, rng }) {
+    const pull = await loadPullRequestOwners(octokit, context, pullNumber);
+    if (!explicit) {
+        if (settings.ignore_drafts && pull.draft) {
+            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
+            return;
+        }
+        if (settings.ignore_authors.includes(pull.author)) {
+            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
+            return;
+        }
+    }
+    const excluded = new Set([pull.author, ...pull.requestedReviewers, ...pull.assignees]);
+    const coverage = new Map();
+    for (const owners of pull.perFile.values()) {
+        if (owners === undefined) {
+            continue;
+        }
+        const logins = new Set([...owners.reviewers, ...(settings.exclude_approvers ? [] : owners.approvers)]);
+        for (const login of logins) {
+            if (!excluded.has(login)) {
+                coverage.set(login, (coverage.get(login) ?? 0) + 1);
+            }
+        }
+    }
+    if (coverage.size === 0) {
+        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
+        return;
+    }
+    let count = settings.request_count;
+    if (settings.max_request_count !== undefined) {
+        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
+        if (count <= 0) {
+            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
+            return;
+        }
+    }
+    const reviewers = pickReviewers(coverage, count, rng);
+    try {
+        await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
+    }
+    catch (e) {
+        throw new Error(`could not request reviewers: ${e}`);
+    }
+    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/sleep.js
 /**
  * sleep resolves after the given delay. It lives in its own module so callers
@@ -43844,6 +44024,7 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
 // hand-written commands; looked up lazily so the module bindings stay spy-able
 const handlers = {
     '/assign': context => assign_assign(context),
@@ -43861,6 +44042,7 @@ const handlers = {
     '/milestone': context => milestone(context),
     '/meow': context => meow(context),
     '/check-required-labels': context => checkRequiredLabels(context),
+    '/auto-cc': context => autoCc(context),
 };
 // Prow-style spellings that are handled by the canonical command's module
 const commandAliases = {
@@ -44139,8 +44321,9 @@ async function onPrLgtm(context) {
 
 
 
+
 /** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel];
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on

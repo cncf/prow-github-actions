@@ -156,6 +156,7 @@ describe('loadProwConfig', () => {
         require_matching_label: [],
         tide: {},
         hold: {},
+        blunderbuss: {},
         sources: [],
       })
     })

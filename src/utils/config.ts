@@ -41,11 +41,25 @@ export interface HoldConfig {
   label?: string
 }
 
+export interface BlunderbussConfig {
+  /** reviewers to request per pull request; default 2 */
+  request_count?: number
+  /** never leave the pull request with more requested reviewers than this */
+  max_request_count?: number
+  /** only consider `reviewers`, not `approvers`; default false */
+  exclude_approvers?: boolean
+  /** wait for `ready_for_review` on drafts; default true */
+  ignore_drafts?: boolean
+  /** pull request authors that never get reviewers assigned */
+  ignore_authors?: string[]
+}
+
 export interface ProwConfig {
   labels: Record<string, LabelSection>
   require_matching_label: RequireMatchingLabel[]
   tide: TideConfig
   hold: HoldConfig
+  blunderbuss: BlunderbussConfig
   /** every file that contributed, lowest precedence first, as `owner/repo:path` or a url */
   sources: string[]
 }
@@ -54,7 +68,7 @@ const mergeMethods = ['merge', 'squash', 'rebase'] as const
 const colorPattern = /^[0-9a-f]{6}$/i
 
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold'] as const
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'] as const
 
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 export const orgConfigRepos = ['.project', '.github']
@@ -242,8 +256,8 @@ function isNotFound(error: unknown): boolean {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide` and `hold` may sit
- * alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold` and
+ * `blunderbuss` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -282,6 +296,9 @@ export function parseProwConfig(source: string, text: string): Partial<ProwConfi
   }
   if (loaded.hold !== undefined) {
     config.hold = normalizeHold(source, loaded.hold)
+  }
+  if (loaded.blunderbuss !== undefined) {
+    config.blunderbuss = normalizeBlunderbuss(source, loaded.blunderbuss)
   }
 
   const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !(reservedKeys as readonly string[]).includes(key))
@@ -436,9 +453,43 @@ function normalizeHold(source: string, raw: unknown): HoldConfig {
   return stripUndefined({ label: raw.label as string | undefined })
 }
 
+function normalizeBlunderbuss(source: string, raw: unknown): BlunderbussConfig {
+  if (!isMapping(raw)) {
+    throw new Error(`${source}: blunderbuss must be a mapping`)
+  }
+
+  for (const field of ['request_count', 'max_request_count'] as const) {
+    if (raw[field] !== undefined && !(Number.isInteger(raw[field]) && (raw[field] as number) >= 1)) {
+      throw new Error(`${source}: blunderbuss.${field} must be an integer of at least 1`)
+    }
+  }
+  if (raw.max_request_count !== undefined && (raw.max_request_count as number) < ((raw.request_count as number | undefined) ?? 1)) {
+    throw new Error(`${source}: blunderbuss.max_request_count must not be lower than request_count`)
+  }
+
+  for (const field of ['exclude_approvers', 'ignore_drafts'] as const) {
+    if (raw[field] !== undefined && typeof raw[field] !== 'boolean') {
+      throw new Error(`${source}: blunderbuss.${field} must be a boolean`)
+    }
+  }
+
+  if (raw.ignore_authors !== undefined && !isStringList(raw.ignore_authors)) {
+    throw new Error(`${source}: blunderbuss.ignore_authors must be a list of GitHub usernames`)
+  }
+
+  return stripUndefined({
+    request_count: raw.request_count as number | undefined,
+    max_request_count: raw.max_request_count as number | undefined,
+    exclude_approvers: raw.exclude_approvers as boolean | undefined,
+    ignore_drafts: raw.ignore_drafts as boolean | undefined,
+    ignore_authors: raw.ignore_authors as string[] | undefined,
+  })
+}
+
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide and hold shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold and blunderbuss
+ * shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -449,6 +500,7 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
     require_matching_label: [...(base.require_matching_label ?? []), ...(over.require_matching_label ?? [])],
     tide: { ...base.tide, ...over.tide },
     hold: { ...base.hold, ...over.hold },
+    blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
   }
 }
 
