@@ -44,13 +44,13 @@ Label Commands | Policy | Description
 `/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
 `/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
-`/hold` | anyone | adds the `hold` label which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
-`/hold cancel` | anyone | removes the `hold` label
+`/hold` | anyone | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
+`/hold cancel` | anyone | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
 `/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
 `/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
-`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved` and `do-not-merge/*`
+`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
+`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
 `/lifecycle [frozen / stale / rotten]` | anyone | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
 `/remove-lifecycle [frozen / stale / rotten]` | anyone | removes the `lifecycle/<>` label
 `/stage [alpha / beta / stable]` | anyone | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
@@ -65,7 +65,7 @@ Label Commands | Policy | Description
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
-Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved` and `do-not-merge/*` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
+Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved`, `do-not-merge/*` and a configured `hold.label` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 
 ## What happens when you are not authorized
 

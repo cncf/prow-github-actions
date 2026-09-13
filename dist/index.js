@@ -41617,7 +41617,65 @@ function newOctokit(token) {
     });
 }
 
+;// CONCATENATED MODULE: ./lib/labels/hold.js
+
+
+
+
+
+
+// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
+const legacyHoldLabel = 'hold';
+/**
+ * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
+ * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
+ * Note - the label blocks automatic merging through `tide.missing_labels`.
+ *
+ * @param context - the github actions event context
+ */
+async function hold(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    const config = await loadProwConfig(octokit, context);
+    const holdLabel = resolveHoldLabel(config.hold);
+    const cancel = hasCommand('/unhold', commentBody)
+        || hasCommand('/remove-hold', commentBody)
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+    if (cancel) {
+        await cancelHold(octokit, context, issueNumber, holdLabel);
+        return;
+    }
+    await labelIssue(octokit, context, issueNumber, [holdLabel]);
+}
+async function cancelHold(octokit, context, issueNumber, holdLabel) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
+    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
+    if (present.length === 0) {
+        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, present);
+    }
+    catch (e) {
+        throw new Error(`could not remove the hold label: ${e}`);
+    }
+}
+
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
+
 
 
 
@@ -41636,9 +41694,19 @@ const labelCommandName = /^[a-z][a-z0-9-]*$/;
 // labels with dedicated, authorization-gated commands; never reachable through /label
 const protectedLabels = ['lgtm', 'hold', 'approved'];
 const protectedPrefixes = ['do-not-merge/'];
-function isProtectedLabel(label) {
+/**
+ * isProtectedLabel reports whether /label and /remove-label must refuse the
+ * label: the built-in command labels, the do-not-merge family, and any
+ * `extra` names such as a configured `hold.label`.
+ *
+ * @param label - the label name
+ * @param extra - further protected names, compared case-insensitively
+ */
+function isProtectedLabel(label, extra = []) {
     const lower = label.toLowerCase();
-    return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix));
+    return protectedLabels.includes(lower)
+        || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+        || extra.some(name => name.toLowerCase() === lower);
 }
 /**
  * dynamicPrefixedCommand builds the command for an arbitrary label section
@@ -41673,7 +41741,7 @@ async function addPrefixedLabels(context, cmd) {
     const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
+    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
     if (section.exclusive) {
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
@@ -41702,7 +41770,7 @@ async function removePrefixedLabels(context, cmd) {
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
     const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, command, commentBody, section.values);
+    const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels);
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
     const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
@@ -41749,13 +41817,14 @@ async function allowlistFor(octokit, context, cmd) {
             throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
         }
         core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
-        return { values: section.values, exclusive: section.exclusive ?? false };
+        const { hold } = await loadProwConfig(octokit, context);
+        return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] };
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
     }
 }
-function requestedLabels(cmd, command, commentBody, allowed) {
+function requestedLabels(cmd, command, commentBody, allowed, protectedExtra) {
     const args = getCommandArgs(command, commentBody);
     const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
     const values = args
@@ -41767,7 +41836,7 @@ function requestedLabels(cmd, command, commentBody, allowed) {
         throw new Error(`${command.slice(1)}: command args missing from body`);
     }
     if (cmd.prefix === '') {
-        const offender = labels.find(isProtectedLabel);
+        const offender = labels.find(label => isProtectedLabel(label, protectedExtra));
         if (offender !== undefined) {
             throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`);
         }
@@ -41791,10 +41860,12 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
 
 ;// CONCATENATED MODULE: ./lib/utils/labelCatalog.js
 
+
+
 /**
  * Colors and descriptions of the labels the action manages itself. They
  * follow kubernetes/test-infra's label_sync where a label exists there;
- * `hold` mirrors `do-not-merge/hold`.
+ * the legacy `hold` mirrors `do-not-merge/hold`.
  */
 const builtinLabelDefaults = {
     'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
@@ -41813,8 +41884,8 @@ const needsLabelColor = 'ededed';
  * color and description the label-sync job should give it: the label
  * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
  * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
- * section, the labels the action's own commands apply, and every
- * `require_matching_label` missing label. Names are unique
+ * section, the labels the action's own commands apply (`hold.label` and
+ * the legacy `hold`), and every `require_matching_label` missing label. Names are unique
  * case-insensitively (first definition wins) and sorted.
  *
  * @param config - the merged prow configuration
@@ -41833,7 +41904,7 @@ function desiredLabels(config) {
             labels.push(...section.definitions.map(value => prefixed(key, value)));
         }
     }
-    const holdLabels = config.hold.label === undefined ? ['hold'] : ['hold', config.hold.label];
+    const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel];
     for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
         labels.push({ name });
     }
@@ -42259,43 +42330,6 @@ function fixed_requireIssueNumber(context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     return issueNumber;
-}
-
-;// CONCATENATED MODULE: ./lib/labels/hold.js
-
-
-
-
-
-/**
- * /hold will add the hold label.
- * /hold cancel, /unhold and /remove-hold remove it.
- * Note - the hold label will block automatic merging if the lgtm
- * is also present
- *
- * @param context - the github actions event context
- */
-async function hold(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    const cancel = hasCommand('/unhold', commentBody)
-        || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
-    if (cancel) {
-        try {
-            await cancelLabel(octokit, context, issueNumber, 'hold');
-        }
-        catch (e) {
-            throw new Error(`could not remove the hold label: ${e}`);
-        }
-        return;
-    }
-    await labelIssue(octokit, context, issueNumber, ['hold']);
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/owners.js

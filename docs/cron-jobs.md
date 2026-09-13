@@ -15,7 +15,7 @@ Jobs | Description | Permissions
 The job reconciles the repository's labels with the catalogue derived from the
 [configuration](./configuration.md#the-label-catalogue): every label section, the
 built-in `/lifecycle`, `/stage` and `/status` values, the labels the action's own
-commands apply (`lgtm`, `approved`, `hold`, `help wanted`, `good first issue`) and every
+commands apply (`lgtm`, `approved`, `do-not-merge/hold`, the legacy `hold`, `help wanted`, `good first issue`) and every
 `require_matching_label` missing label. Label commands only apply labels that exist
 ([labeling](./labeling.md#labels-must-exist-in-the-repository)), so run this job once
 after adopting the action and whenever the configuration changes.

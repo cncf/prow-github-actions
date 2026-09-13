@@ -620,9 +620,28 @@ describe('dist/index.js', () => {
     ])
   })
 
-  it('issue_comment /unhold removes the hold label when /hold is configured', async () => {
-    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }] } })
-    gh.route('DELETE', `${repo}/issues/1/labels/hold`, { status: 200, body: [] })
+  it('issue_comment /hold applies do-not-merge/hold', async () => {
+    gh.route('GET', `${repo}/labels`, repoLabels('do-not-merge/hold', 'hold'))
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/hold'),
+      inputs: { ...token, 'prow-commands': '/hold' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ labels: ['do-not-merge/hold'] })
+    expectRequests(configReads(), [labelsRead, `POST ${repo}/issues/1/labels`])
+  })
+
+  it('issue_comment /unhold removes do-not-merge/hold and the legacy hold label when /hold is configured', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }, { name: 'do-not-merge/hold' }] } })
+    gh.route('DELETE', new RegExp(`^${repo}/issues/1/labels/`), { status: 200, body: [] })
 
     const result = await runBundle({
       eventName: 'issue_comment',
@@ -633,9 +652,10 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+    expectRequests(configReads(), [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/hold`,
+      `DELETE ${repo}/issues/1/labels/do-not-merge%2Fhold`,
     ])
   })
 
@@ -904,6 +924,7 @@ describe('dist/index.js', () => {
     const orgConfig = yamlFile('labels:\n  kind:\n    - name: bug\n      color: d73a4a\n      description: Something is not working\n    - cleanup\n')
     const builtins = [
       'approved',
+      'do-not-merge/hold',
       'good first issue',
       'help wanted',
       'hold',

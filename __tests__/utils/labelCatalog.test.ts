@@ -20,7 +20,7 @@ const registryDefaults = [
   'status/in-review',
 ]
 
-const actionManaged = ['approved', 'good first issue', 'help wanted', 'hold', 'lgtm']
+const actionManaged = ['approved', 'do-not-merge/hold', 'good first issue', 'help wanted', 'hold', 'lgtm']
 
 function names(config: ProwConfig): string[] {
   return desiredLabels(config).map(label => label.name)
@@ -79,14 +79,25 @@ labels:
     )
   })
 
-  it('includes the configured hold label next to hold', () => {
-    const labels = desiredLabels(configFrom('hold:\n  label: do-not-merge/hold\n'))
+  it('includes do-not-merge/hold next to the legacy hold by default', () => {
+    const labels = desiredLabels(configFrom(''))
 
     expect(labels.map(l => l.name)).toEqual(expect.arrayContaining(['hold', 'do-not-merge/hold']))
     expect(labels.find(l => l.name === 'do-not-merge/hold')).toEqual({
       name: 'do-not-merge/hold',
       ...builtinLabelDefaults['do-not-merge/hold'],
     })
+  })
+
+  it('includes a configured hold label next to the legacy hold, without do-not-merge/hold', () => {
+    const result = names(configFrom('hold:\n  label: blocked\n'))
+
+    expect(result).toEqual(expect.arrayContaining(['hold', 'blocked']))
+    expect(result).not.toContain('do-not-merge/hold')
+  })
+
+  it('lists hold once when hold.label is hold', () => {
+    expect(names(configFrom('hold:\n  label: hold\n')).filter(name => name === 'hold')).toHaveLength(1)
   })
 
   it('includes every require_matching_label missing label with the needs- color', () => {

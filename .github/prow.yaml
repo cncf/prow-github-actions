@@ -36,3 +36,7 @@ require_matching_label:
     issues: true
     prs: true
     missing_comment: Please add a kind label with `/kind failing-test` or `/kind cleanup`.
+
+# the lgtm merger's gate; labels and missing_labels take the defaults
+tide:
+  merge_method: squash
