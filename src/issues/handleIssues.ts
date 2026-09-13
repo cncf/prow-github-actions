@@ -2,10 +2,11 @@ import type { Context } from '../utils/context'
 import type { EventHandler } from '../utils/events'
 
 import * as github from '@actions/github'
+import { requireMatchingLabel } from '../plugins/requireMatchingLabel'
 import { runEventHandlers } from '../utils/events'
 
-/** handlers that run on every `issues` event; empty until require-matching-label lands */
-export const issueEventHandlers: EventHandler[] = []
+/** handlers that run on every `issues` event */
+export const issueEventHandlers: EventHandler[] = [requireMatchingLabel]
 
 /**
  * Dispatches an `issues` event to the registered handlers.

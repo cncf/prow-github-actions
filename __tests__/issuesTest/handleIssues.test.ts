@@ -3,6 +3,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssues, issueEventHandlers } from '../../src/issues/handleIssues'
+import { requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import * as utils from '../testUtils'
 
@@ -12,15 +13,19 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
-  issueEventHandlers.length = 0
-})
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
+
+const registeredHandlers = [...issueEventHandlers]
 
 describe('handleIssues', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
+    issueEventHandlers.length = 0
+  })
+
+  it('registers require-matching-label', () => {
+    expect(registeredHandlers).toEqual([requireMatchingLabel])
   })
 
   it('resolves without calling the api or failing when no handlers are registered', async () => {

@@ -83,8 +83,10 @@ describe('onPrLgtm', () => {
     const payload = structuredClone(issuePayload)
     payload.labels.push({ ...payload.labels[0], name: 'lgtm' })
 
+    // the require-matching-label handler runs on these actions and reads the (absent) configuration
     const observeReq = new utils.ObserveRequest()
     server.use(
+      ...utils.noOrgOrRepoConfigExcept(),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),

@@ -103,7 +103,6 @@ describe('dist/index.js', () => {
   })
 
   it.each([
-    ['issues', issuesLabeledEvent],
     ['pull_request_review', pullReqReviewSubmittedEvent],
     ['check_suite', checkSuiteCompletedEvent],
     ['status', checkSuiteCompletedEvent],
@@ -114,6 +113,85 @@ describe('dist/index.js', () => {
     expect(result.errors).toEqual([])
     expect(result.stdout).not.toContain('not yet supported')
     expect(gh.requests).toEqual([])
+  })
+
+  it('issues labeled with no require_matching_label configured only reads the configuration', async () => {
+    const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).not.toContain('not yet supported')
+    expectRequests(configReads(), [])
+  })
+
+  describe('issues require-matching-label', () => {
+    const needsKindComment = 'Please add a kind label.'
+    const marker = '<!-- prow-github-actions/require-matching-label: needs-kind -->'
+
+    function routeOrgRule() {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', {
+        status: 200,
+        body: yamlFile(`require_matching_label:\n  - regexp: ^kind/\n    missing_label: needs-kind\n    missing_comment: ${needsKindComment}\n`),
+      })
+      gh.route('GET', `${repo}/labels`, repoLabels('needs-kind', 'kind/bug'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('DELETE', `${repo}/issues/1/labels/needs-kind`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+      gh.route('DELETE', `${repo}/issues/comments/11`, { status: 204 })
+    }
+
+    it('opened without a kind label adds needs-kind and posts the marked comment', async () => {
+      routeOrgRule()
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+
+      const result = await runBundle({
+        eventName: 'issues',
+        payload: { ...issuesLabeledEvent, action: 'opened', issue: { ...issuesLabeledEvent.issue, labels: [] } },
+        inputs: token,
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const labels = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+      expect(labels).toHaveLength(1)
+      expect(labels[0].body).toEqual({ labels: ['needs-kind'] })
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect(comments[0].body).toEqual({ body: `${needsKindComment}\n\n${marker}` })
+      expectRequests(configReads({ org: '.project' }), [
+        `GET ${repo}/issues/1`,
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `POST ${repo}/issues/1/comments`,
+      ])
+    })
+
+    it('labeled kind/bug with needs-kind present removes the label and the bot comment', async () => {
+      routeOrgRule()
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'kind/bug' }, { name: 'needs-kind' }] } })
+      gh.route('GET', `${repo}/issues/1/comments`, {
+        status: 200,
+        body: [
+          { id: 11, body: `${needsKindComment}\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } },
+          { id: 12, body: 'a human comment', user: { login: 'Codertocat', type: 'User' } },
+        ],
+      })
+
+      const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('POST', /./)).toEqual([])
+      expectRequests(configReads({ org: '.project' }), [
+        `GET ${repo}/issues/1`,
+        `DELETE ${repo}/issues/1/labels/needs-kind`,
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `DELETE ${repo}/issues/comments/11`,
+      ])
+    })
   })
 
   it('issue_comment /kind adds a prefixed label from .prowlabels.yaml', async () => {
@@ -577,7 +655,7 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    expect(gh.requests).toEqual([])
+    expectRequests(configReads(), [])
   })
 
   describe('schedule lgtm job', () => {
