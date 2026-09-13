@@ -12,6 +12,7 @@ export interface PullRequestOwners {
   draft: boolean
   requestedReviewers: string[]
   assignees: string[]
+  labels: string[]
   files: string[]
   tree: OwnersTree
   perFile: Map<string, OwnersSet | undefined>
@@ -76,6 +77,7 @@ async function load(
     draft: pull.draft === true,
     requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
     assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+    labels: (pull.labels ?? []).map(label => label.name),
     files,
     tree,
     perFile,

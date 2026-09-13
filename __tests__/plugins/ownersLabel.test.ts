@@ -199,6 +199,8 @@ describe('ownersLabel', () => {
     server.use(
       ...utils.noOrgOrRepoConfigExcept(),
       ...prHandlers({ 'sdk/OWNERS': sdkOwners }, ['sdk/x.go']),
+      // the approve handler runs on synchronize too; an OWNERS-less default branch keeps it out of this test
+      utils.defaultBranchTree(),
       http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [])),
     )
     const reads = serveIssue(['lgtm'], ['area/sdk', 'area/shared'])

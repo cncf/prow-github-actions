@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { approveOnReview } from '../../src/plugins/approve'
 import { tideOnReview } from '../../src/plugins/tide'
 import { handlePullReqReview, pullRequestReviewHandlers } from '../../src/pullReq/handlePullReqReview'
 import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
@@ -20,8 +21,8 @@ beforeEach(() => {
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-it('registers tide', () => {
-  expect(registeredHandlers).toEqual([tideOnReview])
+it('registers approve before tide', () => {
+  expect(registeredHandlers).toEqual([approveOnReview, tideOnReview])
 })
 
 describe('handlePullReqReview', () => {

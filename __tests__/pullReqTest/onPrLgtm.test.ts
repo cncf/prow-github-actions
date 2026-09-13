@@ -41,10 +41,11 @@ describe('onPrLgtm', () => {
       default: false,
     })
 
-    // owners-label runs on synchronize too and finds no OWNERS files here
+    // owners-label and approve run on synchronize too and find no OWNERS files here
     const observeReq = new utils.ObserveRequest()
     server.use(
       ...prHandlers({}, ['src/file1.txt']),
+      utils.defaultBranchTree(),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -65,6 +66,7 @@ describe('onPrLgtm', () => {
     const observeReq = new utils.ObserveRequest()
     server.use(
       ...prHandlers({}, ['src/file1.txt']),
+      utils.defaultBranchTree(),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),

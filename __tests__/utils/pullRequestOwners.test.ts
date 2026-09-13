@@ -44,6 +44,7 @@ describe('loadPullRequestOwners', () => {
           draft: true,
           requested_reviewers: [{ login: 'Rita' }],
           assignees: [{ login: 'Al' }],
+          labels: [{ name: 'kind/bug' }, { name: 'Approved' }],
         }, observePull)(info)
       }),
       http.get(`${repo}/pulls/1/files`, async (info) => {
@@ -64,6 +65,7 @@ describe('loadPullRequestOwners', () => {
       draft: true,
       requestedReviewers: ['rita'],
       assignees: ['al'],
+      labels: ['kind/bug', 'Approved'],
       files: ['sdk/x.go', 'docs/y.md'],
     })
     expect(owners.tree.hasOwners).toBe(true)
@@ -87,12 +89,12 @@ describe('loadPullRequestOwners', () => {
     expect(owners.perFile.has('old/a.go')).toBe(true)
   })
 
-  it('defaults author, draft, reviewers and assignees when the pull omits them', async () => {
+  it('defaults author, draft, reviewers, assignees and labels when the pull omits them', async () => {
     server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
 
     const owners = await loadPullRequestOwners(octokit, context, 1)
 
-    expect(owners).toMatchObject({ author: '', draft: false, requestedReviewers: [], assignees: [] })
+    expect(owners).toMatchObject({ author: '', draft: false, requestedReviewers: [], assignees: [], labels: [] })
   })
 
   it('memoizes per pull request: a second call in the same run makes no requests', async () => {

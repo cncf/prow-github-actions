@@ -677,9 +677,10 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    // owners-label reads the (OWNERS-less) tree on synchronize, then the lgtm job runs
+    // owners-label reads the (OWNERS-less) base tree on synchronize, approve probes the default branch, then the lgtm job runs
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
       ...ownersReads,
+      ownersProbe,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
@@ -699,9 +700,10 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    // owners-label reads the (OWNERS-less) tree on synchronize, then the lgtm job runs
+    // owners-label reads the (OWNERS-less) base tree on synchronize, approve probes the default branch, then the lgtm job runs
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
       ...ownersReads,
+      ownersProbe,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
@@ -745,7 +747,7 @@ describe('dist/index.js', () => {
       expect(['alice', 'bob', 'carol']).toEqual(expect.arrayContaining(reviewers))
       // require-matching-label's configuration probes interleave with the OWNERS plugins; the memo means one pull request read for both
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, requestReviewers].sort())
+      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, requestReviewers, ownersProbe].sort())
       expect(calls.indexOf(`POST ${repo}/issues/1/labels`)).toBeGreaterThan(calls.indexOf(labelsRead))
       expect(calls.indexOf(requestReviewers)).toBeGreaterThan(calls.indexOf(`GET ${repo}/git/trees/basesha?recursive=true`))
     })
@@ -772,6 +774,7 @@ describe('dist/index.js', () => {
         `GET ${repo}/issues/1`,
         labelsRead,
         `POST ${repo}/issues/1/labels`,
+        ownersProbe,
       ])
     })
 
@@ -944,7 +947,8 @@ describe('dist/index.js', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge' })
-      expectRequests(configReads(), [ownersProbe, pullRead, merge])
+      // approve probes the tree first and finds no OWNERS files; tide reuses the answer
+      expectRequests([ownersProbe, ...configReads()], [pullRead, merge])
     })
 
     it('check_suite completed: evaluates the pull requests the payload names', async () => {
@@ -983,6 +987,141 @@ describe('dist/index.js', () => {
         pullRead,
         merge,
       ])
+    })
+  })
+
+  describe('approve plugin on pull_request and pull_request_review events', () => {
+    const ownersFiles: Record<string, string> = {
+      'OWNERS': 'approvers:\n- alice\n',
+      'sdk/OWNERS': 'approvers:\n- bob\n',
+      'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
+    }
+    const marker = '<!-- prow-github-actions/approve -->'
+
+    // the default branch has OWNERS files, so approve evaluates and the tide gate requires approved
+    function routeOwnersRepo(files: string[], pulls: Record<string, unknown>[], comments: unknown[] = [], reviews: unknown[] = []) {
+      gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })) } })
+      // the first matching route wins, so the per-call pull bodies go in before routeOwners' static one
+      gh.routeSequence('GET', `${repo}/pulls/1`, pulls.map(pull => ({ status: 200, body: { ...openPr([]), number: 1, base: { sha: 'basesha' }, user: { login: 'Codertocat' }, draft: false, requested_reviewers: [], assignees: [], mergeable: true, mergeable_state: 'clean', ...pull } })))
+      routeOwners(ownersFiles, files)
+      gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: comments })
+      gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: reviews })
+      gh.route('GET', `${repo}/labels`, repoLabels('approved', 'lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('DELETE', `${repo}/issues/1/labels/approved`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+      gh.route('PATCH', `${repo}/issues/comments/900`, { status: 200, body: {} })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+    }
+
+    // one evaluation of a pull request touching sdk/ only: the OWNERS reads, the two blobs on its path, comments and reviews
+    const evaluationReads = [
+      ...ownersReads,
+      `GET ${repo}/git/blobs/${blobSha('OWNERS')}`,
+      `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
+      `GET ${repo}/issues/1/comments?per_page=100`,
+      `GET ${repo}/pulls/1/reviews?per_page=100`,
+    ]
+
+    it('pull_request opened by the author of every changed file: approved is added, the notifier posted, tide skips opened', async () => {
+      routeOwnersRepo(['sdk/x.go'], [{ user: { login: 'Bob' }, labels: [] }])
+
+      const result = await runBundle({ eventName: 'pull_request', payload: pullReqOpenedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('approve: #1 is approved by bob')
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      const body = (comments[0].body as { body: string }).body
+      expect(body).toContain('[APPROVALNOTIFIER] This PR is **APPROVED**')
+      expect(body).toContain('approved by: *bob*')
+      expect(body.endsWith(marker)).toBe(true)
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      // require-matching-label's config probes come first (concurrent among themselves), then the OWNERS plugins share one
+      // pull request read; approve runs after blunderbuss and before tide
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, configReads().length).sort()).toEqual(configReads().sort())
+      expect(calls.slice(configReads().length, configReads().length + ownersReads.length)).toEqual(ownersReads)
+      expect(calls.filter(call => call === `GET ${repo}/pulls/1`)).toHaveLength(1)
+      expect(calls.slice(-7)).toEqual([
+        `POST ${repo}/pulls/1/requested_reviewers`,
+        ownersProbe,
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `GET ${repo}/pulls/1/reviews?per_page=100`,
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+        `POST ${repo}/issues/1/comments`,
+      ])
+    })
+
+    it('pull_request_review APPROVED completing the coverage: approved is added, the notifier edited, tide merges', async () => {
+      routeOwnersRepo(
+        ['sdk/x.go', 'olm/y.go'],
+        [{ user: { login: 'carol' }, labels: [{ name: 'lgtm' }] }, { user: { login: 'carol' }, labels: [{ name: 'lgtm' }, { name: 'approved' }] }],
+        [{ id: 900, body: `stale\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' }, created_at: '2024-01-01T00:00:00Z' }],
+        [{ id: 1, state: 'APPROVED', user: { login: 'bob', type: 'User' }, submitted_at: '2024-01-01T00:00:01Z' }],
+      )
+
+      const result = await runBundle({ eventName: 'pull_request_review', payload: pullReqReviewSubmittedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('approve: #1 is approved by bob, carol')
+      expect(result.stdout).toContain('merged pr #1')
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      const patches = gh.requestsMatching('PATCH', /\/issues\/comments\/900$/)
+      expect(patches).toHaveLength(1)
+      expect((patches[0].body as { body: string }).body).toContain('This PR is **APPROVED**')
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(-5)).toEqual([
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+        `PATCH ${repo}/issues/comments/900`,
+        `GET ${repo}/pulls/1`,
+        `PUT ${repo}/pulls/1/merge`,
+      ])
+      expect(gh.requestsMatching('GET', /\/git\/trees\/master/)).toHaveLength(1)
+    })
+
+    it('pull_request_review CHANGES_REQUESTED: approved is removed and tide skips the pr', async () => {
+      routeOwnersRepo(
+        ['sdk/x.go'],
+        [{ user: { login: 'carol' }, labels: [{ name: 'lgtm' }, { name: 'approved' }] }, { user: { login: 'carol' }, labels: [{ name: 'lgtm' }] }],
+        [
+          { id: 900, body: `stale\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' }, created_at: '2024-01-01T00:00:00Z' },
+          { id: 901, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' },
+        ],
+        [{ id: 1, state: 'CHANGES_REQUESTED', user: { login: 'bob', type: 'User' }, submitted_at: '2024-01-01T00:00:02Z' }],
+      )
+
+      const result = await runBundle({ eventName: 'pull_request_review', payload: pullReqReviewSubmittedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('skipping pr #1: missing approved')
+      expect(gh.requestsMatching('DELETE', /\/issues\/1\/labels\/approved$/)).toHaveLength(1)
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      expect((gh.requestsMatching('PATCH', /./)[0].body as { body: string }).body).toContain('This PR is **NOT APPROVED**')
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(evaluationReads.filter(read => !calls.includes(read))).toEqual([])
+      expect(calls).not.toContain(`GET ${repo}/git/blobs/${blobSha('olm/OWNERS')}`)
+    })
+
+    it('pull_request_review on a repository without OWNERS files: only the tree probe and tide', async () => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), number: 1, mergeable: true, mergeable_state: 'clean' } })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runBundle({ eventName: 'pull_request_review', payload: pullReqReviewSubmittedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      // approve probes the tree before tide reads the configuration
+      expectRequests([ownersProbe, ...configReads()], [`GET ${repo}/pulls/1`, `PUT ${repo}/pulls/1/merge`])
     })
   })
 
