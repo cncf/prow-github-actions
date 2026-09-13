@@ -40797,9 +40797,9 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
 const defaultHoldLabel = 'do-not-merge/hold';
-const defaultTideLabels = (/* unused pure expression or super */ null && (['lgtm']));
+const defaultTideLabels = ['lgtm'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
-const defaultTideMissingLabels = (/* unused pure expression or super */ null && (['do-not-merge/*', 'needs-rebase', 'hold']));
+const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
 const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
@@ -41969,14 +41969,85 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
+/**
+ * matchesLabelPattern reports whether a label name matches a tide label
+ * pattern. Names compare case-insensitively, like GitHub does. `*` matches any
+ * run of characters, `/` included, so `do-not-merge/*` covers the whole
+ * family; everything else is literal (`do-not-merge` alone does not match
+ * `do-not-merge/hold`).
+ *
+ * @param pattern - a label name, optionally with `*` wildcards
+ * @param label - the label name to test
+ */
+function matchesLabelPattern(pattern, label) {
+    const parts = pattern.toLowerCase().split('*');
+    const subject = label.toLowerCase();
+    if (parts.length === 1) {
+        return subject === parts[0];
+    }
+    if (!subject.startsWith(parts[0])) {
+        return false;
+    }
+    const last = parts[parts.length - 1];
+    if (!subject.endsWith(last) || subject.length < parts[0].length + last.length) {
+        return false;
+    }
+    // the middle parts must appear in order between the anchored ends
+    let at = parts[0].length;
+    const end = subject.length - last.length;
+    for (const part of parts.slice(1, -1)) {
+        const found = subject.indexOf(part, at);
+        if (found === -1 || found + part.length > end) {
+            return false;
+        }
+        at = found + part.length;
+    }
+    return true;
+}
+/**
+ * anyLabelMatches reports whether any of the patterns matches any of the labels
+ *
+ * @param patterns - label patterns, see matchesLabelPattern
+ * @param labels - the label names to test
+ */
+function anyLabelMatches(patterns, labels) {
+    return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)));
+}
+
+;// CONCATENATED MODULE: ./lib/utils/mergeGate.js
+
+/**
+ * meetsMergeGate decides, like Prow's tide query, whether a pull request's
+ * labels allow merging: every `tide.labels` pattern must match at least one
+ * label and no `tide.missing_labels` pattern may match any label.
+ *
+ * @param labels - the labels on the pull request
+ * @param tide - the resolved tide configuration
+ */
+function meetsMergeGate(labels, tide) {
+    const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
+    if (missing !== undefined) {
+        return { ok: false, reason: `missing ${missing}` };
+    }
+    const blocking = labels.find(label => tide.missing_labels.some(pattern => matchesLabelPattern(pattern, label)));
+    if (blocking !== undefined) {
+        return { ok: false, reason: `blocked by ${blocking}` };
+    }
+    return { ok: true };
+}
+
 ;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
+
+
 
 
 
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label.
+ * and attempt to merge every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`).
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -41988,6 +42059,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     info(`starting lgtm merger page: ${currentPage}`);
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
+    const tide = await loadTide(octokit, context);
     // Get next batch
     let prs;
     try {
@@ -42013,7 +42085,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
             return;
         }
         try {
-            if (await tryMergePr(pr, octokit, context, progress.failures)) {
+            if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
                 progress.jobsDone++;
             }
         }
@@ -42028,6 +42100,11 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     }
     // Recurse, continue to next page
     return await cronLgtm(currentPage + 1, context, progress);
+}
+// the configuration is memoized per repository, so every page sees the same tide section
+async function loadTide(octokit, context) {
+    const config = await loadProwConfig(octokit, context);
+    return resolveTide(config.tide, getInput('merge-method', { required: false }));
 }
 /**
  * grabs pulls from github in baches of 100
@@ -42047,27 +42124,28 @@ async function getOpenPrs(octokit, context = github_context, page) {
     return prResults.data;
 }
 /**
- * Attempts to merge a PR if it has the lgtm label and not the hold label.
- * A refused merge is logged as an error annotation and recorded in
- * failures instead of aborting the run.
+ * Attempts to merge a PR that passes the tide merge gate; a PR that does
+ * not is skipped with the reason logged. A refused merge is logged as an
+ * error annotation and recorded in failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
+ * @param tide - the resolved tide configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
-async function tryMergePr(pr, octokit, context = github_context, failures) {
-    const method = getInput('merge-method', { required: false });
-    const names = pr.labels.map(e => e.name);
-    if (!names.includes('lgtm') || names.includes('hold')) {
+async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+    if (!gate.ok) {
+        info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
     try {
         await octokit.pulls.merge({
             ...context.repo,
             pull_number: pr.number,
-            merge_method: mergeMethod(method),
+            merge_method: tide.merge_method,
         });
         return true;
     }
@@ -42076,16 +42154,6 @@ async function tryMergePr(pr, octokit, context = github_context, failures) {
         error(`could not merge pr #${pr.number}: ${message}`);
         failures.push({ number: pr.number, message });
         return false;
-    }
-}
-// an unknown merge-method input falls back to 'merge'
-function mergeMethod(input) {
-    switch (input) {
-        case 'squash':
-        case 'rebase':
-            return input;
-        default:
-            return 'merge';
     }
 }
 
