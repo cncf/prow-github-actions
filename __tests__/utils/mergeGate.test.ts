@@ -78,7 +78,12 @@ describe('resolveTide', () => {
       labels: ['lgtm'],
       missing_labels: ['do-not-merge/*', 'needs-rebase', 'hold'],
       merge_method: 'merge',
+      merge_on_events: true,
     })
+  })
+
+  it('merge_on_events: false turns the event handlers off', () => {
+    expect(resolveTide({ merge_on_events: false }).merge_on_events).toBe(false)
   })
 
   it('a configured merge_method wins over the action input', () => {
@@ -97,6 +102,7 @@ describe('resolveTide', () => {
       labels: ['lgtm', 'approved'],
       missing_labels: [],
       merge_method: 'merge',
+      merge_on_events: true,
     })
   })
 })

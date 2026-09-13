@@ -37,6 +37,8 @@ export interface TideConfig {
   labels?: string[]
   missing_labels?: string[]
   merge_method?: MergeMethod
+  /** evaluate and merge on pull_request, pull_request_review and check_suite events; default true */
+  merge_on_events?: boolean
 }
 
 /** TideConfig with every default applied, see resolveTide */
@@ -44,6 +46,7 @@ export interface ResolvedTide {
   labels: string[]
   missing_labels: string[]
   merge_method: MergeMethod
+  merge_on_events: boolean
 }
 
 export interface HoldConfig {
@@ -448,10 +451,15 @@ function normalizeTide(source: string, raw: unknown): TideConfig {
     throw new Error(`${source}: tide.merge_method must be one of ${mergeMethods.join(', ')}`)
   }
 
+  if (raw.merge_on_events !== undefined && typeof raw.merge_on_events !== 'boolean') {
+    throw new Error(`${source}: tide.merge_on_events must be a boolean`)
+  }
+
   return stripUndefined({
     labels: raw.labels as string[] | undefined,
     missing_labels: raw.missing_labels as string[] | undefined,
     merge_method: raw.merge_method as TideConfig['merge_method'],
+    merge_on_events: raw.merge_on_events as boolean | undefined,
   })
 }
 
@@ -523,7 +531,7 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
  * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
  * `hold`. A configured list replaces the default one, it does not extend it.
  * The merge method is `tide.merge_method`, else the `merge-method` action
- * input, else `merge`.
+ * input, else `merge`. `merge_on_events` defaults to true.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
@@ -533,6 +541,7 @@ export function resolveTide(tide: TideConfig, inputMergeMethod = ''): ResolvedTi
     labels: tide.labels ?? defaultTideLabels,
     missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
     merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
+    merge_on_events: tide.merge_on_events ?? true,
   }
 }
 

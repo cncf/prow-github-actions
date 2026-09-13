@@ -12,9 +12,11 @@ skipped, so a workflow may subscribe to `labeled`/`unlabeled` without the job st
 the label the moment `/lgtm` adds it.
 
 The [`require_matching_label`](./configuration.md#require_matching_label) rules,
-[`owners-label`](./labeling.md#labels-from-owners-files) and
-[`blunderbuss`](./configuration.md#blunderbuss) run on the
-same events before the jobs and need no input. A workflow may therefore subscribe to
+[`owners-label`](./labeling.md#labels-from-owners-files),
+[`blunderbuss`](./configuration.md#blunderbuss) and
+[`tide`](./automatic-merging.md#event-driven-merging) run on the
+same events before the jobs and need no input. `tide` does not evaluate `synchronize`, so
+the label removal below is never raced by a merge. A workflow may therefore subscribe to
 `pull_request` with no `jobs` at all; the run only fails with
 `please provide a list of space delimited commands / jobs to run. None found` when `jobs`
 is empty **and** nothing else handles the event.

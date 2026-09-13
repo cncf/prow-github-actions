@@ -85,11 +85,12 @@ require_matching_label:
     prs: true
     grace_period_duration: 5s
 
-# the merge gate of the lgtm job; these are the defaults
+# the merge gate; these are the defaults
 tide:
   labels: [lgtm]
   missing_labels: [do-not-merge/*, needs-rebase, hold]
   merge_method: merge
+  merge_on_events: true
 
 # the label /hold applies; this is the default
 hold:
@@ -241,18 +242,20 @@ The workflow must subscribe to the events; see [events](./events.md#issues-and-p
 
 ### `tide`
 
-The merge gate of the [`lgtm` job](./automatic-merging.md#the-merge-gate), modelled on
-Prow's tide query. Every field is optional; a configured list **replaces** the default list
-rather than extending it.
+The [merge gate](./automatic-merging.md#the-merge-gate) of the event handlers and the `lgtm`
+job, modelled on Prow's tide query. Every field is optional; a configured list **replaces** the
+default list rather than extending it.
 
 Field | Default | Meaning
 --- | --- | ---
 `labels` | `[lgtm]` | every pattern must match a label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match a label on the PR
 `merge_method` | the `merge-method` input, else `merge` | `merge`, `squash` or `rebase`; wins over the input
+`merge_on_events` | `true` | `false`: the `pull_request`, `pull_request_review` and `check_suite` handlers merge nothing; only the cron does ([event-driven merging](./automatic-merging.md#event-driven-merging))
 
 Entries are label names compared case-insensitively; `*` matches any run of characters,
-`/` included. An empty name or an unknown `merge_method` fails the run.
+`/` included. An empty name, an unknown `merge_method` or a non-boolean `merge_on_events`
+fails the run.
 
 ### `hold`
 

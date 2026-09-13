@@ -15,6 +15,7 @@ import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
+import { pullHandler } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
@@ -321,6 +322,8 @@ describe('requireMatchingLabel handler', () => {
     utils.setupJobsEnv('lgtm')
     serveRules([{ regexp: '^kind/', missing_label: 'needs-kind', prs: true }])
     const writes = serveIssue(['kind/bug', 'needs-kind'])
+    // tide evaluates the pull request on labeled too and stops at the missing lgtm
+    server.use(pullHandler())
 
     await handlePullReq(new utils.MockContext(prEvent('labeled', ['kind/bug', 'needs-kind'], 'kind/bug')))
 

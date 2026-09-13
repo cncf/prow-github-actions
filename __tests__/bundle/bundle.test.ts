@@ -132,10 +132,10 @@ describe('dist/index.js', () => {
   })
 
   it.each([
-    ['pull_request_review', pullReqReviewSubmittedEvent],
-    ['check_suite', checkSuiteCompletedEvent],
-    ['status', checkSuiteCompletedEvent],
-  ])('%s is routed and exits 0 without calling the api while no handlers are registered', async (eventName, payload) => {
+    ['pull_request_review', { ...pullReqReviewSubmittedEvent, action: 'edited' }],
+    ['check_suite', { ...checkSuiteCompletedEvent, check_suite: { ...checkSuiteCompletedEvent.check_suite, conclusion: 'failure' } }],
+    ['status', { sha: checkSuiteCompletedEvent.check_suite.head_sha, state: 'pending', repository: checkSuiteCompletedEvent.repository }],
+  ])('%s is routed and exits 0 without calling the api when tide has nothing to gain', async (eventName, payload) => {
     const result = await runBundle({ eventName, payload, inputs: token, apiUrl: gh.url })
 
     expect(result.status, result.stdout).toBe(0)
@@ -807,17 +807,164 @@ describe('dist/index.js', () => {
   it('pull_request lgtm job leaves the lgtm label alone when the pr is labeled', async () => {
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['kind/bug'], { number: 1 }) })
 
     const result = await runBundle({
       eventName: 'pull_request',
-      payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } },
+      payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'kind/bug' } },
       inputs: { ...token, jobs: 'lgtm' },
       apiUrl: gh.url,
     })
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    expectRequests(configReads(), [])
+    // tide reads the pull request once and stops at the missing lgtm; the lgtm job does nothing on labeled
+    expectRequests(configReads(), [`GET ${repo}/pulls/1`])
+  })
+
+  describe('event-driven merging', () => {
+    const pullRead = `GET ${repo}/pulls/1`
+    const merge = `PUT ${repo}/pulls/1/merge`
+
+    function mergeablePr(state: string, labels = ['lgtm']) {
+      return openPr(labels, { number: 1, mergeable: state === 'unknown' ? null : true, mergeable_state: state })
+    }
+
+    function labeledLgtm() {
+      return { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }
+    }
+
+    function runPullRequest(payload: unknown, inputs: Record<string, string> = {}) {
+      return runBundle({ eventName: 'pull_request', payload, inputs: { ...token, 'merge-method': 'squash', ...inputs }, apiUrl: gh.url })
+    }
+
+    it('pull_request labeled lgtm: squash-merges a clean pr', async () => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('merged pr #1')
+      const merges = gh.requestsMatching('PUT', /\/pulls\/1\/merge$/)
+      expect(merges).toHaveLength(1)
+      expect(merges[0].body).toEqual({ merge_method: 'squash' })
+      expectRequests(configReads(), [pullRead, merge])
+    })
+
+    it('pull_request labeled lgtm: tide.merge_method wins over the input', async () => {
+      gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_method: rebase\n') })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'rebase' })
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [pullRead, merge])
+    })
+
+    it.each(['blocked', 'behind', 'dirty', 'unstable'])('pull_request labeled lgtm: does not merge a %s pr', async (state) => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr(state) })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`skipping pr #1: not mergeable (${state})`)
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      expectRequests(configReads(), [pullRead])
+    })
+
+    // GitHub answers unknown right after a push; the bundle really waits 1 s here before the second read
+    it('pull_request labeled lgtm: re-reads an unknown state and merges once it is clean', async () => {
+      gh.routeSequence('GET', `${repo}/pulls/1`, [
+        { status: 200, body: mergeablePr('unknown') },
+        { status: 200, body: mergeablePr('clean') },
+      ])
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expectRequests(configReads(), [pullRead, pullRead, merge])
+    })
+
+    it('pull_request labeled lgtm: a refused merge fails the run', async () => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 405, body: { message: 'Pull Request is not mergeable' } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('could not merge pr #1: Pull Request is not mergeable'))).toBe(true)
+      expect(result.errors.some(e => e.includes('error handling pull_request event: could not merge pull request(s) #1'))).toBe(true)
+      // the refusal triggers a re-read to tell a concurrent merge from a real failure
+      expectRequests(configReads(), [pullRead, merge, pullRead])
+    })
+
+    it('pull_request labeled lgtm: merge_on_events false leaves the pr to the cron', async () => {
+      gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_on_events: false\n') })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [])
+    })
+
+    it('pull_request_review submitted: evaluates the reviewed pr', async () => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runBundle({ eventName: 'pull_request_review', payload: pullReqReviewSubmittedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge' })
+      expectRequests(configReads(), [pullRead, merge])
+    })
+
+    it('check_suite completed: evaluates the pull requests the payload names', async () => {
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runBundle({
+        eventName: 'check_suite',
+        payload: { ...checkSuiteCompletedEvent, check_suite: { ...checkSuiteCompletedEvent.check_suite, pull_requests: [{ number: 1 }] } },
+        inputs: token,
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expectRequests(configReads(), [pullRead, merge])
+    })
+
+    it('check_suite completed without pull_requests: finds the pr by head sha', async () => {
+      const sha = checkSuiteCompletedEvent.check_suite.head_sha
+      gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+        const page = new URL(req.path, gh.url).searchParams.get('page')
+        return { status: 200, body: page === '1' ? [{ number: 1, head: { sha } }, { number: 2, head: { sha: 'other' } }] : [] }
+      })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runBundle({ eventName: 'check_suite', payload: checkSuiteCompletedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expectRequests(configReads(), [
+        `GET ${repo}/pulls?state=open&per_page=100&page=1`,
+        `GET ${repo}/pulls?state=open&per_page=100&page=2`,
+        pullRead,
+        merge,
+      ])
+    })
   })
 
   describe('schedule lgtm job', () => {

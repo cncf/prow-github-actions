@@ -35,8 +35,22 @@ export function changedFiles(...files: (string | ChangedFile)[]): ChangedFile[] 
   return files.map(f => (typeof f === 'string' ? { filename: f, status: 'modified' } : f))
 }
 
+// an open, clean pull request without labels: the OWNERS plugins read its base, tide reads its labels and state
+export const pullBody = {
+  number: 1,
+  state: 'open',
+  locked: false,
+  draft: false,
+  merged: false,
+  mergeable: true,
+  mergeable_state: 'clean',
+  labels: [],
+  base: { sha: baseSha },
+  head: { sha: 'headsha' },
+}
+
 export function pullHandler(observe?: utils.ObserveRequest): HttpHandler {
-  return http.get(`${repo}/pulls/1`, utils.mockResponse(200, { base: { sha: baseSha } }, observe))
+  return http.get(`${repo}/pulls/1`, utils.mockResponse(200, pullBody, observe))
 }
 
 export function filesHandler(files: ChangedFile[], observe?: utils.ObserveRequest): HttpHandler {

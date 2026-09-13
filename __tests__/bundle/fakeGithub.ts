@@ -25,6 +25,8 @@ export interface FakeGithub {
   url: string
   requests: RecordedRequest[]
   route: (method: string, pattern: string | RegExp, response: Handler | FakeResponse) => void
+  /** answers with one response per call in order, repeating the last one */
+  routeSequence: (method: string, pattern: string | RegExp, responses: FakeResponse[]) => void
   requestsMatching: (method: string, pathRegex: RegExp) => RecordedRequest[]
   reset: () => void
   close: () => Promise<void>
@@ -93,6 +95,10 @@ export async function start(): Promise<FakeGithub> {
     route(method, pattern, response) {
       const handler = typeof response === 'function' ? response : () => response
       routes.push({ method: method.toUpperCase(), pattern, handler })
+    },
+    routeSequence(method, pattern, responses) {
+      let calls = 0
+      routes.push({ method: method.toUpperCase(), pattern, handler: () => responses[Math.min(calls++, responses.length - 1)] })
     },
     requestsMatching(method, pathRegex) {
       return requests.filter(r => r.method === method.toUpperCase() && pathRegex.test(r.path))

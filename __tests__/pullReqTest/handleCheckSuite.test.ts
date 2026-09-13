@@ -3,6 +3,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { tideOnCheckSuite } from '../../src/plugins/tide'
 import { checkSuiteHandlers, handleCheckSuite, pullRequestsForSha } from '../../src/pullReq/handleCheckSuite'
 import { newOctokit } from '../../src/utils/octokit'
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -14,20 +15,25 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
+const registeredHandlers = [...checkSuiteHandlers]
+beforeEach(() => {
   checkSuiteHandlers.length = 0
 })
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 const sha = checkSuiteCompletedEvent.check_suite.head_sha
+
+it('registers tide', () => {
+  expect(registeredHandlers).toEqual([tideOnCheckSuite])
+})
 
 describe('handleCheckSuite', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
   })
 
-  it.each(['check_suite', 'status'])('resolves a %s event without calling the api or failing when no handlers are registered', async (eventName) => {
+  it.each(['check_suite', 'status'])('resolves a %s event without calling the api or failing when the registry is emptied', async (eventName) => {
     const context = new utils.MockContext(checkSuiteCompletedEvent)
     context.eventName = eventName
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
