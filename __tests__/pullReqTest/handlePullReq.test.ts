@@ -50,15 +50,29 @@ function serveLgtmRemoval() {
   return { getReq, deleteReq }
 }
 
-it('ignores the jobs if not setup in environment', async () => {
-  const spy = vi.spyOn(core, 'setFailed')
+it('fails when no jobs are configured and no pull_request handler is registered', async () => {
+  const spy = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
   utils.setupActionsEnv('/assign')
 
   const runContext = new utils.MockContext(prSynchronizeEvent)
 
   await handlePullReq(runContext)
-  expect(spy).toHaveBeenCalled()
+  expect(spy).toHaveBeenCalledExactlyOnceWith('please provide a list of space delimited commands / jobs to run. None found')
+})
+
+it('does not fail when no jobs are configured but a pull_request handler is registered', async () => {
+  const spy = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  const handler = vi.fn().mockResolvedValue(undefined)
+  pullRequestHandlers.push(handler)
+
+  utils.setupActionsEnv('/assign')
+
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+
+  await handlePullReq(runContext)
+  expect(handler).toHaveBeenCalledWith(runContext)
+  expect(spy).not.toHaveBeenCalled()
 })
 
 it('dispatches jobs delimited by newlines', async () => {

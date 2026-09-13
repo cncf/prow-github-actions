@@ -192,6 +192,30 @@ describe('dist/index.js', () => {
         `DELETE ${repo}/issues/comments/11`,
       ])
     })
+
+    it('issue_comment /check-required-labels re-evaluates the rules without a grace period', async () => {
+      routeOrgRule()
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: comment('/check-required-labels'),
+        inputs: { ...token, 'prow-commands': '/check-required-labels' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['needs-kind'] })
+      expectRequests(configReads({ org: '.project' }), [
+        `GET ${repo}/issues/1`,
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `POST ${repo}/issues/1/comments`,
+      ])
+    })
   })
 
   it('issue_comment /kind adds a prefixed label from .prowlabels.yaml', async () => {

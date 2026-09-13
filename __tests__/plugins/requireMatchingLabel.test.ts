@@ -5,10 +5,12 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { handleIssues } from '../../src/issues/handleIssues'
-import { applicableRules, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
+import { applicableRules, checkRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import * as sleepModule from '../../src/utils/sleep'
+import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -73,7 +75,7 @@ function serveIssue(labels: string[], comments: { id: number, body: string, user
   }
   server.use(
     http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: labels.map(name => ({ name })) })),
-    utils.repoHasLabels(['needs-kind', 'needs-area', 'kind/bug']),
+    utils.repoHasLabels(['needs-kind', 'needs-area', 'needs-size', 'kind/bug']),
     http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], writes.addLabels)),
     http.delete(`${repo}/issues/1/labels/:name`, utils.mockResponse(200, [], writes.removeLabel)),
     http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, comments, writes.listComments)),
@@ -90,6 +92,12 @@ function prEvent(action: string, labels: string[], changed?: string) {
   if (changed !== undefined)
     payload.label = { name: changed }
   return payload
+}
+
+function commentEvent(body: string, overrides: Record<string, unknown> = {}) {
+  const payload = structuredClone(issueCommentEvent)
+  payload.comment.body = body
+  return { ...payload, issue: { ...payload.issue, ...overrides } }
 }
 
 function configWith(...rules: RequireMatchingLabel[]): ProwConfig {
@@ -400,5 +408,75 @@ describe('requireMatchingLabel handler', () => {
 
     await expect(writes.removeLabel.called()).resolves.toBe('called')
     expect(setFailed).not.toHaveBeenCalled()
+  })
+})
+
+describe('/check-required-labels', () => {
+  let setFailed: ReturnType<typeof vi.spyOn>
+  let sleep: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    utils.setupActionsEnv('/check-required-labels')
+    setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    sleep = vi.spyOn(sleepModule, 'sleep').mockResolvedValue(undefined)
+  })
+
+  it('evaluates every applicable rule on an open issue without sleeping', async () => {
+    serveRules([{ ...kindRule, grace_period_duration: '5s' }, { regexp: '^area/', missing_label: 'needs-area', issues: true }])
+    const writes = serveIssue(['needs-area', 'area/docs'])
+
+    await handleIssueComment(new utils.MockContext(commentEvent('/check-required-labels')))
+
+    expect(sleep).not.toHaveBeenCalled()
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await writes.addLabels.body()).toEqual({ labels: ['needs-kind'] })
+    await expect(writes.postComment.called()).resolves.toBe('called')
+    await expect(writes.removeLabel.called()).resolves.toBe('called')
+    expect(writes.removeLabel.ref?.url).toBe(`${repo}/issues/1/labels/needs-area`)
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('applies the prs rules when the comment is on a pull request', async () => {
+    serveRules([{ regexp: '^kind/', missing_label: 'needs-kind', issues: true }, { regexp: '^size/', missing_label: 'needs-size', prs: true }])
+    const writes = serveIssue([])
+
+    await checkRequiredLabels(new utils.MockContext(commentEvent('/check-required-labels', { pull_request: { url: `${repo}/pulls/1` } })))
+
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await writes.addLabels.body()).toEqual({ labels: ['needs-size'] })
+  })
+
+  it('does nothing on a closed issue', async () => {
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+
+    await checkRequiredLabels(new utils.MockContext(commentEvent('/check-required-labels', { state: 'closed' })))
+
+    expect(debug).toHaveBeenCalledWith('require-matching-label: the issue is not open, nothing to check')
+  })
+
+  it('has no /remove- form', async () => {
+    await handleIssueComment(new utils.MockContext(commentEvent('/remove-check-required-labels')))
+
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('does not run when the command is not configured', async () => {
+    utils.setupActionsEnv('/kind')
+
+    await handleIssueComment(new utils.MockContext(commentEvent('/check-required-labels')))
+
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails the run with the rule name when the label cannot be added', async () => {
+    serveRules([{ regexp: '^kind/', missing_label: 'needs-kind' }])
+    serveIssue([])
+    server.use(http.post(`${repo}/issues/1/labels`, utils.mockResponse(500, { message: 'boom' })))
+
+    await handleIssueComment(new utils.MockContext(commentEvent('/check-required-labels')))
+
+    expect(setFailed).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/^TypeError: error handling issue comment: Error: require-matching-label needs-kind: could not add labels: .*boom/),
+    )
   })
 })
