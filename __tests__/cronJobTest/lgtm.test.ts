@@ -20,6 +20,8 @@ function prowYaml(text: string) {
 
 const server = setupServer(
   ...utils.noOrgOrRepoConfigExcept(),
+  // the gate's default depends on whether the default branch has OWNERS files; none here unless a test serves a tree
+  utils.defaultBranchTree(),
   // /repos/Codertocat/Hello-World/pulls?state=open&page={1,2}
   http.get(
     `${utils.api}/repos/Codertocat/Hello-World/pulls`,
@@ -243,6 +245,39 @@ describe('cronLgtm', () => {
       await expect(handleCronJobs(context)).resolves.not.toThrow()
       await expect(observeReq.notCalled()).resolves.toBe('not called')
       expect(info).toHaveBeenCalledWith('skipping pr #7: missing lgtm')
+    })
+
+    it('requires approved as well on a repository with OWNERS files, reading the tree once', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      let trees = 0
+      server.use(http.get(`${utils.api}/repos/Codertocat/Hello-World/git/trees/master`, () => {
+        trees++
+        return new Response(JSON.stringify({ sha: 'x', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'a' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }))
+      routePulls([lgtmPr(15), lgtmPr(16, 'approved')])
+      const observeFifteen = observeMerge(15)
+      const observeSixteen = observeMerge(16)
+
+      const info = vi.spyOn(core, 'info')
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeFifteen.notCalled()).resolves.toBe('not called')
+      await expect(observeSixteen.called()).resolves.toBe('called')
+      expect(info).toHaveBeenCalledWith('skipping pr #15: missing approved')
+      expect(trees).toBe(1)
+    })
+
+    it('a configured tide.labels wins over the OWNERS default without reading the tree', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      const observeTree = new utils.ObserveRequest()
+      server.use(prowYaml('tide:\n  labels: [lgtm]\n'), utils.defaultBranchTree(['OWNERS'], observeTree))
+      routePulls([lgtmPr(17)])
+      const observeReq = observeMerge(17)
+
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeReq.called()).resolves.toBe('called')
+      await expect(observeTree.notCalled()).resolves.toBe('not called')
     })
 
     it('requires every label of tide.labels', async () => {

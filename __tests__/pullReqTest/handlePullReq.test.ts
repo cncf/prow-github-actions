@@ -153,6 +153,37 @@ it('runs the registered pull_request handlers before the jobs', async () => {
   expect(setFailed).not.toHaveBeenCalled()
 })
 
+it('runs the registered handlers one after the other in registration order', async () => {
+  utils.setupActionsEnv('/assign')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const order: string[] = []
+  pullRequestHandlers.push(
+    async () => {
+      order.push('first:start')
+      await new Promise(resolve => setTimeout(resolve, 20))
+      order.push('first:end')
+    },
+    async () => {
+      order.push('second')
+    },
+  )
+
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(order).toEqual(['first:start', 'first:end', 'second'])
+})
+
+it('keeps running the later handlers when an earlier one rejects', async () => {
+  utils.setupActionsEnv('/assign')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const later = vi.fn().mockResolvedValue(undefined)
+  pullRequestHandlers.push(vi.fn().mockRejectedValue(new Error('plugin boom')), later)
+
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(later).toHaveBeenCalledWith(runContext)
+  expect(setFailed).toHaveBeenCalledWith('error handling pull_request event: plugin boom')
+})
+
 it('fails the run when a registered pull_request handler rejects', async () => {
   utils.setupJobsEnv('lgtm')
   const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })

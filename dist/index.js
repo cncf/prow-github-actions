@@ -40798,10 +40798,12 @@ const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
 const defaultHoldLabel = 'do-not-merge/hold';
 const defaultTideLabels = ['lgtm'];
+/** the `tide.labels` default of a repository with OWNERS files, where the approve plugin manages `approved` */
+const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40950,8 +40952,8 @@ function isNotFound(error) {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide`, `hold` and
- * `blunderbuss` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold`,
+ * `blunderbuss` and `approve` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40987,6 +40989,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.blunderbuss !== undefined) {
         config.blunderbuss = normalizeBlunderbuss(source, loaded.blunderbuss);
+    }
+    if (loaded.approve !== undefined) {
+        config.approve = normalizeApprove(source, loaded.approve);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41140,10 +41145,22 @@ function normalizeBlunderbuss(source, raw) {
         ignore_authors: raw.ignore_authors,
     });
 }
+const approveFlags = ['require_self_approval', 'ignore_review_state', 'lgtm_acts_as_approve'];
+function normalizeApprove(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: approve must be a mapping`);
+    }
+    for (const field of approveFlags) {
+        if (raw[field] !== undefined && typeof raw[field] !== 'boolean') {
+            throw new Error(`${source}: approve.${field} must be a boolean`);
+        }
+    }
+    return stripUndefined(Object.fromEntries(approveFlags.map(field => [field, raw[field]])));
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide, hold and blunderbuss
- * shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold, blunderbuss and
+ * approve shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41155,21 +41172,24 @@ function mergeProwConfig(base, over) {
         tide: { ...base.tide, ...over.tide },
         hold: { ...base.hold, ...over.hold },
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
+        approve: { ...base.approve, ...over.approve },
     };
 }
 /**
  * resolveTide applies the defaults to a parsed tide section: `labels`
- * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
- * `hold`. A configured list replaces the default one, it does not extend it.
- * The merge method is `tide.merge_method`, else the `merge-method` action
- * input, else `merge`. `merge_on_events` defaults to true.
+ * `['lgtm']`, or `['lgtm', 'approved']` when the repository has OWNERS files;
+ * `missing_labels` the do-not-merge family, `needs-rebase` and `hold`. A
+ * configured list replaces the default one, it does not extend it. The merge
+ * method is `tide.merge_method`, else the `merge-method` action input, else
+ * `merge`. `merge_on_events` defaults to true.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
+ * @param options - see ResolveTideOptions
  */
-function resolveTide(tide, inputMergeMethod = '') {
+function resolveTide(tide, inputMergeMethod = '', options = {}) {
     return {
-        labels: tide.labels ?? defaultTideLabels,
+        labels: tide.labels ?? (options.hasOwners === true ? defaultOwnersTideLabels : defaultTideLabels),
         missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
         merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
         merge_on_events: tide.merge_on_events ?? true,
@@ -42113,6 +42133,258 @@ function meetsMergeGate(labels, tide) {
     return { ok: true };
 }
 
+;// CONCATENATED MODULE: ./lib/utils/owners.js
+
+
+
+/**
+ * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
+ * logins are case-insensitive.
+ *
+ * @param path - the path of the OWNERS file, used in error messages
+ * @param contents - the yaml contents
+ */
+function parseOwners(path, contents) {
+    const loaded = contents.trim() === '' ? {} : load(contents);
+    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
+        ? loaded
+        : {};
+    if ('filters' in doc) {
+        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
+    }
+    const options = doc.options;
+    const noParentOwners = typeof options === 'object'
+        && options !== null
+        && options.no_parent_owners === true;
+    return {
+        path,
+        approvers: roleList(path, doc, 'approvers'),
+        reviewers: roleList(path, doc, 'reviewers'),
+        labels: stringList(path, doc, 'labels', 'label names'),
+        noParentOwners,
+    };
+}
+function roleList(path, doc, role) {
+    return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase());
+}
+function stringList(path, doc, key, what) {
+    const value = doc[key];
+    if (value === undefined || value === null) {
+        return [];
+    }
+    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
+        throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
+    }
+    return value;
+}
+/**
+ * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
+ *
+ * @param path - a repository relative path
+ */
+function ownersDir(path) {
+    const slash = path.lastIndexOf('/');
+    return slash === -1 ? '' : path.slice(0, slash);
+}
+/**
+ * Resolve the OWNERS that apply to a file: walk from its directory up to the
+ * root, taking the union of every OWNERS file on the way. A file with
+ * options.no_parent_owners stops the walk. Labels union along the walk too,
+ * where Prow's owners-label uses only the deepest file's labels.
+ *
+ * @param file - the changed file
+ * @param owners - OWNERS files keyed by directory
+ * @returns undefined when no OWNERS file covers the file
+ */
+function effectiveOwners(file, owners) {
+    const approvers = new Set();
+    const reviewers = new Set();
+    const labels = new Set();
+    const sources = [];
+    let dir = ownersDir(file);
+    for (;;) {
+        const found = owners.get(dir);
+        if (found !== undefined) {
+            found.approvers.forEach(a => approvers.add(a));
+            found.reviewers.forEach(r => reviewers.add(r));
+            found.labels.forEach(l => labels.add(l));
+            sources.push(found.path);
+            if (found.noParentOwners) {
+                break;
+            }
+        }
+        if (dir === '') {
+            break;
+        }
+        dir = ownersDir(dir);
+    }
+    if (sources.length === 0) {
+        return undefined;
+    }
+    return { approvers, reviewers, labels, sources };
+}
+function ancestorDirs(paths) {
+    const dirs = new Set(['']);
+    for (const path of paths) {
+        for (let dir = ownersDir(path); dir !== ''; dir = ownersDir(dir)) {
+            dirs.add(dir);
+        }
+    }
+    return dirs;
+}
+function isOwnersPath(path) {
+    return path === 'OWNERS' || path.endsWith('/OWNERS');
+}
+function decode(data, path) {
+    const file = data;
+    if (!file.content || !file.encoding) {
+        throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
+    }
+    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
+}
+/**
+ * Load the OWNERS files at ref that can apply to the given paths.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param ref - the commit to read OWNERS files from
+ * @param pathsOfInterest - the changed files; only OWNERS in their ancestor directories are fetched
+ */
+async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
+    const dirs = ancestorDirs(pathsOfInterest);
+    let tree;
+    try {
+        const response = await octokit.git.getTree({
+            ...context.repo,
+            tree_sha: ref,
+            recursive: 'true',
+        });
+        tree = response.data;
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    if (tree.truncated) {
+        // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
+        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
+        return probeOwners(octokit, context, ref, dirs);
+    }
+    const entries = tree.tree.filter(entry => entry.type === 'blob'
+        && entry.path !== undefined
+        && entry.sha !== undefined
+        && isOwnersPath(entry.path));
+    const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
+    let files;
+    try {
+        files = await Promise.all(wanted.map(async (entry) => {
+            const blob = await octokit.git.getBlob({
+                ...context.repo,
+                file_sha: entry.sha,
+            });
+            return parseOwners(entry.path, decode(blob.data, entry.path));
+        }));
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    return {
+        owners: new Map(files.map(file => [ownersDir(file.path), file])),
+        hasOwners: entries.length > 0,
+    };
+}
+async function probeOwners(octokit, context, ref, dirs) {
+    const owners = new Map();
+    for (const dir of dirs) {
+        const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
+        let data;
+        try {
+            const response = await octokit.repos.getContent({
+                ...context.repo,
+                path,
+                ref,
+            });
+            data = response.data;
+        }
+        catch (e) {
+            if (owners_isNotFound(e)) {
+                continue;
+            }
+            throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+        }
+        owners.set(dir, parseOwners(path, decode(data, path)));
+    }
+    return { owners, hasOwners: owners.size > 0 };
+}
+const hasOwnersCache = new Map();
+/**
+ * repoHasOwners reports whether the default branch carries any OWNERS file,
+ * which is what switches `/approve` and the tide gate to their OWNERS
+ * behaviour. One recursive tree listing per repository, memoized for the
+ * lifetime of the process; the payload's `repository.default_branch` spares
+ * the `repos.get` lookup when present.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+function repoHasOwners(octokit, context) {
+    const key = `${context.repo.owner}/${context.repo.repo}`;
+    let pending = hasOwnersCache.get(key);
+    if (pending === undefined) {
+        pending = probeRepoOwners(octokit, context);
+        hasOwnersCache.set(key, pending);
+    }
+    return pending;
+}
+function resetRepoHasOwnersCache() {
+    hasOwnersCache.clear();
+}
+async function probeRepoOwners(octokit, context) {
+    const branch = await defaultBranch(octokit, context);
+    let tree;
+    try {
+        tree = (await octokit.git.getTree({ ...context.repo, tree_sha: branch, recursive: 'true' })).data;
+    }
+    catch (e) {
+        if (owners_isNotFound(e)) {
+            core_debug(`no tree at ${branch}: treating the repository as having no OWNERS files`);
+            return false;
+        }
+        throw new Error(`error listing the tree of ${branch}: ${e}`);
+    }
+    if (tree.tree.some(entry => entry.type === 'blob' && entry.path !== undefined && isOwnersPath(entry.path))) {
+        return true;
+    }
+    if (!tree.truncated) {
+        return false;
+    }
+    // a truncated listing may have dropped every OWNERS entry; the root file is the one Prow requires anyway
+    try {
+        await octokit.repos.getContent({ ...context.repo, path: 'OWNERS', ref: branch });
+        return true;
+    }
+    catch (e) {
+        if (owners_isNotFound(e)) {
+            return false;
+        }
+        throw new Error(`error probing for a root OWNERS file at ${branch}: ${e}`);
+    }
+}
+async function defaultBranch(octokit, context) {
+    const fromPayload = context.payload.repository?.default_branch;
+    if (typeof fromPayload === 'string' && fromPayload !== '') {
+        return fromPayload;
+    }
+    try {
+        return (await octokit.repos.get({ ...context.repo })).data.default_branch;
+    }
+    catch (e) {
+        throw new Error(`could not read the default branch: ${e}`);
+    }
+}
+function owners_isNotFound(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 404;
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
 /**
  * Lists the numbers of the open pull requests whose head is the given commit,
@@ -42152,6 +42424,7 @@ function sleep(ms) {
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/tide.js
+
 
 
 
@@ -42343,14 +42616,28 @@ async function tideOnCheckSuite(context = github_context) {
     const listed = (suite?.pull_requests ?? []).map((pr) => pr.number);
     await evaluate(context, listed, async (octokit) => pullRequestsForSha(octokit, context, sha));
 }
+/**
+ * loadTide reads the configuration and resolves the tide section. The
+ * `labels` default depends on whether the repository has OWNERS files
+ * (`[lgtm, approved]`) or not (`[lgtm]`); that lookup is skipped when
+ * `tide.labels` is configured, and memoized otherwise.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ */
+async function loadTide(octokit, context) {
+    const config = await loadProwConfig(octokit, context);
+    const hasOwners = config.tide.labels === undefined ? await repoHasOwners(octokit, context) : false;
+    return resolveTide(config.tide, getInput('merge-method', { required: false }), { hasOwners });
+}
 async function evaluate(context, numbers, lookup) {
     const octokit = newOctokit(getInput('github-token', { required: true }));
     const config = await loadProwConfig(octokit, context);
-    const tide = resolveTide(config.tide, getInput('merge-method', { required: false }));
-    if (!tide.merge_on_events) {
+    if (config.tide.merge_on_events === false) {
         core_debug('tide: merge_on_events is false, leaving the merge to the lgtm cron');
         return;
     }
+    const tide = await loadTide(octokit, context);
     const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
     if (candidates.length === 0) {
         core_debug('tide: no open pull request to evaluate');
@@ -42371,7 +42658,6 @@ function pullNumber(context) {
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
-
 
 
 
@@ -42436,11 +42722,6 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     }
     // Recurse, continue to next page
     return await cronLgtm(currentPage + 1, context, progress);
-}
-// the configuration is memoized per repository, so every page sees the same tide section
-async function loadTide(octokit, context) {
-    const config = await loadProwConfig(octokit, context);
-    return resolveTide(config.tide, getInput('merge-method', { required: false }));
 }
 /**
  * grabs pulls from github in baches of 100
@@ -42588,189 +42869,6 @@ function fixed_requireIssueNumber(context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     return issueNumber;
-}
-
-;// CONCATENATED MODULE: ./lib/utils/owners.js
-
-
-
-/**
- * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
- * logins are case-insensitive.
- *
- * @param path - the path of the OWNERS file, used in error messages
- * @param contents - the yaml contents
- */
-function parseOwners(path, contents) {
-    const loaded = contents.trim() === '' ? {} : load(contents);
-    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
-        ? loaded
-        : {};
-    if ('filters' in doc) {
-        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
-    }
-    const options = doc.options;
-    const noParentOwners = typeof options === 'object'
-        && options !== null
-        && options.no_parent_owners === true;
-    return {
-        path,
-        approvers: roleList(path, doc, 'approvers'),
-        reviewers: roleList(path, doc, 'reviewers'),
-        labels: stringList(path, doc, 'labels', 'label names'),
-        noParentOwners,
-    };
-}
-function roleList(path, doc, role) {
-    return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase());
-}
-function stringList(path, doc, key, what) {
-    const value = doc[key];
-    if (value === undefined || value === null) {
-        return [];
-    }
-    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
-        throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
-    }
-    return value;
-}
-/**
- * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
- *
- * @param path - a repository relative path
- */
-function ownersDir(path) {
-    const slash = path.lastIndexOf('/');
-    return slash === -1 ? '' : path.slice(0, slash);
-}
-/**
- * Resolve the OWNERS that apply to a file: walk from its directory up to the
- * root, taking the union of every OWNERS file on the way. A file with
- * options.no_parent_owners stops the walk. Labels union along the walk too,
- * where Prow's owners-label uses only the deepest file's labels.
- *
- * @param file - the changed file
- * @param owners - OWNERS files keyed by directory
- * @returns undefined when no OWNERS file covers the file
- */
-function effectiveOwners(file, owners) {
-    const approvers = new Set();
-    const reviewers = new Set();
-    const labels = new Set();
-    const sources = [];
-    let dir = ownersDir(file);
-    for (;;) {
-        const found = owners.get(dir);
-        if (found !== undefined) {
-            found.approvers.forEach(a => approvers.add(a));
-            found.reviewers.forEach(r => reviewers.add(r));
-            found.labels.forEach(l => labels.add(l));
-            sources.push(found.path);
-            if (found.noParentOwners) {
-                break;
-            }
-        }
-        if (dir === '') {
-            break;
-        }
-        dir = ownersDir(dir);
-    }
-    if (sources.length === 0) {
-        return undefined;
-    }
-    return { approvers, reviewers, labels, sources };
-}
-function ancestorDirs(paths) {
-    const dirs = new Set(['']);
-    for (const path of paths) {
-        for (let dir = ownersDir(path); dir !== ''; dir = ownersDir(dir)) {
-            dirs.add(dir);
-        }
-    }
-    return dirs;
-}
-function isOwnersPath(path) {
-    return path === 'OWNERS' || path.endsWith('/OWNERS');
-}
-function decode(data, path) {
-    const file = data;
-    if (!file.content || !file.encoding) {
-        throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
-    }
-    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
-}
-/**
- * Load the OWNERS files at ref that can apply to the given paths.
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param ref - the commit to read OWNERS files from
- * @param pathsOfInterest - the changed files; only OWNERS in their ancestor directories are fetched
- */
-async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
-    const dirs = ancestorDirs(pathsOfInterest);
-    let tree;
-    try {
-        const response = await octokit.git.getTree({
-            ...context.repo,
-            tree_sha: ref,
-            recursive: 'true',
-        });
-        tree = response.data;
-    }
-    catch (e) {
-        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-    }
-    if (tree.truncated) {
-        // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
-        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
-        return probeOwners(octokit, context, ref, dirs);
-    }
-    const entries = tree.tree.filter(entry => entry.type === 'blob'
-        && entry.path !== undefined
-        && entry.sha !== undefined
-        && isOwnersPath(entry.path));
-    const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
-    let files;
-    try {
-        files = await Promise.all(wanted.map(async (entry) => {
-            const blob = await octokit.git.getBlob({
-                ...context.repo,
-                file_sha: entry.sha,
-            });
-            return parseOwners(entry.path, decode(blob.data, entry.path));
-        }));
-    }
-    catch (e) {
-        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-    }
-    return {
-        owners: new Map(files.map(file => [ownersDir(file.path), file])),
-        hasOwners: entries.length > 0,
-    };
-}
-async function probeOwners(octokit, context, ref, dirs) {
-    const owners = new Map();
-    for (const dir of dirs) {
-        const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
-        let data;
-        try {
-            const response = await octokit.repos.getContent({
-                ...context.repo,
-                path,
-                ref,
-            });
-            data = response.data;
-        }
-        catch (e) {
-            if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-                continue;
-            }
-            throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-        }
-        owners.set(dir, parseOwners(path, decode(data, path)));
-    }
-    return { owners, hasOwners: owners.size > 0 };
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
@@ -44531,8 +44629,11 @@ function normalizeError(error) {
 ;// CONCATENATED MODULE: ./lib/utils/events.js
 
 /**
- * Runs every registered handler for an event and fails the run once with the
- * collected rejections. An empty registry is a debug-logged no-op.
+ * Runs every registered handler for an event, one after the other in
+ * registration order, and fails the run once with the collected rejections.
+ * The order matters: a handler that applies a label (approve) must finish
+ * before the one that reads the labels (tide). An empty registry is a
+ * debug-logged no-op.
  *
  * @param event - the github event name
  * @param handlers - the registry to run
@@ -44544,8 +44645,15 @@ async function runEventHandlers(event, handlers, context) {
         core_debug(`${event} event ${action} received; no handlers registered yet`);
         return;
     }
-    const results = await Promise.all(handlers.map(handler => handler(context).catch((e) => (e instanceof Error ? e : new Error(String(e))))));
-    const errors = results.filter((result) => result instanceof Error);
+    const errors = [];
+    for (const handler of handlers) {
+        try {
+            await handler(context);
+        }
+        catch (e) {
+            errors.push(e instanceof Error ? e : new Error(String(e)));
+        }
+    }
     if (errors.length > 0) {
         setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`);
     }

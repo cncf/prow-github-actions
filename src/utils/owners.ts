@@ -253,7 +253,7 @@ async function probeOwners(
       data = response.data
     }
     catch (e) {
-      if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
+      if (isNotFound(e)) {
         continue
       }
       throw new Error(`error loading OWNERS files at ${ref}: ${e}`)
@@ -263,4 +263,83 @@ async function probeOwners(
   }
 
   return { owners, hasOwners: owners.size > 0 }
+}
+
+const hasOwnersCache = new Map<string, Promise<boolean>>()
+
+/**
+ * repoHasOwners reports whether the default branch carries any OWNERS file,
+ * which is what switches `/approve` and the tide gate to their OWNERS
+ * behaviour. One recursive tree listing per repository, memoized for the
+ * lifetime of the process; the payload's `repository.default_branch` spares
+ * the `repos.get` lookup when present.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+export function repoHasOwners(octokit: Octokit, context: Context): Promise<boolean> {
+  const key = `${context.repo.owner}/${context.repo.repo}`
+  let pending = hasOwnersCache.get(key)
+  if (pending === undefined) {
+    pending = probeRepoOwners(octokit, context)
+    hasOwnersCache.set(key, pending)
+  }
+  return pending
+}
+
+export function resetRepoHasOwnersCache(): void {
+  hasOwnersCache.clear()
+}
+
+async function probeRepoOwners(octokit: Octokit, context: Context): Promise<boolean> {
+  const branch = await defaultBranch(octokit, context)
+
+  let tree
+  try {
+    tree = (await octokit.git.getTree({ ...context.repo, tree_sha: branch, recursive: 'true' })).data
+  }
+  catch (e) {
+    if (isNotFound(e)) {
+      core.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`)
+      return false
+    }
+    throw new Error(`error listing the tree of ${branch}: ${e}`)
+  }
+
+  if (tree.tree.some(entry => entry.type === 'blob' && entry.path !== undefined && isOwnersPath(entry.path))) {
+    return true
+  }
+  if (!tree.truncated) {
+    return false
+  }
+
+  // a truncated listing may have dropped every OWNERS entry; the root file is the one Prow requires anyway
+  try {
+    await octokit.repos.getContent({ ...context.repo, path: 'OWNERS', ref: branch })
+    return true
+  }
+  catch (e) {
+    if (isNotFound(e)) {
+      return false
+    }
+    throw new Error(`error probing for a root OWNERS file at ${branch}: ${e}`)
+  }
+}
+
+async function defaultBranch(octokit: Octokit, context: Context): Promise<string> {
+  const fromPayload: unknown = context.payload.repository?.default_branch
+  if (typeof fromPayload === 'string' && fromPayload !== '') {
+    return fromPayload
+  }
+
+  try {
+    return (await octokit.repos.get({ ...context.repo })).data.default_branch
+  }
+  catch (e) {
+    throw new Error(`could not read the default branch: ${e}`)
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'status' in error && error.status === 404
 }

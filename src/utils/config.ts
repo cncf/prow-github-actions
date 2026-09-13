@@ -66,12 +66,22 @@ export interface BlunderbussConfig {
   ignore_authors?: string[]
 }
 
+export interface ApproveConfig {
+  /** the author never counts as an approver of their own pull request; default false */
+  require_self_approval?: boolean
+  /** GitHub reviews neither add nor remove approvers; default false */
+  ignore_review_state?: boolean
+  /** `/lgtm` counts as `/approve`; default false */
+  lgtm_acts_as_approve?: boolean
+}
+
 export interface ProwConfig {
   labels: Record<string, LabelSection>
   require_matching_label: RequireMatchingLabel[]
   tide: TideConfig
   hold: HoldConfig
   blunderbuss: BlunderbussConfig
+  approve: ApproveConfig
   /** every file that contributed, lowest precedence first, as `owner/repo:path` or a url */
   sources: string[]
 }
@@ -81,11 +91,13 @@ const colorPattern = /^[0-9a-f]{6}$/i
 
 export const defaultHoldLabel = 'do-not-merge/hold'
 export const defaultTideLabels = ['lgtm']
+/** the `tide.labels` default of a repository with OWNERS files, where the approve plugin manages `approved` */
+export const defaultOwnersTideLabels = ['lgtm', 'approved']
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 export const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold']
 
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'] as const
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve'] as const
 
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 export const orgConfigRepos = ['.project', '.github']
@@ -273,8 +285,8 @@ function isNotFound(error: unknown): boolean {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide`, `hold` and
- * `blunderbuss` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold`,
+ * `blunderbuss` and `approve` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -316,6 +328,9 @@ export function parseProwConfig(source: string, text: string): Partial<ProwConfi
   }
   if (loaded.blunderbuss !== undefined) {
     config.blunderbuss = normalizeBlunderbuss(source, loaded.blunderbuss)
+  }
+  if (loaded.approve !== undefined) {
+    config.approve = normalizeApprove(source, loaded.approve)
   }
 
   const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !(reservedKeys as readonly string[]).includes(key))
@@ -508,10 +523,26 @@ function normalizeBlunderbuss(source: string, raw: unknown): BlunderbussConfig {
   })
 }
 
+const approveFlags = ['require_self_approval', 'ignore_review_state', 'lgtm_acts_as_approve'] as const
+
+function normalizeApprove(source: string, raw: unknown): ApproveConfig {
+  if (!isMapping(raw)) {
+    throw new Error(`${source}: approve must be a mapping`)
+  }
+
+  for (const field of approveFlags) {
+    if (raw[field] !== undefined && typeof raw[field] !== 'boolean') {
+      throw new Error(`${source}: approve.${field} must be a boolean`)
+    }
+  }
+
+  return stripUndefined(Object.fromEntries(approveFlags.map(field => [field, raw[field] as boolean | undefined])) as ApproveConfig)
+}
+
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide, hold and blunderbuss
- * shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold, blunderbuss and
+ * approve shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -523,22 +554,30 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
     tide: { ...base.tide, ...over.tide },
     hold: { ...base.hold, ...over.hold },
     blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
+    approve: { ...base.approve, ...over.approve },
   }
+}
+
+export interface ResolveTideOptions {
+  /** the repository has OWNERS files, so the default gate also requires `approved` */
+  hasOwners?: boolean
 }
 
 /**
  * resolveTide applies the defaults to a parsed tide section: `labels`
- * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
- * `hold`. A configured list replaces the default one, it does not extend it.
- * The merge method is `tide.merge_method`, else the `merge-method` action
- * input, else `merge`. `merge_on_events` defaults to true.
+ * `['lgtm']`, or `['lgtm', 'approved']` when the repository has OWNERS files;
+ * `missing_labels` the do-not-merge family, `needs-rebase` and `hold`. A
+ * configured list replaces the default one, it does not extend it. The merge
+ * method is `tide.merge_method`, else the `merge-method` action input, else
+ * `merge`. `merge_on_events` defaults to true.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
+ * @param options - see ResolveTideOptions
  */
-export function resolveTide(tide: TideConfig, inputMergeMethod = ''): ResolvedTide {
+export function resolveTide(tide: TideConfig, inputMergeMethod = '', options: ResolveTideOptions = {}): ResolvedTide {
   return {
-    labels: tide.labels ?? defaultTideLabels,
+    labels: tide.labels ?? (options.hasOwners === true ? defaultOwnersTideLabels : defaultTideLabels),
     missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
     merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
     merge_on_events: tide.merge_on_events ?? true,

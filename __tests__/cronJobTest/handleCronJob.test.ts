@@ -21,6 +21,7 @@ afterAll(() => server.close())
 function serveMergeablePr() {
   server.use(
     ...utils.noOrgOrRepoConfigExcept(),
+    utils.defaultBranchTree(),
     http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
       const page = new URL(request.url).searchParams.get('page')
       const payload = structuredClone(listPullReqs)

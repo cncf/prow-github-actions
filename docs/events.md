@@ -72,8 +72,9 @@ Activity type | Handlers
 `labeled`, `unlabeled` | `require_matching_label`, `tide`
 `edited` | `tide` (a base branch change alters mergeability)
 
-The handlers of one event run concurrently; `tide` re-reads the labels from the API rather than
-trusting the payload, so a label another handler just applied is seen.
+The handlers of one event run one after the other in the order listed, `tide` last, and `tide`
+re-reads the labels from the API rather than trusting the payload, so a label an earlier
+handler applied in the same run is seen.
 
 `owners-label` and `blunderbuss` read the OWNERS files of the PR's **base** branch, so they
 are safe on `pull_request_target`: nothing from the head branch is executed or trusted.

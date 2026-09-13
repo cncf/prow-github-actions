@@ -322,8 +322,8 @@ describe('requireMatchingLabel handler', () => {
     utils.setupJobsEnv('lgtm')
     serveRules([{ regexp: '^kind/', missing_label: 'needs-kind', prs: true }])
     const writes = serveIssue(['kind/bug', 'needs-kind'])
-    // tide evaluates the pull request on labeled too and stops at the missing lgtm
-    server.use(pullHandler())
+    // tide evaluates the pull request on labeled too: it learns the gate from the default branch tree and stops at the missing lgtm
+    server.use(pullHandler(), utils.defaultBranchTree())
 
     await handlePullReq(new utils.MockContext(prEvent('labeled', ['kind/bug', 'needs-kind'], 'kind/bug')))
 

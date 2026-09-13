@@ -158,7 +158,7 @@ tide:
 
 Key | Default | Rule
 --- | --- | ---
-`labels` | `[lgtm]` | every pattern must match at least one label on the PR
+`labels` | `[lgtm]`; `[lgtm, approved]` on a repository with [OWNERS files](./commands.md#owners) | every pattern must match at least one label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match any label on the PR
 `merge_method` | see below | `merge`, `squash` or `rebase`
 `merge_on_events` | `true` | `false` leaves merging to the cron; see [above](#merge_on_events)
@@ -166,8 +166,17 @@ Key | Default | Rule
 A configured list **replaces** the default list, it does not extend it: `missing_labels: [needs-rebase]`
 lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively; `*` matches any run of
 characters, `/` included, so `do-not-merge/*` covers the whole family while a bare `do-not-merge` matches
-only that exact label. `approved` is not in the default `labels` yet; it joins once
-[`/approve`](./commands.md) aggregates approvals per OWNERS file in a later release.
+only that exact label.
+
+The `labels` default follows the repository: with no `OWNERS` file anywhere on the default
+branch it is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
+[`/approve` plugin](./commands.md#approve) manages. The check is one recursive tree listing of
+the default branch per run (the event payload's `repository.default_branch`, else
+`GET /repos/{owner}/{repo}`), skipped entirely when `tide.labels` is configured.
+
+`lgtm` and `approved` age differently: a push (`synchronize`) removes `lgtm` (the
+[`lgtm` PR job](./pr-jobs.md)) but never `approved`, which is recomputed from the comments and
+reviews on the PR and stays until an approver cancels or a review requests changes.
 
 A PR that does not pass is skipped with the reason in the job log:
 

@@ -91,6 +91,7 @@ describe('onPrLgtm', () => {
     const observeReq = new utils.ObserveRequest()
     server.use(
       ...utils.noOrgOrRepoConfigExcept(),
+      utils.defaultBranchTree(),
       ...prHandlers({}, ['src/file1.txt']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
