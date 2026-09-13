@@ -144,6 +144,23 @@ Every label command has a `/remove-` form that takes the same values and only
 removes values listed in the configuration. See
 [commands](./commands.md) for the full list and policy.
 
+## `needs-*` labels
+
+`require_matching_label` rules add a `needs-<x>` label to issues and pull requests that
+carry no `<x>/*` label and remove it once one arrives, on `opened`, `reopened`, `labeled`,
+`unlabeled` and on `/check-required-labels`. The `needs-*` labels are part of the
+[label catalogue](./configuration.md#the-label-catalogue) that `label-sync` creates. Rules,
+grace period, comment and the Prow divergences are documented in
+[configuration](./configuration.md#require_matching_label); the workflow triggers in
+[events](./events.md#issues-and-pull_request).
+
+```yaml
+require_matching_label:
+  - regexp: ^kind/
+    missing_label: needs-kind
+    missing_comment: Please add a kind label with /kind.
+```
+
 ## Automatic PR labels
 
 To automatically label PRs based on file globs, it's recommended to use the

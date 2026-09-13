@@ -32,6 +32,7 @@ Commands | Policy | Description
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
 `/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
+`/check-required-labels` | anyone | re-evaluates every [`require_matching_label`](./configuration.md#require_matching_label) rule on the open issue / PR at once: adds the missing `needs-*` labels, removes the satisfied ones. No `/remove-` form
 
 Label Commands | Policy | Description
 --- | --- | ---

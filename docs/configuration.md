@@ -73,7 +73,7 @@ labels:
     - documentation
     - question
 
-# validated now; enforcement lands in a later release
+# needs-* labels: see the require_matching_label section below
 require_matching_label:
   - regexp: ^kind/
     missing_label: needs-kind
@@ -83,7 +83,7 @@ require_matching_label:
   - regexp: ^area/
     missing_label: needs-area
     prs: true
-    grace_period_duration: 5m
+    grace_period_duration: 5s
 
 # validated now; enforcement lands in a later release
 tide:
@@ -180,17 +180,51 @@ jobs:
 
 ### `require_matching_label`
 
-A list of rules, each modelled on Prow's plugin of the same name. Parsed and validated;
-enforcement lands in a later release. Each `missing_label` is part of the
-[label catalogue](#the-label-catalogue).
+A list of rules modelled on Prow's [`require-matching-label`](https://github.com/kubernetes-sigs/prow/tree/main/pkg/plugins/require-matching-label)
+plugin: an issue or pull request with no label matching `regexp` gets `missing_label`;
+once a matching label arrives `missing_label` is removed again. Each `missing_label` is
+part of the [label catalogue](#the-label-catalogue), so the
+[`label-sync` job](./cron-jobs.md#label-sync) creates it; a `missing_label` the repository
+does not have fails the run like any other label
+([labeling](./labeling.md#labels-must-exist-in-the-repository)).
 
 Field | Required | Meaning
 --- | --- | ---
-`regexp` | yes | a JavaScript regular expression matched against label names
-`missing_label` | yes | the label added when nothing matches
-`issues`, `prs` | no | which objects the rule applies to; when neither is set both are `true`
-`missing_comment` | no | comment posted with the missing label
-`grace_period_duration` | no | how long to wait before acting, ex: `5m`
+`regexp` | yes | a JavaScript regular expression matched, case-sensitively, against every label on the object
+`missing_label` | yes | the label added when nothing matches; compared case-insensitively
+`issues`, `prs` | no | which objects the rule applies to; when neither is set both are `true`, when one is set the other is `false`
+`missing_comment` | no | comment posted together with `missing_label`; deleted again when the label is removed
+`grace_period_duration` | no | how long `opened`/`reopened` wait before evaluating, ex: `5s`, `2m`, `500ms`; default `0`, capped at `30s`
+
+Event | Evaluates
+--- | ---
+`issues` / `pull_request` `opened`, `reopened` | every applicable rule, after the longest `grace_period_duration` among them (so other labelers act first); labels are re-read after the wait
+`issues` / `pull_request` `labeled`, `unlabeled` | the rules whose `regexp` matches the changed label, **or whose `missing_label` is the changed label**
+`issue_comment` [`/check-required-labels`](./commands.md) | every applicable rule, no grace period
+
+Labels on the object | Action
+--- | ---
+no `regexp` match, no `missing_label` | add `missing_label`; post `missing_comment` if set and not already posted
+a `regexp` match and `missing_label` | remove `missing_label`; delete the bot's earlier `missing_comment`
+otherwise | nothing
+
+The comment ends with an invisible marker,
+`<!-- prow-github-actions/require-matching-label: <missing_label> -->`, which is how a later
+run finds the bot's own comment to delete it and avoids posting it twice. Only comments by a
+bot account (`github-actions[bot]` or any `Bot` user) are deleted.
+
+A `grace_period_duration` in Go's syntax (`1m30s`) is accepted; anything else fails the run.
+Longer than `30s` is clamped because the wait burns Actions minutes.
+
+Divergences from Prow:
+
+- a `labeled`/`unlabeled` event on the `missing_label` itself re-evaluates the rule, so a
+  `needs-kind` removed by hand while no `kind/*` label exists is re-added. Prow only reacts to
+  labels matching `regexp`. This matches the cncf/automation labeler that repositories are
+  migrating from;
+- the grace period is capped at `30s`.
+
+The workflow must subscribe to the events; see [events](./events.md#issues-and-pull_request).
 
 ### `tide`
 

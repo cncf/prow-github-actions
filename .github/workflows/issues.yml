@@ -1,11 +1,11 @@
-name: Run Jobs on PR
+name: Require matching labels on issues
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
-  pull-requests: write
+  issues: write
 
 jobs:
   execute:
@@ -14,5 +14,4 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./
         with:
-          jobs: lgtm
           github-token: ${{ secrets.GITHUB_TOKEN }}

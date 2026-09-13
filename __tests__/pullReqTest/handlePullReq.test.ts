@@ -1,7 +1,8 @@
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq, pullRequestHandlers } from '../../src/pullReq/handlePullReq'
 
 import issuePayload from '../fixtures/issues/issue.json'
@@ -15,11 +16,16 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
+const registeredHandlers = [...pullRequestHandlers]
+beforeEach(() => {
   pullRequestHandlers.length = 0
 })
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
+
+it('registers require-matching-label', () => {
+  expect(registeredHandlers).toEqual([requireMatchingLabel])
+})
 
 // the lgtm PR job only acts on new commits; the fixture is an `opened` event
 const prSynchronizeEvent = { ...prOpenedEvent, action: 'synchronize' }
@@ -44,15 +50,29 @@ function serveLgtmRemoval() {
   return { getReq, deleteReq }
 }
 
-it('ignores the jobs if not setup in environment', async () => {
-  const spy = vi.spyOn(core, 'setFailed')
+it('fails when no jobs are configured and no pull_request handler is registered', async () => {
+  const spy = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
   utils.setupActionsEnv('/assign')
 
   const runContext = new utils.MockContext(prSynchronizeEvent)
 
   await handlePullReq(runContext)
-  expect(spy).toHaveBeenCalled()
+  expect(spy).toHaveBeenCalledExactlyOnceWith('please provide a list of space delimited commands / jobs to run. None found')
+})
+
+it('does not fail when no jobs are configured but a pull_request handler is registered', async () => {
+  const spy = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  const handler = vi.fn().mockResolvedValue(undefined)
+  pullRequestHandlers.push(handler)
+
+  utils.setupActionsEnv('/assign')
+
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+
+  await handlePullReq(runContext)
+  expect(handler).toHaveBeenCalledWith(runContext)
+  expect(spy).not.toHaveBeenCalled()
 })
 
 it('dispatches jobs delimited by newlines', async () => {

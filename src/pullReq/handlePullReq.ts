@@ -4,16 +4,18 @@ import type { EventHandler } from '../utils/events'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
+import { requireMatchingLabel } from '../plugins/requireMatchingLabel'
 import { runEventHandlers } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input; empty for now */
-export const pullRequestHandlers: EventHandler[] = []
+/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
+export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel]
 
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
  * `synchronize` (new commits); every other activity type is logged and skipped.
+ * An empty `jobs` input is only an error when no handler is registered either.
  *
  * @param context - the github context of the current action event
  */
@@ -25,11 +27,14 @@ export async function handlePullReq(context: Context = github.context): Promise<
     .filter(command => command !== '')
     .map(command => command.toLowerCase())
 
-  if (runConfig.length === 0) {
-    runConfig.push('')
-  }
-
   await runEventHandlers('pull_request', pullRequestHandlers, context)
+
+  if (runConfig.length === 0) {
+    if (pullRequestHandlers.length === 0) {
+      core.setFailed('please provide a list of space delimited commands / jobs to run. None found')
+    }
+    return
+  }
 
   await Promise.all(
     runConfig.map(async (command) => {
@@ -44,11 +49,6 @@ export async function handlePullReq(context: Context = github.context): Promise<
           return await onPrLgtm(context).catch(async (e) => {
             return e
           })
-
-        case '':
-          return new Error(
-            `please provide a list of space delimited commands / jobs to run. None found`,
-          )
 
         default:
           return new Error(

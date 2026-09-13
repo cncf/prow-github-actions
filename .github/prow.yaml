@@ -29,3 +29,10 @@ labels:
       - accepted
       - needs-information
     exclusive: true
+
+require_matching_label:
+  - regexp: ^kind/
+    missing_label: needs-kind
+    issues: true
+    prs: true
+    missing_comment: Please add a kind label with `/kind failing-test` or `/kind cleanup`.
