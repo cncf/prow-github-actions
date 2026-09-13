@@ -161,6 +161,29 @@ require_matching_label:
     missing_comment: Please add a kind label with /kind.
 ```
 
+## Labels from OWNERS files
+
+An [OWNERS file](./commands.md#owners) may declare `labels:`. When a pull request is
+`opened`, `reopened` or `synchronize`d, `owners-label` adds the labels of every OWNERS
+file covering a changed file (read from the base branch, inherited from parent directories
+until `options.no_parent_owners`). Labels already present are left alone and nothing is
+ever removed. No configuration is needed; a repository without OWNERS files is unaffected.
+
+```yaml
+# sdk/OWNERS
+reviewers:
+  - user1
+labels:
+  - area/sdk
+```
+
+Unlike the label commands, a label the repository does not have does not fail the run: it is
+logged as `skipping label area/sdk declared in OWNERS: repository doesn't have it (run label-sync)`
+and the others are still applied. The [`label-sync` job](./cron-jobs.md#label-sync) does not
+read OWNERS files, so also list the label in a `labels` section of the configuration or create
+it by hand. Prow's owners-label applies only the deepest OWNERS file's labels; here labels union
+along the directory walk like approvers do.
+
 ## Automatic PR labels
 
 To automatically label PRs based on file globs, it's recommended to use the

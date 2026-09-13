@@ -11,7 +11,9 @@ Jobs | Runs on | Description
 skipped, so a workflow may subscribe to `labeled`/`unlabeled` without the job stripping
 the label the moment `/lgtm` adds it.
 
-The [`require_matching_label`](./configuration.md#require_matching_label) rules run on the
+The [`require_matching_label`](./configuration.md#require_matching_label) rules,
+[`owners-label`](./labeling.md#labels-from-owners-files) and
+[`blunderbuss`](./configuration.md#blunderbuss) run on the
 same events before the jobs and need no input. A workflow may therefore subscribe to
 `pull_request` with no `jobs` at all; the run only fails with
 `please provide a list of space delimited commands / jobs to run. None found` when `jobs`
