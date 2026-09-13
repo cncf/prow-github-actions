@@ -31,10 +31,19 @@ export interface RequireMatchingLabel {
   grace_period_duration?: string
 }
 
+export type MergeMethod = 'merge' | 'squash' | 'rebase'
+
 export interface TideConfig {
   labels?: string[]
   missing_labels?: string[]
-  merge_method?: 'merge' | 'squash' | 'rebase'
+  merge_method?: MergeMethod
+}
+
+/** TideConfig with every default applied, see resolveTide */
+export interface ResolvedTide {
+  labels: string[]
+  missing_labels: string[]
+  merge_method: MergeMethod
 }
 
 export interface HoldConfig {
@@ -66,6 +75,11 @@ export interface ProwConfig {
 
 const mergeMethods = ['merge', 'squash', 'rebase'] as const
 const colorPattern = /^[0-9a-f]{6}$/i
+
+export const defaultHoldLabel = 'do-not-merge/hold'
+export const defaultTideLabels = ['lgtm']
+// `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
+export const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold']
 
 // top level keys of the new form other than `labels`
 const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'] as const
@@ -425,7 +439,7 @@ function normalizeTide(source: string, raw: unknown): TideConfig {
   }
 
   for (const field of ['labels', 'missing_labels'] as const) {
-    if (raw[field] !== undefined && !isStringList(raw[field])) {
+    if (raw[field] !== undefined && !isLabelList(raw[field])) {
       throw new Error(`${source}: tide.${field} must be a list of label names`)
     }
   }
@@ -504,12 +518,48 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
   }
 }
 
+/**
+ * resolveTide applies the defaults to a parsed tide section: `labels`
+ * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
+ * `hold`. A configured list replaces the default one, it does not extend it.
+ * The merge method is `tide.merge_method`, else the `merge-method` action
+ * input, else `merge`.
+ *
+ * @param tide - the merged tide section
+ * @param inputMergeMethod - the `merge-method` action input, if any
+ */
+export function resolveTide(tide: TideConfig, inputMergeMethod = ''): ResolvedTide {
+  return {
+    labels: tide.labels ?? defaultTideLabels,
+    missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
+    merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
+  }
+}
+
+function toMergeMethod(input: string): MergeMethod {
+  return (mergeMethods as readonly string[]).includes(input) ? input as MergeMethod : 'merge'
+}
+
+/**
+ * resolveHoldLabel returns the label `/hold` applies: `hold.label`, else
+ * Prow's `do-not-merge/hold`.
+ *
+ * @param hold - the merged hold section
+ */
+export function resolveHoldLabel(hold: HoldConfig): string {
+  return hold.label ?? defaultHoldLabel
+}
+
 export function isMapping(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function isLabelList(value: unknown): value is string[] {
+  return isStringList(value) && value.every(item => item !== '')
 }
 
 // keeps parsed objects comparable with `toEqual` and free of `key: undefined` noise

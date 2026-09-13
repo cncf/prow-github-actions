@@ -40796,6 +40796,10 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
+const defaultHoldLabel = 'do-not-merge/hold';
+const defaultTideLabels = (/* unused pure expression or super */ null && (['lgtm']));
+// `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
+const defaultTideMissingLabels = (/* unused pure expression or super */ null && (['do-not-merge/*', 'needs-rebase', 'hold']));
 // top level keys of the new form other than `labels`
 const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
@@ -41082,7 +41086,7 @@ function normalizeTide(source, raw) {
         throw new Error(`${source}: tide must be a mapping`);
     }
     for (const field of ['labels', 'missing_labels']) {
-        if (raw[field] !== undefined && !isStringList(raw[field])) {
+        if (raw[field] !== undefined && !isLabelList(raw[field])) {
             throw new Error(`${source}: tide.${field} must be a list of label names`);
         }
     }
@@ -41149,11 +41153,43 @@ function mergeProwConfig(base, over) {
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
     };
 }
+/**
+ * resolveTide applies the defaults to a parsed tide section: `labels`
+ * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
+ * `hold`. A configured list replaces the default one, it does not extend it.
+ * The merge method is `tide.merge_method`, else the `merge-method` action
+ * input, else `merge`.
+ *
+ * @param tide - the merged tide section
+ * @param inputMergeMethod - the `merge-method` action input, if any
+ */
+function resolveTide(tide, inputMergeMethod = '') {
+    return {
+        labels: tide.labels ?? defaultTideLabels,
+        missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
+        merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
+    };
+}
+function toMergeMethod(input) {
+    return mergeMethods.includes(input) ? input : 'merge';
+}
+/**
+ * resolveHoldLabel returns the label `/hold` applies: `hold.label`, else
+ * Prow's `do-not-merge/hold`.
+ *
+ * @param hold - the merged hold section
+ */
+function resolveHoldLabel(hold) {
+    return hold.label ?? defaultHoldLabel;
+}
 function isMapping(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function isStringList(value) {
     return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+function isLabelList(value) {
+    return isStringList(value) && value.every(item => item !== '');
 }
 // keeps parsed objects comparable with `toEqual` and free of `key: undefined` noise
 function stripUndefined(value) {
