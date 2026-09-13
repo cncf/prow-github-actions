@@ -62,13 +62,17 @@ jobs:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label and no `do-not-merge/*`, `needs-rebase` or `hold` label ([automatic merging](./docs/automatic-merging.md)):
+PRs merge automatically once they carry `lgtm`, no `do-not-merge/*`, `needs-rebase` or `hold` label, and GitHub reports them mergeable. Subscribe to the events that change that ([automatic merging](./docs/automatic-merging.md)); the merge needs `contents: write`:
 
 ```yaml
-name: Merge on lgtm label
+name: Merge on lgtm
 on:
-  schedule:
-    - cron: '0 * * * *'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
 
 permissions:
   contents: write
@@ -86,6 +90,8 @@ jobs:
           # optional; defaults to 'merge', tide.merge_method in prow.yaml wins
           merge-method: squash
 ```
+
+An optional `schedule` workflow with `jobs: lgtm` is the backstop for missed events ([jobs](./docs/cron-jobs.md)).
 
 Prow Github actions also supports removing the lgtm label when new commits are pushed to a PR (the `synchronize` activity type; other types are skipped)
 
@@ -113,7 +119,7 @@ jobs:
 - [Configuration](./docs/configuration.md)
 - [Labeling](./docs/labeling.md)
 - [Jobs (lgtm merger, label-sync)](./docs/cron-jobs.md)
-- [Automatic PR merging](./docs/automatic-merging.md) ([upgrading from the `hold` label](./docs/automatic-merging.md#upgrading-from-the-hold-label))
+- [Automatic PR merging](./docs/automatic-merging.md) ([event-driven](./docs/automatic-merging.md#event-driven-merging), [upgrading from the `hold` label](./docs/automatic-merging.md#upgrading-from-the-hold-label))
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)
 - [Releasing](./docs/releasing.md)

@@ -1,7 +1,114 @@
 # Automatic PR merging
 
-Prow github actions supports automatic PR merging through
-[Github actions cron jobs](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule).
+A pull request is merged as soon as it passes the [merge gate](#the-merge-gate) **and** GitHub
+reports it mergeable. Two paths get there:
+
+Path | Trigger | Reads `mergeable_state` | Role
+--- | --- | --- | ---
+event-driven | `pull_request`, `pull_request_review`, `check_suite`, `status` | yes: merges `clean` and `has_hooks` only | primary; merges within seconds of the last label, review or check
+`lgtm` cron job | `schedule` with `jobs: lgtm` | no: merges blindly and lets GitHub refuse | backstop for missed events; optional
+
+## Event-driven merging
+
+Subscribe the workflow that runs the action to the events that can change a pull request's
+mergeability. The handlers need no input beyond `github-token`; the merge needs `contents: write`.
+
+```yaml
+name: Prow github actions
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cncf/prow-github-actions@v2
+        with:
+          prow-commands: /lgtm /approve /hold /kind /area /priority /check-required-labels /auto-cc
+          jobs: lgtm
+          github-token: '${{ secrets.GITHUB_TOKEN }}'
+```
+
+Event | Activity types evaluated | Pull request(s)
+--- | --- | ---
+`pull_request`, `pull_request_target` | `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited` | `pull_request.number`
+`pull_request_review` | `submitted`, `dismissed` | `pull_request.number`
+`check_suite` | `completed`, unless the conclusion is `failure`, `cancelled`, `timed_out` or `action_required` | `check_suite.pull_requests`, else every open PR whose head is `head_sha`
+`status` | `success` (`pending`, `failure`, `error` make no call) | every open PR whose head is `sha`
+
+`opened` is skipped: nothing can be mergeable yet. `synchronize` is skipped on purpose: a push
+must remove `lgtm` (the [`lgtm` PR job](./pr-jobs.md)) and must not merge, and the job runs
+after the event handlers, so evaluating there would race the removal. The check suite that the
+push starts, or the cron, evaluates the PR once it is reviewed again. A review here only counts
+towards branch protection; turning reviews into `lgtm` is not what this does.
+
+For each candidate the handler reads `GET /pulls/{n}` (labels are taken from that read, not
+from the payload), applies the [merge gate](#the-merge-gate), then looks at GitHub's own verdict:
+
+`mergeable_state` | Outcome | Why
+--- | --- | ---
+`clean` | merge | every required check and review passed
+`has_hooks` | merge | clean, a non-required pre-receive hook is still running
+`unstable` | skip | a non-required check is pending or failed; GitHub would merge, this action does not
+`blocked` | skip | a required check or review is missing
+`behind` | skip | branch protection requires the branch to be up to date
+`dirty` | skip | merge conflicts
+`draft` | skip | draft pull request
+`unknown` | retry, then skip | see below
+
+A skip is logged as `skipping pr #<n>: not mergeable (<state>)` and never fails the run. This is
+stricter than the cron, which sends the merge and reports GitHub's refusal instead.
+
+### `unknown`: GitHub computes mergeability lazily
+
+Right after a push GitHub has not computed `mergeable_state`; the first read starts the
+computation and answers `unknown`. When the gate passes and the state is `unknown` the handler
+re-reads the pull request after 1 s, 2 s and 4 s (7 s in total). A state still `unknown` after
+the last read is skipped like any other non-mergeable state; the next event or the cron gets it.
+The waits only happen once the gate passes: a PR without `lgtm` costs one read.
+
+### Concurrency
+
+Two events for one pull request can run at the same time (a label and a check completing within
+seconds). Both may send the merge; GitHub refuses the loser with `405`. The handler then re-reads
+the pull request: `merged: true` is logged as `pr #<n> was merged concurrently` and is not a
+failure. Any other refusal is logged as an error annotation and fails the run with
+`could not merge pull request(s) #<n>`, so the operator sees it.
+
+### `merge_on_events`
+
+```yaml
+tide:
+  merge_on_events: false
+```
+
+`false` turns all three handlers off after they read the configuration: no pull request is read,
+nothing is merged, the cron alone merges. Default `true`. Repositories that do not subscribe to
+the events get the same effect without the flag.
+
+A merge performed with `GITHUB_TOKEN` does not trigger `push` workflows for other automation;
+use a PAT or GitHub App token if something must run after the merge.
+
+## The `lgtm` cron job
+
+The cron is the backstop for missed events (a workflow run that was skipped, a webhook that was
+lost, a PR whose state was still `unknown` when the last event ran). It pages through every open
+pull request, applies the merge gate to the listed labels and sends the merge without reading
+`mergeable_state`; GitHub refuses what cannot merge.
 
 ```yaml
 name: Merge on lgtm label
@@ -26,15 +133,15 @@ jobs:
           merge-method: squash
 ```
 
-This Github workflow checks every hour for open PRs that pass the merge gate below and
-attempts to merge them. Locked and closed PRs are skipped. Every eligible PR is attempted,
-so one un-mergeable PR does not stop the others. Each failed merge is logged as an error
-annotation (`could not merge pr #<n>: <reason>`); once all pages are processed the run
-fails if any merge failed, listing the PRs:
-`2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
+Locked and closed PRs are skipped. Every eligible PR is attempted, so one un-mergeable PR does
+not stop the others. Each failed merge is logged as an error annotation
+(`could not merge pr #<n>: <reason>`); once all pages are processed the run fails if any merge
+failed, listing the PRs: `2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
+With event-driven merging in place an hourly or daily schedule is plenty; drop the cron entirely
+if a missed event is acceptable.
 
 The companion `lgtm` PR job removes the `lgtm` label from a PR that gets updated.
-This prevents any un-reviewed code from being automatically merged by the lgtm-merger mechanism.
+This prevents any un-reviewed code from being automatically merged by either path.
 See [PR jobs](./pr-jobs.md) for the full workflow.
 
 ## The merge gate
@@ -54,6 +161,7 @@ Key | Default | Rule
 `labels` | `[lgtm]` | every pattern must match at least one label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match any label on the PR
 `merge_method` | see below | `merge`, `squash` or `rebase`
+`merge_on_events` | `true` | `false` leaves merging to the cron; see [above](#merge_on_events)
 
 A configured list **replaces** the default list, it does not extend it: `missing_labels: [needs-rebase]`
 lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively; `*` matches any run of
@@ -129,7 +237,12 @@ Steps:
 Refer to the [lgtm command](./commands.md) and the [PR jobs](./pr-jobs.md) for further reference.
 
 ## Known limitations
-This job pages through the repository's open PRs, following pages until one comes back empty. This _may_ trigger a state
+The cron job pages through the repository's open PRs, following pages until one comes back empty. This _may_ trigger a state
 where github rate limits Prow github actions.
 This may only happen with very large projects.
 Please open an issue if you see this consistently happen.
+
+`check_suite` and `status` only trigger a workflow whose file is on the default branch, and
+GitHub does not send `check_suite` for suites created by GitHub Actions itself (recursion guard).
+A repository whose only checks are GitHub Actions workflows therefore gets no `check_suite`
+event when they finish; the `labeled` event (`/lgtm` after green checks) or the cron merges it.

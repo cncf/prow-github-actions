@@ -7,7 +7,7 @@ unknown name fails the run with `could not execute <job>`.
 
 Jobs | Description | Permissions
 --- | --- | ---
-`lgtm` | Pages through the repository's open pull requests, following pages until one comes back empty, and merges every one that passes the [merge gate](./automatic-merging.md#the-merge-gate) (`tide.labels` present, no `tide.missing_labels`; by default `lgtm` and none of `do-not-merge/*`, `needs-rebase`, `hold`). Skips locked and closed PRs and logs why each other PR was skipped. See [automatic PR merging](./automatic-merging.md). Removed by the [lgtm PR job on pr update](./pr-jobs.md) | `contents: write`, `pull-requests: write`
+`lgtm` | Backstop for [event-driven merging](./automatic-merging.md#event-driven-merging). Pages through the repository's open pull requests, following pages until one comes back empty, and merges every one that passes the [merge gate](./automatic-merging.md#the-merge-gate) (`tide.labels` present, no `tide.missing_labels`; by default `lgtm` and none of `do-not-merge/*`, `needs-rebase`, `hold`). Does not read `mergeable_state`: GitHub refuses what cannot merge and the run fails listing those PRs. Skips locked and closed PRs and logs why each other PR was skipped. With the events subscribed an hourly or daily schedule is enough, or drop the job. | `contents: write`, `pull-requests: write`
 `label-sync` | Creates the labels the prow configuration describes and updates the color or description of those that drifted. Never deletes or renames a label. | `contents: read`, `issues: write`
 
 ## `label-sync`

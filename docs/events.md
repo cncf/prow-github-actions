@@ -10,55 +10,16 @@ Event | Input | Does
 --- | --- | ---
 `issue_comment` | `prow-commands` | Runs the [`/commands`](./commands.md) found in the comment.
 `issues` | — | `opened`, `reopened`, `labeled`, `unlabeled`: applies the [`require_matching_label`](./configuration.md#require_matching_label) rules. Other activity types are logged and skipped.
-`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
+`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
+`pull_request_review` | — | `submitted`, `dismissed`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can satisfy branch protection; it is not `lgtm`).
+`check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
 `schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `label-sync`).
 
-## `issues` and `pull_request`
+## Recommended triggers
 
-With no `require_matching_label` rule in any configuration tier the `issues` event only reads
-the configuration and exits 0. On `pull_request` the OWNERS plugins also read the pull request's
-changed files and the OWNERS files of the base branch; a repository without OWNERS files makes
-no further calls. The workflow needs these activity types and write permission on the object:
-
-```yaml
-on:
-  issues:
-    types: [opened, reopened, labeled, unlabeled]
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
-
-permissions:
-  issues: write
-  pull-requests: write
-```
-
-Activity type | Handlers
---- | ---
-`opened` | `require_matching_label`, `owners-label`, `blunderbuss`
-`reopened` | `require_matching_label`, `owners-label`
-`synchronize` | `owners-label`, the `lgtm` job
-`ready_for_review` | `blunderbuss` (drafts wait for it by default)
-`labeled`, `unlabeled` | `require_matching_label`
-
-`owners-label` and `blunderbuss` read the OWNERS files of the PR's **base** branch, so they
-are safe on `pull_request_target`: nothing from the head branch is executed or trusted.
-
-Fork pull requests get a read-only token on `pull_request`, so use `pull_request_target`
-for PRs and never check out or run PR code in that job
-([safety rule](./pr-jobs.md#pull_request_target)).
-
-## Routed, no handlers yet
-
-Event | Why it is routed
---- | ---
-`pull_request_review` | review-driven labels
-`check_suite`, `status` | merging when checks finish (`status` is the legacy commit status API; PRs are looked up by head sha)
-
-These exit 0 and make no API calls. Handlers arrive with event-driven merging in a later
-release.
-
-Subscribing early is harmless and lets the workflow file stay put when the handlers land:
+One workflow can subscribe to everything; every handler skips what does not concern it. The
+merge needs `contents: write`.
 
 ```yaml
 name: Prow github actions
@@ -67,15 +28,17 @@ on:
     types: [created]
   issues:
     types: [opened, reopened, labeled, unlabeled]
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
 
 permissions:
+  contents: write
   issues: write
   pull-requests: write
-  contents: read
 
 jobs:
   execute:
@@ -87,3 +50,42 @@ jobs:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
+
+Use `pull_request_target` instead of `pull_request` when fork PRs must be labeled or merged;
+`pull_request` gets a read-only token on forks ([safety rule](./pr-jobs.md#pull_request_target)).
+Repositories that only want the cron to merge leave `pull_request_review` and `check_suite` out
+or set [`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
+
+## `issues` and `pull_request`
+
+With no `require_matching_label` rule in any configuration tier the `issues` event only reads
+the configuration and exits 0. On `pull_request` the OWNERS plugins also read the pull request's
+changed files and the OWNERS files of the base branch; a repository without OWNERS files makes
+no further calls. `tide` reads the pull request once and stops when the merge gate fails.
+
+Activity type | Handlers
+--- | ---
+`opened` | `require_matching_label`, `owners-label`, `blunderbuss`
+`reopened` | `require_matching_label`, `owners-label`, `tide`
+`synchronize` | `owners-label`, the `lgtm` job (`tide` waits for the next check suite: a push must not merge)
+`ready_for_review` | `blunderbuss` (drafts wait for it by default), `tide`
+`labeled`, `unlabeled` | `require_matching_label`, `tide`
+`edited` | `tide` (a base branch change alters mergeability)
+
+The handlers of one event run concurrently; `tide` re-reads the labels from the API rather than
+trusting the payload, so a label another handler just applied is seen.
+
+`owners-label` and `blunderbuss` read the OWNERS files of the PR's **base** branch, so they
+are safe on `pull_request_target`: nothing from the head branch is executed or trusted.
+
+## `check_suite` and `status`
+
+Both only trigger a workflow whose file is on the **default branch**. GitHub does not send
+`check_suite` for suites created by GitHub Actions itself (its recursion guard), so a repository
+whose checks are all Actions workflows sees the event only for other apps' suites; `/lgtm` after
+green checks (the `labeled` event) or the cron merges those PRs. A suite that ended in `failure`,
+`cancelled`, `timed_out` or `action_required` (a `pending`, `failure` or `error` status) makes
+no API call: it cannot have made a PR mergeable.
+
+A merge performed with `GITHUB_TOKEN` does not trigger `push` workflows; use a PAT or GitHub App
+token when other automation must run after the merge.

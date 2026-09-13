@@ -2,9 +2,14 @@ name: Run Jobs on PR
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
 
+# contents: write lets tide merge the pull request
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
