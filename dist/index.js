@@ -40796,6 +40796,10 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
+const defaultHoldLabel = 'do-not-merge/hold';
+const defaultTideLabels = ['lgtm'];
+// `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
+const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
 const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
@@ -41082,7 +41086,7 @@ function normalizeTide(source, raw) {
         throw new Error(`${source}: tide must be a mapping`);
     }
     for (const field of ['labels', 'missing_labels']) {
-        if (raw[field] !== undefined && !isStringList(raw[field])) {
+        if (raw[field] !== undefined && !isLabelList(raw[field])) {
             throw new Error(`${source}: tide.${field} must be a list of label names`);
         }
     }
@@ -41149,11 +41153,43 @@ function mergeProwConfig(base, over) {
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
     };
 }
+/**
+ * resolveTide applies the defaults to a parsed tide section: `labels`
+ * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
+ * `hold`. A configured list replaces the default one, it does not extend it.
+ * The merge method is `tide.merge_method`, else the `merge-method` action
+ * input, else `merge`.
+ *
+ * @param tide - the merged tide section
+ * @param inputMergeMethod - the `merge-method` action input, if any
+ */
+function resolveTide(tide, inputMergeMethod = '') {
+    return {
+        labels: tide.labels ?? defaultTideLabels,
+        missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
+        merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
+    };
+}
+function toMergeMethod(input) {
+    return mergeMethods.includes(input) ? input : 'merge';
+}
+/**
+ * resolveHoldLabel returns the label `/hold` applies: `hold.label`, else
+ * Prow's `do-not-merge/hold`.
+ *
+ * @param hold - the merged hold section
+ */
+function resolveHoldLabel(hold) {
+    return hold.label ?? defaultHoldLabel;
+}
 function isMapping(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 function isStringList(value) {
     return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+function isLabelList(value) {
+    return isStringList(value) && value.every(item => item !== '');
 }
 // keeps parsed objects comparable with `toEqual` and free of `key: undefined` noise
 function stripUndefined(value) {
@@ -41581,7 +41617,65 @@ function newOctokit(token) {
     });
 }
 
+;// CONCATENATED MODULE: ./lib/labels/hold.js
+
+
+
+
+
+
+// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
+const legacyHoldLabel = 'hold';
+/**
+ * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
+ * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
+ * Note - the label blocks automatic merging through `tide.missing_labels`.
+ *
+ * @param context - the github actions event context
+ */
+async function hold(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    const config = await loadProwConfig(octokit, context);
+    const holdLabel = resolveHoldLabel(config.hold);
+    const cancel = hasCommand('/unhold', commentBody)
+        || hasCommand('/remove-hold', commentBody)
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+    if (cancel) {
+        await cancelHold(octokit, context, issueNumber, holdLabel);
+        return;
+    }
+    await labelIssue(octokit, context, issueNumber, [holdLabel]);
+}
+async function cancelHold(octokit, context, issueNumber, holdLabel) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
+    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
+    if (present.length === 0) {
+        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, present);
+    }
+    catch (e) {
+        throw new Error(`could not remove the hold label: ${e}`);
+    }
+}
+
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
+
 
 
 
@@ -41600,9 +41694,19 @@ const labelCommandName = /^[a-z][a-z0-9-]*$/;
 // labels with dedicated, authorization-gated commands; never reachable through /label
 const protectedLabels = ['lgtm', 'hold', 'approved'];
 const protectedPrefixes = ['do-not-merge/'];
-function isProtectedLabel(label) {
+/**
+ * isProtectedLabel reports whether /label and /remove-label must refuse the
+ * label: the built-in command labels, the do-not-merge family, and any
+ * `extra` names such as a configured `hold.label`.
+ *
+ * @param label - the label name
+ * @param extra - further protected names, compared case-insensitively
+ */
+function isProtectedLabel(label, extra = []) {
     const lower = label.toLowerCase();
-    return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix));
+    return protectedLabels.includes(lower)
+        || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+        || extra.some(name => name.toLowerCase() === lower);
 }
 /**
  * dynamicPrefixedCommand builds the command for an arbitrary label section
@@ -41637,7 +41741,7 @@ async function addPrefixedLabels(context, cmd) {
     const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values);
+    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
     if (section.exclusive) {
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
@@ -41666,7 +41770,7 @@ async function removePrefixedLabels(context, cmd) {
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
     const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, command, commentBody, section.values);
+    const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels);
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
     const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
@@ -41713,13 +41817,14 @@ async function allowlistFor(octokit, context, cmd) {
             throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
         }
         core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
-        return { values: section.values, exclusive: section.exclusive ?? false };
+        const { hold } = await loadProwConfig(octokit, context);
+        return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] };
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
     }
 }
-function requestedLabels(cmd, command, commentBody, allowed) {
+function requestedLabels(cmd, command, commentBody, allowed, protectedExtra) {
     const args = getCommandArgs(command, commentBody);
     const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
     const values = args
@@ -41731,7 +41836,7 @@ function requestedLabels(cmd, command, commentBody, allowed) {
         throw new Error(`${command.slice(1)}: command args missing from body`);
     }
     if (cmd.prefix === '') {
-        const offender = labels.find(isProtectedLabel);
+        const offender = labels.find(label => isProtectedLabel(label, protectedExtra));
         if (offender !== undefined) {
             throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`);
         }
@@ -41755,10 +41860,12 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
 
 ;// CONCATENATED MODULE: ./lib/utils/labelCatalog.js
 
+
+
 /**
  * Colors and descriptions of the labels the action manages itself. They
  * follow kubernetes/test-infra's label_sync where a label exists there;
- * `hold` mirrors `do-not-merge/hold`.
+ * the legacy `hold` mirrors `do-not-merge/hold`.
  */
 const builtinLabelDefaults = {
     'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
@@ -41777,8 +41884,8 @@ const needsLabelColor = 'ededed';
  * color and description the label-sync job should give it: the label
  * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
  * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
- * section, the labels the action's own commands apply, and every
- * `require_matching_label` missing label. Names are unique
+ * section, the labels the action's own commands apply (`hold.label` and
+ * the legacy `hold`), and every `require_matching_label` missing label. Names are unique
  * case-insensitively (first definition wins) and sorted.
  *
  * @param config - the merged prow configuration
@@ -41797,7 +41904,7 @@ function desiredLabels(config) {
             labels.push(...section.definitions.map(value => prefixed(key, value)));
         }
     }
-    const holdLabels = config.hold.label === undefined ? ['hold'] : ['hold', config.hold.label];
+    const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel];
     for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
         labels.push({ name });
     }
@@ -41933,14 +42040,85 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
+/**
+ * matchesLabelPattern reports whether a label name matches a tide label
+ * pattern. Names compare case-insensitively, like GitHub does. `*` matches any
+ * run of characters, `/` included, so `do-not-merge/*` covers the whole
+ * family; everything else is literal (`do-not-merge` alone does not match
+ * `do-not-merge/hold`).
+ *
+ * @param pattern - a label name, optionally with `*` wildcards
+ * @param label - the label name to test
+ */
+function matchesLabelPattern(pattern, label) {
+    const parts = pattern.toLowerCase().split('*');
+    const subject = label.toLowerCase();
+    if (parts.length === 1) {
+        return subject === parts[0];
+    }
+    if (!subject.startsWith(parts[0])) {
+        return false;
+    }
+    const last = parts[parts.length - 1];
+    if (!subject.endsWith(last) || subject.length < parts[0].length + last.length) {
+        return false;
+    }
+    // the middle parts must appear in order between the anchored ends
+    let at = parts[0].length;
+    const end = subject.length - last.length;
+    for (const part of parts.slice(1, -1)) {
+        const found = subject.indexOf(part, at);
+        if (found === -1 || found + part.length > end) {
+            return false;
+        }
+        at = found + part.length;
+    }
+    return true;
+}
+/**
+ * anyLabelMatches reports whether any of the patterns matches any of the labels
+ *
+ * @param patterns - label patterns, see matchesLabelPattern
+ * @param labels - the label names to test
+ */
+function anyLabelMatches(patterns, labels) {
+    return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)));
+}
+
+;// CONCATENATED MODULE: ./lib/utils/mergeGate.js
+
+/**
+ * meetsMergeGate decides, like Prow's tide query, whether a pull request's
+ * labels allow merging: every `tide.labels` pattern must match at least one
+ * label and no `tide.missing_labels` pattern may match any label.
+ *
+ * @param labels - the labels on the pull request
+ * @param tide - the resolved tide configuration
+ */
+function meetsMergeGate(labels, tide) {
+    const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
+    if (missing !== undefined) {
+        return { ok: false, reason: `missing ${missing}` };
+    }
+    const blocking = labels.find(label => tide.missing_labels.some(pattern => matchesLabelPattern(pattern, label)));
+    if (blocking !== undefined) {
+        return { ok: false, reason: `blocked by ${blocking}` };
+    }
+    return { ok: true };
+}
+
 ;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
+
+
 
 
 
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label.
+ * and attempt to merge every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`).
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -41952,6 +42130,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     info(`starting lgtm merger page: ${currentPage}`);
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
+    const tide = await loadTide(octokit, context);
     // Get next batch
     let prs;
     try {
@@ -41977,7 +42156,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
             return;
         }
         try {
-            if (await tryMergePr(pr, octokit, context, progress.failures)) {
+            if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
                 progress.jobsDone++;
             }
         }
@@ -41992,6 +42171,11 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     }
     // Recurse, continue to next page
     return await cronLgtm(currentPage + 1, context, progress);
+}
+// the configuration is memoized per repository, so every page sees the same tide section
+async function loadTide(octokit, context) {
+    const config = await loadProwConfig(octokit, context);
+    return resolveTide(config.tide, getInput('merge-method', { required: false }));
 }
 /**
  * grabs pulls from github in baches of 100
@@ -42011,27 +42195,28 @@ async function getOpenPrs(octokit, context = github_context, page) {
     return prResults.data;
 }
 /**
- * Attempts to merge a PR if it has the lgtm label and not the hold label.
- * A refused merge is logged as an error annotation and recorded in
- * failures instead of aborting the run.
+ * Attempts to merge a PR that passes the tide merge gate; a PR that does
+ * not is skipped with the reason logged. A refused merge is logged as an
+ * error annotation and recorded in failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
+ * @param tide - the resolved tide configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
-async function tryMergePr(pr, octokit, context = github_context, failures) {
-    const method = getInput('merge-method', { required: false });
-    const names = pr.labels.map(e => e.name);
-    if (!names.includes('lgtm') || names.includes('hold')) {
+async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+    if (!gate.ok) {
+        info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
     try {
         await octokit.pulls.merge({
             ...context.repo,
             pull_number: pr.number,
-            merge_method: mergeMethod(method),
+            merge_method: tide.merge_method,
         });
         return true;
     }
@@ -42040,16 +42225,6 @@ async function tryMergePr(pr, octokit, context = github_context, failures) {
         error(`could not merge pr #${pr.number}: ${message}`);
         failures.push({ number: pr.number, message });
         return false;
-    }
-}
-// an unknown merge-method input falls back to 'merge'
-function mergeMethod(input) {
-    switch (input) {
-        case 'squash':
-        case 'rebase':
-            return input;
-        default:
-            return 'merge';
     }
 }
 
@@ -42155,43 +42330,6 @@ function fixed_requireIssueNumber(context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     return issueNumber;
-}
-
-;// CONCATENATED MODULE: ./lib/labels/hold.js
-
-
-
-
-
-/**
- * /hold will add the hold label.
- * /hold cancel, /unhold and /remove-hold remove it.
- * Note - the hold label will block automatic merging if the lgtm
- * is also present
- *
- * @param context - the github actions event context
- */
-async function hold(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    const cancel = hasCommand('/unhold', commentBody)
-        || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
-    if (cancel) {
-        try {
-            await cancelLabel(octokit, context, issueNumber, 'hold');
-        }
-        catch (e) {
-            throw new Error(`could not remove the hold label: ${e}`);
-        }
-        return;
-    }
-    await labelIssue(octokit, context, issueNumber, ['hold']);
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/owners.js

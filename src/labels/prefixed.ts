@@ -4,6 +4,7 @@ import type { LabelConfig, LabelSection } from '../utils/labeling'
 import * as core from '@actions/core'
 
 import { getCommandArgs } from '../utils/command'
+import { loadProwConfig, resolveHoldLabel } from '../utils/config'
 import { addPrefix, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
@@ -37,9 +38,19 @@ export const labelCommandName = /^[a-z][a-z0-9-]*$/
 const protectedLabels = ['lgtm', 'hold', 'approved']
 const protectedPrefixes = ['do-not-merge/']
 
-export function isProtectedLabel(label: string): boolean {
+/**
+ * isProtectedLabel reports whether /label and /remove-label must refuse the
+ * label: the built-in command labels, the do-not-merge family, and any
+ * `extra` names such as a configured `hold.label`.
+ *
+ * @param label - the label name
+ * @param extra - further protected names, compared case-insensitively
+ */
+export function isProtectedLabel(label: string, extra: string[] = []): boolean {
   const lower = label.toLowerCase()
-  return protectedLabels.includes(lower) || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+  return protectedLabels.includes(lower)
+    || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+    || extra.some(name => name.toLowerCase() === lower)
 }
 
 /**
@@ -79,7 +90,7 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
   const commentBody: string = context.payload.comment?.body
 
   const section = await allowlistFor(octokit, context, cmd)
-  const labels = requestedLabels(cmd, cmd.command, commentBody, section.values)
+  const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels)
 
   if (section.exclusive) {
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command)
@@ -115,7 +126,7 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   const command = removeCommandFor(cmd.command)
 
   const section = await allowlistFor(octokit, context, cmd)
-  const labels = requestedLabels(cmd, command, commentBody, section.values)
+  const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels)
   const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command)
 
   const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)))
@@ -166,11 +177,18 @@ export function sectionFor(labels: LabelConfig, cmd: PrefixedLabelCommand): Labe
   return undefined
 }
 
+interface Allowlist {
+  values: string[]
+  exclusive: boolean
+  /** labels owned by other commands that /label and /remove-label refuse */
+  protectedLabels: string[]
+}
+
 async function allowlistFor(
   octokit: Octokit,
   context: Context,
   cmd: PrefixedLabelCommand,
-): Promise<Required<Pick<LabelSection, 'values' | 'exclusive'>>> {
+): Promise<Allowlist> {
   const key = cmd.allowlistKey
 
   try {
@@ -182,7 +200,9 @@ async function allowlistFor(
     }
 
     core.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`)
-    return { values: section.values, exclusive: section.exclusive ?? false }
+
+    const { hold } = await loadProwConfig(octokit, context)
+    return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] }
   }
   catch (e) {
     throw new Error(`could not get labels from yaml: ${e}`)
@@ -194,6 +214,7 @@ function requestedLabels(
   command: string,
   commentBody: string,
   allowed: string[],
+  protectedExtra: string[],
 ): string[] {
   const args = getCommandArgs(command, commentBody)
   const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]))
@@ -208,7 +229,7 @@ function requestedLabels(
   }
 
   if (cmd.prefix === '') {
-    const offender = labels.find(isProtectedLabel)
+    const offender = labels.find(label => isProtectedLabel(label, protectedExtra))
     if (offender !== undefined) {
       throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`)
     }

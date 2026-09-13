@@ -16,7 +16,7 @@ inputs:
     required: false
     default: 'false'
   merge-method:
-    description: "Strategy for Prow-github-actions to take when merging a pull request using the lgtm cron-job. Can be 'squash', 'rebase', or 'merge'. Defaults to 'merge'"
+    description: "Strategy for Prow-github-actions to take when merging a pull request using the lgtm cron-job. Can be 'squash', 'rebase', or 'merge'. Defaults to 'merge'. A tide.merge_method in the prow configuration wins over this input."
     required: false
   config:
     description: "Optional explicit source of the shared prow configuration, replacing the organization's .project/.github lookup: 'owner/repo:path[@ref]' (read with github-token) or an 'https://' url (fetched anonymously). The repository's own prow.yaml or .prowlabels.yaml is still layered on top."

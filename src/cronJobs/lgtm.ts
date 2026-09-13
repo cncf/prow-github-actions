@@ -1,8 +1,11 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
+import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { loadProwConfig, resolveTide } from '../utils/config'
+import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
 
 type PullsListResponseDataType
@@ -25,7 +28,8 @@ interface LgtmProgress {
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge them if they have the "lgtm" label.
+ * and attempt to merge every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`).
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -42,6 +46,8 @@ export async function cronLgtm(
 
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
+
+  const tide = await loadTide(octokit, context)
 
   // Get next batch
   let prs: PullsListResponseDataType
@@ -73,7 +79,7 @@ export async function cronLgtm(
       }
 
       try {
-        if (await tryMergePr(pr, octokit, context, progress.failures)) {
+        if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
           progress.jobsDone++
         }
       }
@@ -91,6 +97,12 @@ export async function cronLgtm(
 
   // Recurse, continue to next page
   return await cronLgtm(currentPage + 1, context, progress)
+}
+
+// the configuration is memoized per repository, so every page sees the same tide section
+async function loadTide(octokit: Octokit, context: Context): Promise<ResolvedTide> {
+  const config = await loadProwConfig(octokit, context)
+  return resolveTide(config.tide, core.getInput('merge-method', { required: false }))
 }
 
 /**
@@ -119,13 +131,14 @@ async function getOpenPrs(
 }
 
 /**
- * Attempts to merge a PR if it has the lgtm label and not the hold label.
- * A refused merge is logged as an error annotation and recorded in
- * failures instead of aborting the run.
+ * Attempts to merge a PR that passes the tide merge gate; a PR that does
+ * not is skipped with the reason logged. A refused merge is logged as an
+ * error annotation and recorded in failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
+ * @param tide - the resolved tide configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
@@ -133,12 +146,12 @@ async function tryMergePr(
   pr: PullsListResponseItem,
   octokit: Octokit,
   context: Context = github.context,
+  tide: ResolvedTide,
   failures: MergeFailure[],
 ): Promise<boolean> {
-  const method = core.getInput('merge-method', { required: false })
-
-  const names = pr.labels.map(e => e.name)
-  if (!names.includes('lgtm') || names.includes('hold')) {
+  const gate = meetsMergeGate(pr.labels.map(e => e.name), tide)
+  if (!gate.ok) {
+    core.info(`skipping pr #${pr.number}: ${gate.reason}`)
     return false
   }
 
@@ -146,7 +159,7 @@ async function tryMergePr(
     await octokit.pulls.merge({
       ...context.repo,
       pull_number: pr.number,
-      merge_method: mergeMethod(method),
+      merge_method: tide.merge_method,
     })
     return true
   }
@@ -155,16 +168,5 @@ async function tryMergePr(
     core.error(`could not merge pr #${pr.number}: ${message}`)
     failures.push({ number: pr.number, message })
     return false
-  }
-}
-
-// an unknown merge-method input falls back to 'merge'
-function mergeMethod(input: string): 'merge' | 'squash' | 'rebase' {
-  switch (input) {
-    case 'squash':
-    case 'rebase':
-      return input
-    default:
-      return 'merge'
   }
 }

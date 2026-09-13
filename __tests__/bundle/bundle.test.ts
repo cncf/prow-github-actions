@@ -620,9 +620,28 @@ describe('dist/index.js', () => {
     ])
   })
 
-  it('issue_comment /unhold removes the hold label when /hold is configured', async () => {
-    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }] } })
-    gh.route('DELETE', `${repo}/issues/1/labels/hold`, { status: 200, body: [] })
+  it('issue_comment /hold applies do-not-merge/hold', async () => {
+    gh.route('GET', `${repo}/labels`, repoLabels('do-not-merge/hold', 'hold'))
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/hold'),
+      inputs: { ...token, 'prow-commands': '/hold' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ labels: ['do-not-merge/hold'] })
+    expectRequests(configReads(), [labelsRead, `POST ${repo}/issues/1/labels`])
+  })
+
+  it('issue_comment /unhold removes do-not-merge/hold and the legacy hold label when /hold is configured', async () => {
+    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }, { name: 'do-not-merge/hold' }] } })
+    gh.route('DELETE', new RegExp(`^${repo}/issues/1/labels/`), { status: 200, body: [] })
 
     const result = await runBundle({
       eventName: 'issue_comment',
@@ -633,9 +652,10 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+    expectRequests(configReads(), [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/hold`,
+      `DELETE ${repo}/issues/1/labels/do-not-merge%2Fhold`,
     ])
   })
 
@@ -818,6 +838,7 @@ describe('dist/index.js', () => {
       })
     }
 
+    // the cron reads the configuration once for the tide section, then pages through the pulls
     it('squash-merges an open lgtm pr', async () => {
       routePulls(openPr(['lgtm']))
 
@@ -828,22 +849,41 @@ describe('dist/index.js', () => {
       const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
       expect(merges).toHaveLength(1)
       expect(merges[0].body).toEqual({ merge_method: 'squash' })
-      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&page=1`,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
-    it('does not merge a pr that also has the hold label', async () => {
-      routePulls(openPr(['lgtm', 'hold']))
+    it('tide.merge_method in prow.yaml wins over the merge-method input', async () => {
+      gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_method: rebase\n') })
+      routePulls(openPr(['lgtm']))
 
       const result = await runCron()
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
+      const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
+      expect(merges).toHaveLength(1)
+      expect(merges[0].body).toEqual({ merge_method: 'rebase' })
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [
+        `GET ${repo}/pulls?state=open&page=1`,
+        `PUT ${repo}/pulls/2/merge`,
+        `GET ${repo}/pulls?state=open&page=2`,
+      ])
+    })
+
+    it.each(['hold', 'do-not-merge/hold', 'do-not-merge/work-in-progress', 'needs-rebase'])('does not merge a pr that also has %s', async (label) => {
+      routePulls(openPr(['lgtm', label]))
+
+      const result = await runCron()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`skipping pr #2: blocked by ${label}`)
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&page=1`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
@@ -857,7 +897,7 @@ describe('dist/index.js', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&page=1`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
@@ -872,7 +912,7 @@ describe('dist/index.js', () => {
       expect(result.errors.some(e => e.includes('could not merge pr #2'))).toBe(true)
       expect(result.errors.some(e => e.includes('1 pull request(s) could not be merged: #2 (Pull Request is not mergeable)'))).toBe(true)
       expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
-      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&page=1`,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
@@ -884,6 +924,7 @@ describe('dist/index.js', () => {
     const orgConfig = yamlFile('labels:\n  kind:\n    - name: bug\n      color: d73a4a\n      description: Something is not working\n    - cleanup\n')
     const builtins = [
       'approved',
+      'do-not-merge/hold',
       'good first issue',
       'help wanted',
       'hold',

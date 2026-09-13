@@ -7,7 +7,7 @@ unknown name fails the run with `could not execute <job>`.
 
 Jobs | Description | Permissions
 --- | --- | ---
-`lgtm` | Pages through the repository's open pull requests, following pages until one comes back empty, and merges every one that carries `lgtm` and not `hold`. Skips locked and closed PRs. See [automatic PR merging](./automatic-merging.md). Removed by the [lgtm PR job on pr update](./pr-jobs.md) | `contents: write`, `pull-requests: write`
+`lgtm` | Pages through the repository's open pull requests, following pages until one comes back empty, and merges every one that passes the [merge gate](./automatic-merging.md#the-merge-gate) (`tide.labels` present, no `tide.missing_labels`; by default `lgtm` and none of `do-not-merge/*`, `needs-rebase`, `hold`). Skips locked and closed PRs and logs why each other PR was skipped. See [automatic PR merging](./automatic-merging.md). Removed by the [lgtm PR job on pr update](./pr-jobs.md) | `contents: write`, `pull-requests: write`
 `label-sync` | Creates the labels the prow configuration describes and updates the color or description of those that drifted. Never deletes or renames a label. | `contents: read`, `issues: write`
 
 ## `label-sync`
@@ -15,7 +15,7 @@ Jobs | Description | Permissions
 The job reconciles the repository's labels with the catalogue derived from the
 [configuration](./configuration.md#the-label-catalogue): every label section, the
 built-in `/lifecycle`, `/stage` and `/status` values, the labels the action's own
-commands apply (`lgtm`, `approved`, `hold`, `help wanted`, `good first issue`) and every
+commands apply (`lgtm`, `approved`, `do-not-merge/hold`, the legacy `hold`, `help wanted`, `good first issue`) and every
 `require_matching_label` missing label. Label commands only apply labels that exist
 ([labeling](./labeling.md#labels-must-exist-in-the-repository)), so run this job once
 after adopting the action and whenever the configuration changes.

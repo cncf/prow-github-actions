@@ -49,6 +49,11 @@ describe('isProtectedLabel', () => {
       expect(isProtectedLabel(label)).toBe(false)
     },
   )
+
+  it('protects the extra labels it is given, case-insensitively', () => {
+    expect(isProtectedLabel('blocked', ['Blocked'])).toBe(true)
+    expect(isProtectedLabel('documentation', ['blocked'])).toBe(false)
+  })
 })
 
 describe('protected labels', () => {
@@ -115,6 +120,31 @@ describe('protected labels', () => {
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining(`remove-label: ${onIssue} is managed by its own command and cannot be changed with /remove-label`),
+    )
+  })
+
+  it.each(['/label blocked', '/remove-label blocked'])('refuses "%s" for a custom hold.label', async (body) => {
+    issueCommentEvent.comment.body = body
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const customHold = structuredClone(labelFileContents)
+    customHold.content = Buffer.from('labels:\n  labels: [documentation, blocked]\nhold:\n  label: blocked\n').toString('base64')
+
+    const observeWrite = new utils.ObserveRequest()
+    server.use(
+      http.post(`${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`, utils.mockResponse(200, null, observeWrite)),
+      http.delete(`${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/blocked`, utils.mockResponse(200, null, observeWrite)),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/issues/1`, utils.mockResponse(200, issueWithLabels('blocked'))),
+      utils.repoHasLabels(['documentation', 'blocked']),
+      http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, customHold)),
+      ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml'),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeWrite.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining(`blocked is managed by its own command and cannot be changed with ${body.split(' ')[0]}`),
     )
   })
 

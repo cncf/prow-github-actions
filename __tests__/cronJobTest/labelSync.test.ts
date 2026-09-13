@@ -47,6 +47,7 @@ labels:
 // everything desiredLabels yields for prowYaml, as the repository would hold it
 const complete: RepoLabel[] = [
   { name: 'approved', color: '0ffa16', description: 'Indicates a PR has been approved by an approver from all required OWNERS files.' },
+  { name: 'do-not-merge/hold', color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
   { name: 'documentation', color: 'aaaaaa', description: 'kept as is' },
   { name: 'good first issue', color: '7057ff', description: 'Denotes an issue ready for a new contributor, according to the "help wanted" guidelines.' },
   { name: 'help wanted', color: '006b75', description: 'Denotes an issue that needs help from a contributor. Must meet "help wanted" guidelines.' },

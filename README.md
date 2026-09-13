@@ -62,7 +62,7 @@ jobs:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label:
+You can automatically merge PRs based on a cron schedule if it contains the `lgtm` label and no `do-not-merge/*`, `needs-rebase` or `hold` label ([automatic merging](./docs/automatic-merging.md)):
 
 ```yaml
 name: Merge on lgtm label
@@ -83,7 +83,7 @@ jobs:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 
-          # this is optional and defaults to 'merge'
+          # optional; defaults to 'merge', tide.merge_method in prow.yaml wins
           merge-method: squash
 ```
 
@@ -113,7 +113,7 @@ jobs:
 - [Configuration](./docs/configuration.md)
 - [Labeling](./docs/labeling.md)
 - [Jobs (lgtm merger, label-sync)](./docs/cron-jobs.md)
-- [Automatic PR merging](./docs/automatic-merging.md)
+- [Automatic PR merging](./docs/automatic-merging.md) ([upgrading from the `hold` label](./docs/automatic-merging.md#upgrading-from-the-hold-label))
 - [PR jobs](./docs/pr-jobs.md)
 - [Examples](./docs/examples.md)
 - [Releasing](./docs/releasing.md)

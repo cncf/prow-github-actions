@@ -1,11 +1,13 @@
 import type { LabelValue, ProwConfig } from './config'
 
+import { legacyHoldLabel } from '../labels/hold'
 import { prefixedLabelCommands, sectionFor } from '../labels/prefixed'
+import { resolveHoldLabel } from './config'
 
 /**
  * Colors and descriptions of the labels the action manages itself. They
  * follow kubernetes/test-infra's label_sync where a label exists there;
- * `hold` mirrors `do-not-merge/hold`.
+ * the legacy `hold` mirrors `do-not-merge/hold`.
  */
 export const builtinLabelDefaults: Record<string, Omit<LabelValue, 'name'>> = {
   'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
@@ -26,8 +28,8 @@ const needsLabelColor = 'ededed'
  * color and description the label-sync job should give it: the label
  * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
  * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
- * section, the labels the action's own commands apply, and every
- * `require_matching_label` missing label. Names are unique
+ * section, the labels the action's own commands apply (`hold.label` and
+ * the legacy `hold`), and every `require_matching_label` missing label. Names are unique
  * case-insensitively (first definition wins) and sorted.
  *
  * @param config - the merged prow configuration
@@ -49,7 +51,7 @@ export function desiredLabels(config: ProwConfig): LabelValue[] {
     }
   }
 
-  const holdLabels = config.hold.label === undefined ? ['hold'] : ['hold', config.hold.label]
+  const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel]
   for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
     labels.push({ name })
   }

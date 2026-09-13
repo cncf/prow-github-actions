@@ -1,7 +1,7 @@
 import * as core from '@actions/core'
 import { describe, expect, it, vi } from 'vitest'
 
-import { mergeProwConfig, parseProwConfig } from '../../src/utils/config'
+import { defaultHoldLabel, mergeProwConfig, parseProwConfig, resolveHoldLabel } from '../../src/utils/config'
 
 const legacy = `
 area:
@@ -200,9 +200,16 @@ describe('parseProwConfig', () => {
       ['a non-mapping', 'tide: [lgtm]\n', 'x: tide must be a mapping'],
       ['a non-list labels', 'tide:\n  labels: lgtm\n', 'x: tide.labels must be a list of label names'],
       ['a non-list missing_labels', 'tide:\n  missing_labels: [1]\n', 'x: tide.missing_labels must be a list of label names'],
+      ['an empty label name', 'tide:\n  labels: [lgtm, ""]\n', 'x: tide.labels must be a list of label names'],
       ['an unknown merge method', 'tide:\n  merge_method: fast-forward\n', 'x: tide.merge_method must be one of merge, squash, rebase'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
+    })
+
+    it('accepts glob patterns in the label lists', () => {
+      expect(parseProwConfig('x', 'tide:\n  missing_labels: ["do-not-merge/*", "needs-*"]\n')).toEqual({
+        tide: { missing_labels: ['do-not-merge/*', 'needs-*'] },
+      })
     })
   })
 
@@ -215,6 +222,12 @@ describe('parseProwConfig', () => {
 
     it('accepts an empty mapping', () => {
       expect(parseProwConfig('x', 'hold: {}\n')).toEqual({ hold: {} })
+    })
+
+    it('resolves to do-not-merge/hold unless configured', () => {
+      expect(defaultHoldLabel).toBe('do-not-merge/hold')
+      expect(resolveHoldLabel({})).toBe('do-not-merge/hold')
+      expect(resolveHoldLabel({ label: 'hold' })).toBe('hold')
     })
 
     it.each([

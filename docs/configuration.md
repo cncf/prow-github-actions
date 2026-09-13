@@ -85,13 +85,13 @@ require_matching_label:
     prs: true
     grace_period_duration: 5s
 
-# validated now; enforcement lands in a later release
+# the merge gate of the lgtm job; these are the defaults
 tide:
-  labels: [lgtm, approved]
-  missing_labels: [do-not-merge/hold]
-  merge_method: squash
+  labels: [lgtm]
+  missing_labels: [do-not-merge/*, needs-rebase, hold]
+  merge_method: merge
 
-# validated now; enforcement lands in a later release
+# the label /hold applies; this is the default
 hold:
   label: do-not-merge/hold
 
@@ -139,7 +139,7 @@ Source | Labels | Color, description
 --- | --- | ---
 every `labels.<key>` section | `<key>/<value>`; the `/label` allowlist `labels.labels` verbatim | from the value's `color` and `description`
 built-in `/lifecycle`, `/stage`, `/status` values | `lifecycle/frozen`, `lifecycle/stale`, `lifecycle/rotten`, `stage/alpha`, `stage/beta`, `stage/stable`, `status/approved-for-milestone`, `status/in-progress`, `status/in-review` | only when the configuration has no section of that key
-the action's own commands | `lgtm`, `approved`, `hold` (and `hold.label` when set), `help wanted`, `good first issue` | built-in
+the action's own commands | `lgtm`, `approved`, `hold.label` (`do-not-merge/hold`) and the legacy `hold`, `help wanted`, `good first issue` | built-in
 `require_matching_label` | every `missing_label` | `ededed` for `needs-*`
 
 Precedence per label: the configuration's `color`/`description`, then the built-in
@@ -241,24 +241,29 @@ The workflow must subscribe to the events; see [events](./events.md#issues-and-p
 
 ### `tide`
 
-Parsed and validated; enforcement lands in a later release. Today the lgtm cron job merges
-on the `lgtm` label and the `merge-method` input.
+The merge gate of the [`lgtm` job](./automatic-merging.md#the-merge-gate), modelled on
+Prow's tide query. Every field is optional; a configured list **replaces** the default list
+rather than extending it.
 
-Field | Meaning
---- | ---
-`labels` | labels a PR must carry to merge
-`missing_labels` | labels a PR must not carry to merge
-`merge_method` | `merge`, `squash` or `rebase`
+Field | Default | Meaning
+--- | --- | ---
+`labels` | `[lgtm]` | every pattern must match a label on the PR
+`missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match a label on the PR
+`merge_method` | the `merge-method` input, else `merge` | `merge`, `squash` or `rebase`; wins over the input
+
+Entries are label names compared case-insensitively; `*` matches any run of characters,
+`/` included. An empty name or an unknown `merge_method` fails the run.
 
 ### `hold`
 
-Parsed and validated; enforcement lands in a later release. Today `/hold` applies the
-`hold` label. A configured `label` is added to the [label catalogue](#the-label-catalogue)
-next to `hold`.
+Field | Default | Meaning
+--- | --- | ---
+`label` | `do-not-merge/hold` | the label [`/hold`](./commands.md) applies; cancel removes it and the legacy `hold`
 
-Field | Meaning
---- | ---
-`label` | the label `/hold` applies
+The label is in the [label catalogue](#the-label-catalogue) and, like every command label,
+must exist in the repository. It is refused by `/label` and `/remove-label`. Set
+`label: hold` to keep the pre-`do-not-merge/hold` name; see
+[upgrading](./automatic-merging.md#upgrading-from-the-hold-label).
 
 ### `blunderbuss`
 

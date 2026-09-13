@@ -1,15 +1,25 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
+import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import listPullReqs from '../fixtures/pullReq/pullReqListPulls.json'
 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 
+// the cron reads the prow configuration for the tide section; no file exists unless a test serves one
+function prowYaml(text: string) {
+  const file = structuredClone(labelFileContents)
+  file.content = Buffer.from(text).toString('base64')
+  return http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file))
+}
+
 const server = setupServer(
+  ...utils.noOrgOrRepoConfigExcept(),
   // /repos/Codertocat/Hello-World/pulls?state=open&page={1,2}
   http.get(
     `${utils.api}/repos/Codertocat/Hello-World/pulls`,
@@ -174,10 +184,10 @@ describe('cronLgtm', () => {
     await expect(observeReq.notCalled()).resolves.toBe('not called')
   })
 
-  function lgtmPr(number: number) {
+  function lgtmPr(number: number, ...extraLabels: string[]) {
     const pr = structuredClone(listPullReqs[0])
     pr.number = number
-    pr.labels = [{ ...pr.labels[0], name: 'lgtm' }]
+    pr.labels = ['lgtm', ...extraLabels].map(name => ({ ...pr.labels[0], name }))
     return pr
   }
 
@@ -192,6 +202,114 @@ describe('cronLgtm', () => {
       ),
     )
   }
+
+  function observeMerge(number: number) {
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/${number}/merge`,
+        utils.mockResponse(200, { merged: true }, observeReq),
+      ),
+    )
+    return observeReq
+  }
+
+  describe('merge gate', () => {
+    it.each([
+      'do-not-merge/work-in-progress',
+      'do-not-merge/hold',
+      'needs-rebase',
+    ])('does not merge a PR carrying %s and logs the reason', async (label) => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      routePulls([lgtmPr(6, label)])
+      const observeReq = observeMerge(6)
+
+      const info = vi.spyOn(core, 'info')
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeReq.notCalled()).resolves.toBe('not called')
+      expect(info).toHaveBeenCalledWith(`skipping pr #6: blocked by ${label}`)
+    })
+
+    it('does not merge a PR without lgtm and logs the missing label', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      const pr = lgtmPr(7)
+      pr.labels = [{ ...pr.labels[0], name: 'approved' }]
+      routePulls([pr])
+      const observeReq = observeMerge(7)
+
+      const info = vi.spyOn(core, 'info')
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeReq.notCalled()).resolves.toBe('not called')
+      expect(info).toHaveBeenCalledWith('skipping pr #7: missing lgtm')
+    })
+
+    it('requires every label of tide.labels', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      server.use(prowYaml('tide:\n  labels: [lgtm, approved]\n'))
+      routePulls([lgtmPr(8), lgtmPr(9, 'approved')])
+      const observeEight = observeMerge(8)
+      const observeNine = observeMerge(9)
+
+      const info = vi.spyOn(core, 'info')
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeEight.notCalled()).resolves.toBe('not called')
+      await expect(observeNine.called()).resolves.toBe('called')
+      expect(info).toHaveBeenCalledWith('skipping pr #8: missing approved')
+    })
+
+    it('a configured tide.missing_labels replaces the default list', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      server.use(prowYaml('tide:\n  missing_labels: [needs-rebase]\n'))
+      routePulls([lgtmPr(10, 'hold', 'do-not-merge/hold'), lgtmPr(11, 'needs-rebase')])
+      const observeTen = observeMerge(10)
+      const observeEleven = observeMerge(11)
+
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeTen.called()).resolves.toBe('called')
+      await expect(observeEleven.notCalled()).resolves.toBe('not called')
+    })
+
+    it('tide.merge_method wins over the merge-method input', async () => {
+      utils.setupJobsEnv('lgtm')
+      process.env['INPUT_MERGE-METHOD'] = 'merge'
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      server.use(prowYaml('tide:\n  merge_method: squash\n'))
+      routePulls([lgtmPr(12)])
+      const observeReq = observeMerge(12)
+
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeReq.called()).resolves.toBe('called')
+      expect(await observeReq.body()).toEqual({ merge_method: 'squash' })
+    })
+
+    it('an unknown merge-method input falls back to merge', async () => {
+      utils.setupJobsEnv('lgtm')
+      process.env['INPUT_MERGE-METHOD'] = 'fast-forward'
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      routePulls([lgtmPr(13)])
+      const observeReq = observeMerge(13)
+
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      expect(await observeReq.body()).toEqual({ merge_method: 'merge' })
+    })
+
+    it('fails the run when the prow configuration is invalid', async () => {
+      utils.setupJobsEnv('lgtm')
+      const context = new utils.MockContext(pullReqOpenedEvent)
+      server.use(prowYaml('tide:\n  merge_method: fast-forward\n'))
+      routePulls([lgtmPr(14)])
+      const observeReq = observeMerge(14)
+
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      await expect(handleCronJobs(context)).resolves.not.toThrow()
+      await expect(observeReq.notCalled()).resolves.toBe('not called')
+      expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('tide.merge_method must be one of merge, squash, rebase'))
+    })
+  })
 
   it('does not fail the run when the merge succeeds', async () => {
     utils.setupJobsEnv('lgtm')
