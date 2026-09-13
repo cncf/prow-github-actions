@@ -3,21 +3,29 @@ import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { approveSettings, evaluateApproval } from '../plugins/approve'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
+import { loadProwConfig } from '../utils/config'
 import { newOctokit } from '../utils/octokit'
+import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 type PullsListReviewsResponseType
   = RestEndpointMethodTypes['pulls']['listReviews']['response']
 
 /**
- * the /approve command will create a "approve" review
- * from the github-actions bot
+ * /approve on a pull request whose base branch has OWNERS files records the
+ * commenter's approval for the files they own and re-evaluates the approve
+ * plugin's coverage, which manages the `approved` label and the notifier
+ * comment; no GitHub review is submitted. /approve cancel withdraws it the
+ * same way: the comment itself is the state, so both just recompute.
  *
- * If the argument 'cancel' is provided to the /approve command,
- * or /remove-approve is used, the last review will be removed.
- * The Prow argument 'no-issue' is accepted and behaves like a plain /approve.
+ * Anywhere else (an issue, or a repository without OWNERS files) the legacy
+ * behaviour is kept: org members and collaborators (or the root OWNERS
+ * approvers on an issue) make the github-actions bot submit an APPROVE
+ * review, and /approve cancel or /remove-approve dismisses its latest one.
+ * The Prow argument 'no-issue' is accepted and ignored.
  *
  * @param context - the github actions event context
  */
@@ -38,31 +46,18 @@ export async function approve(
     )
   }
 
-  try {
-    await assertAuthorizedByOwnersOrMembership(
-      octokit,
-      context,
-      'approvers',
-      commenterLogin,
-    )
-  }
-  catch (e) {
-    const msg = `Cannot approve the pull request: ${e}`
-    core.error(msg)
-
-    // Try to reply back that the user is unauthorized
-    try {
-      await createComment(octokit, context, issueNumber, msg)
-    }
-    catch (commentE) {
-      // Log the comment error but continue to throw the original auth error
-      core.error(`Could not comment with an auth error: ${commentE}`)
-    }
-    throw e
-  }
-
   const isCancel = hasCommand('/remove-approve', commentBody)
     || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'))
+
+  if (context.payload.issue?.pull_request !== undefined) {
+    const owners = await loadPullRequestOwners(octokit, context, issueNumber)
+    if (owners.tree.hasOwners) {
+      await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel)
+      return
+    }
+  }
+
+  await authorize(octokit, context, issueNumber, commenterLogin)
 
   if (isCancel) {
     try {
@@ -86,6 +81,56 @@ export async function approve(
   catch (e) {
     throw new Error(`could not create review: ${e}`)
   }
+}
+
+async function approveByCoverage(
+  octokit: Octokit,
+  context: Context,
+  issueNumber: number,
+  commenterLogin: string,
+  isCancel: boolean,
+): Promise<void> {
+  const settings = approveSettings(await loadProwConfig(octokit, context))
+  const isAuthor = commenterLogin.toLowerCase() === String(context.payload.issue?.user?.login ?? '').toLowerCase()
+  if (settings.require_self_approval && isAuthor && !isCancel) {
+    await refuse(octokit, context, issueNumber, 'Cannot approve the pull request: you cannot approve your own PR (approve.require_self_approval is set).')
+  }
+
+  await authorize(octokit, context, issueNumber, commenterLogin)
+  await evaluateApproval(octokit, context, issueNumber)
+}
+
+async function authorize(octokit: Octokit, context: Context, issueNumber: number, commenterLogin: string): Promise<void> {
+  try {
+    await assertAuthorizedByOwnersOrMembership(
+      octokit,
+      context,
+      'approvers',
+      commenterLogin,
+    )
+  }
+  catch (e) {
+    await refuse(octokit, context, issueNumber, `Cannot approve the pull request: ${e}`, e)
+  }
+}
+
+// refuse logs and replies with msg, then fails the run with cause (or msg)
+async function refuse(
+  octokit: Octokit,
+  context: Context,
+  issueNumber: number,
+  msg: string,
+  cause: unknown = new Error(msg),
+): Promise<never> {
+  core.error(msg)
+
+  try {
+    await createComment(octokit, context, issueNumber, msg)
+  }
+  catch (commentE) {
+    core.error(`Could not comment with an auth error: ${commentE}`)
+  }
+  throw cause
 }
 
 /**

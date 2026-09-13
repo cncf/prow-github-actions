@@ -62,7 +62,7 @@ jobs:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-PRs merge automatically once they carry `lgtm`, no `do-not-merge/*`, `needs-rebase` or `hold` label, and GitHub reports them mergeable. Subscribe to the events that change that ([automatic merging](./docs/automatic-merging.md)); the merge needs `contents: write`:
+PRs merge automatically once they carry `lgtm` (and `approved` when the repository has [OWNERS files](./docs/commands.md#owners)), no `do-not-merge/*`, `needs-rebase` or `hold` label, and GitHub reports them mergeable. Subscribe to the events that change that ([automatic merging](./docs/automatic-merging.md)); the merge needs `contents: write`:
 
 ```yaml
 name: Merge on lgtm

@@ -522,61 +522,140 @@ describe('dist/index.js', () => {
       'sdk/OWNERS': 'approvers:\n- bob\n',
       'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
     }
+    const marker = '<!-- prow-github-actions/approve -->'
+    const bot = { login: 'github-actions[bot]', type: 'Bot' }
 
-    function routeApprove(files: string[]) {
-      routeOwners(ownersFiles, files)
+    function routeApprove(files: string[], options: { labels?: string[], comments?: unknown[], reviews?: unknown[] } = {}) {
+      routeOwners(ownersFiles, files, { labels: (options.labels ?? []).map(name => ({ name })) })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: options.comments ?? [] })
+      gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: options.reviews ?? [] })
+      gh.route('GET', `${repo}/labels`, repoLabels('approved', 'lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('DELETE', `${repo}/issues/1/labels/approved`, { status: 200, body: [] })
       gh.route('POST', `${repo}/pulls/1/reviews`, { status: 200, body: {} })
       gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+      gh.route('PATCH', `${repo}/issues/comments/900`, { status: 200, body: {} })
     }
 
-    it('approves when a nested approver covers every changed file', async () => {
-      routeApprove(['sdk/x.go', 'sdk/internal/y.go'])
-
-      const result = await runBundle({
+    function runApprove(body: string, commenter: string) {
+      return runBundle({
         eventName: 'issue_comment',
-        payload: prCommentEvent('/approve', 'bob'),
+        payload: prCommentEvent(body, commenter),
         inputs: { ...token, 'prow-commands': '/approve' },
         apiUrl: gh.url,
       })
+    }
+
+    it('/approve by an approver covering every changed file adds approved and posts the notifier; no bot review', async () => {
+      routeApprove(['sdk/x.go', 'sdk/internal/y.go'], {
+        comments: [{ id: 1, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' }],
+      })
+
+      const result = await runApprove('/approve', 'bob')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('approve: #1 is approved by bob')
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      const body = (comments[0].body as { body: string }).body
+      expect(body).toContain('[APPROVALNOTIFIER] This PR is **APPROVED**')
+      expect(body).toContain(`~~[sdk/OWNERS](https://github.com/Codertocat/Hello-World/blob/basesha/sdk/OWNERS)~~ [bob]`)
+      expect(body.endsWith(marker)).toBe(true)
+      // the OWNERS reads (memoized across the authorization and the evaluation), the config probes, then one evaluation
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, 3)).toEqual(ownersReads)
+      expect(calls.slice(3, 5).sort()).toEqual([
+        `GET ${repo}/git/blobs/${blobSha('OWNERS')}`,
+        `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
+      ])
+      expect(calls.slice(5, 5 + configReads().length).sort()).toEqual(configReads().sort())
+      expect(calls.slice(5 + configReads().length)).toEqual([
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `GET ${repo}/pulls/1/reviews?per_page=100`,
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+        `POST ${repo}/issues/1/comments`,
+      ])
+      expect(calls).toHaveLength(5 + configReads().length + 5)
+    })
+
+    it('/approve cancel removes approved and edits the notifier to NOT APPROVED', async () => {
+      routeApprove(['sdk/x.go'], {
+        labels: ['approved', 'lgtm'],
+        comments: [
+          { id: 900, body: `stale\n${marker}`, user: bot, created_at: '2024-01-01T00:00:00Z' },
+          { id: 1, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' },
+          { id: 2, body: '/approve cancel', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:02Z' },
+        ],
+      })
+
+      const result = await runApprove('/approve cancel', 'bob')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('DELETE', /\/issues\/1\/labels\/approved$/)).toHaveLength(1)
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      const patches = gh.requestsMatching('PATCH', /\/issues\/comments\/900$/)
+      expect(patches).toHaveLength(1)
+      expect((patches[0].body as { body: string }).body).toContain('This PR is **NOT APPROVED**')
+      expect(gh.requestsMatching('PUT', /dismissals$/)).toEqual([])
+    })
+
+    it('refuses with a comment a commenter who approves none of the changed files', async () => {
+      routeApprove(['sdk/x.go', 'olm/y.go'])
+
+      const result = await runApprove('/approve', 'rita')
+
+      const wantErr = 'rita is not an approver for any changed file'
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes(wantErr))).toBe(true)
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect(comments[0].body).toEqual({ body: `Cannot approve the pull request: Error: ${wantErr}` })
+      expect(gh.requestsMatching('GET', /\/issues\/1\/comments/)).toEqual([])
+    })
+
+    it('an approver of one of two directories gets no label and a notifier suggesting the other approver', async () => {
+      routeApprove(['sdk/x.go', 'olm/y.go'], {
+        comments: [{ id: 1, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' }],
+      })
+
+      const result = await runApprove('/approve', 'bob')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
+      const body = (gh.requestsMatching('POST', /\/issues\/1\/comments$/)[0].body as { body: string }).body
+      expect(body).toContain('This PR is **NOT APPROVED**')
+      expect(body).toContain('please assign **carol**')
+    })
+
+    it('on a repository without OWNERS files /approve still submits a bot review and touches no label', async () => {
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', `/orgs/Codertocat/members/bob`, { status: 204 })
+      gh.route('POST', `${repo}/pulls/1/reviews`, { status: 200, body: {} })
+
+      const result = await runApprove('/approve', 'bob')
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       const reviews = gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)
       expect(reviews).toHaveLength(1)
       expect(reviews[0].body).toEqual({ event: 'APPROVE', comments: [] })
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
-      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect(calls.slice(0, 3)).toEqual([
-        `GET ${repo}/pulls/1`,
-        `GET ${repo}/pulls/1/files?per_page=100`,
-        `GET ${repo}/git/trees/basesha?recursive=true`,
+      // the membership fallback checks org membership and collaborator status
+      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+        ...ownersReads,
+        `GET /orgs/Codertocat/members/bob`,
+        `GET ${repo}/collaborators/bob`,
+        `POST ${repo}/pulls/1/reviews`,
       ])
-      // the blobs are fetched concurrently, so their order is not fixed
-      expect(calls.slice(3, 5).sort()).toEqual([
-        `GET ${repo}/git/blobs/${blobSha('OWNERS')}`,
-        `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
-      ])
-      expect(calls.slice(5)).toEqual([`POST ${repo}/pulls/1/reviews`])
-    })
-
-    it('refuses with a comment naming the file outside the approver\'s directory', async () => {
-      routeApprove(['sdk/x.go', 'olm/y.go'])
-
-      const result = await runBundle({
-        eventName: 'issue_comment',
-        payload: prCommentEvent('/approve', 'bob'),
-        inputs: { ...token, 'prow-commands': '/approve' },
-        apiUrl: gh.url,
-      })
-
-      const wantErr = 'bob is not an approver for olm/y.go (OWNERS: olm/OWNERS)'
-      expect(result.status, result.stdout).toBe(1)
-      expect(result.errors.some(e => e.includes(wantErr))).toBe(true)
-      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
-      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
-      expect(comments).toHaveLength(1)
-      expect(comments[0].body).toEqual({ body: `Cannot approve the pull request: Error: ${wantErr}` })
-      expect(gh.requestsMatching('GET', /\/contents\//)).toEqual([])
     })
   })
 
