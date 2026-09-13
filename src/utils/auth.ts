@@ -5,7 +5,8 @@ import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import { effectiveOwners, loadOwnersTree, parseOwners } from './owners'
+import { parseOwners } from './owners'
+import { loadPullRequestOwners } from './pullRequestOwners'
 
 function getErrorDetails(error: unknown): { status: unknown, message: string } {
   if (typeof error === 'object' && error !== null) {
@@ -296,23 +297,7 @@ async function assertPullRequestOwner(
   role: OwnersRole,
   username: string,
 ): Promise<boolean> {
-  const pullNumber = context.payload.issue!.number
-
-  const { data: pull } = await octokit.pulls.get({
-    ...context.repo,
-    pull_number: pullNumber,
-  })
-  const changed = await octokit.paginate(octokit.pulls.listFiles, {
-    ...context.repo,
-    pull_number: pullNumber,
-    per_page: 100,
-  })
-  const files = [...new Set(changed.flatMap(f =>
-    f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename],
-  ))]
-
-  // OWNERS come from the base branch so a PR cannot grant itself approvers
-  const tree = await loadOwnersTree(octokit, context, pull.base.sha, files)
+  const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue!.number)
   if (!tree.hasOwners) {
     core.debug('No OWNERS files found')
     return false
@@ -320,7 +305,7 @@ async function assertPullRequestOwner(
 
   const login = username.toLowerCase()
   const covered = files.map((file) => {
-    const owners = effectiveOwners(file, tree.owners)
+    const owners = perFile.get(file)
     if (owners === undefined) {
       throw new Error(`no OWNERS file covers ${file}`)
     }

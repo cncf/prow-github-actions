@@ -1,0 +1,83 @@
+import type { Octokit } from '@octokit/rest'
+import type { Context } from './context'
+import type { OwnersSet, OwnersTree } from './owners'
+
+import { effectiveOwners, loadOwnersTree } from './owners'
+
+/** a pull request and the OWNERS covering its changed files; every login is lowercased */
+export interface PullRequestOwners {
+  number: number
+  baseSha: string
+  author: string
+  draft: boolean
+  requestedReviewers: string[]
+  assignees: string[]
+  files: string[]
+  tree: OwnersTree
+  perFile: Map<string, OwnersSet | undefined>
+}
+
+const cache = new Map<string, Promise<PullRequestOwners>>()
+
+/**
+ * loadPullRequestOwners reads the pull request, its changed files and the
+ * OWNERS files of the base branch that cover them. The result is memoized per
+ * pull request for the lifetime of the process, so every plugin acting on the
+ * same event shares one fetch.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param pullNumber - the pull request
+ */
+export function loadPullRequestOwners(
+  octokit: Octokit,
+  context: Context,
+  pullNumber: number,
+): Promise<PullRequestOwners> {
+  const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`
+  let pending = cache.get(key)
+  if (pending === undefined) {
+    pending = load(octokit, context, pullNumber)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
+export function resetPullRequestOwnersCache(): void {
+  cache.clear()
+}
+
+async function load(
+  octokit: Octokit,
+  context: Context,
+  pullNumber: number,
+): Promise<PullRequestOwners> {
+  const { data: pull } = await octokit.pulls.get({
+    ...context.repo,
+    pull_number: pullNumber,
+  })
+  const changed = await octokit.paginate(octokit.pulls.listFiles, {
+    ...context.repo,
+    pull_number: pullNumber,
+    per_page: 100,
+  })
+  const files = [...new Set(changed.flatMap(f =>
+    f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename],
+  ))]
+
+  // OWNERS come from the base branch so a PR cannot grant itself approvers
+  const tree = await loadOwnersTree(octokit, context, pull.base.sha, files)
+  const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]))
+
+  return {
+    number: pullNumber,
+    baseSha: pull.base.sha,
+    author: (pull.user?.login ?? '').toLowerCase(),
+    draft: pull.draft === true,
+    requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+    assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+    files,
+    tree,
+    perFile,
+  }
+}

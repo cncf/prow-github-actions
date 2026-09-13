@@ -33,6 +33,7 @@ Commands | Policy | Description
 `/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 `/check-required-labels` | anyone | re-evaluates every [`require_matching_label`](./configuration.md#require_matching_label) rule on the open issue / PR at once: adds the missing `needs-*` labels, removes the satisfied ones. No `/remove-` form
+`/auto-cc` | anyone, PRs only | runs [blunderbuss](./configuration.md#blunderbuss): requests review from `request_count` [OWNERS](#owners) reviewers of the changed files, ignoring `ignore_drafts` and `ignore_authors`. No arguments, no `/remove-` form
 
 Label Commands | Policy | Description
 --- | --- | ---
@@ -100,7 +101,7 @@ The API key is optional; unauthenticated access is best effort and may be rate l
 
 ## OWNERS
 
-A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) files is supported. When the repository contains any `OWNERS` file, the `/lgtm` and `/approve` commands are authorized against them; when it contains none, org members and collaborators may use both commands. See an [example][owners-example] using OWNERS files.
+A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) files is supported. When the repository contains any `OWNERS` file, the `/lgtm` and `/approve` commands are authorized against them; when it contains none, org members and collaborators may use both commands. The same files drive two `pull_request` plugins: [`owners-label`](./labeling.md#labels-from-owners-files) applies their `labels:` and [`blunderbuss`](./configuration.md#blunderbuss) requests reviews from their `reviewers`. See an [example][owners-example] using OWNERS files.
 
 ### Where OWNERS files live
 
@@ -118,6 +119,8 @@ On a pull request the changed files are listed (for renames both the old and the
 
 The `approvers` role does not grant `/lgtm` on its own for issues; on pull requests an approver of a changed file may also `/lgtm`.
 
+The pull request plugins resolve the same set of OWNERS files per changed file. `owners-label` applies the union of their `labels`; `blunderbuss` draws reviewers from the union of their `reviewers` (and `approvers`), weighting each by how many changed files they cover. Prow's owners-label takes only the deepest OWNERS file's labels; here labels inherit from parent directories like approvers do, and `options.no_parent_owners` stops that inheritance too.
+
 ### Failure modes
 
 Authorization fails closed:
@@ -132,14 +135,15 @@ The OWNERS file must be in YAML format. All entries are expected to be GitHub us
 
 Key | Meaning
 --- | ---
-`approvers` | list of usernames who may use `/approve` (and `/lgtm` on a pull request)
-`reviewers` | list of usernames who may use `/lgtm`
+`approvers` | list of usernames who may use `/approve` (and `/lgtm` on a pull request); reviewer candidates for `blunderbuss` unless `exclude_approvers`
+`reviewers` | list of usernames who may use `/lgtm`; reviewer candidates for `blunderbuss`
+`labels` | list of labels `owners-label` adds to a pull request touching this directory; applied verbatim, must [exist in the repository](./labeling.md#labels-from-owners-files)
 `options.no_parent_owners` | `true` stops inheritance from parent directories
 
-`emeritus_approvers`, `emeritus_reviewers`, `labels` and `filters` are accepted but ignored (`filters` is noted in the debug log). `OWNERS_ALIASES` files and aliases are not supported. Unknown keys are tolerated.
+`emeritus_approvers`, `emeritus_reviewers` and `filters` are accepted but ignored (`filters` is noted in the debug log). `OWNERS_ALIASES` files and aliases are not supported. Unknown keys are tolerated. `labels` must be a list of strings; anything else fails like a malformed role.
 
 ```yaml
-# List of usernames who may use /lgtm
+# List of usernames who may use /lgtm and get review requests
 reviewers:
   - user1
   - user2
@@ -151,7 +155,11 @@ approvers:
   - user2
   - admin1
 
-# Optional: do not inherit approvers and reviewers from parent directories
+# Labels added to every pull request that touches this directory
+labels:
+  - area/sdk
+
+# Optional: do not inherit approvers, reviewers and labels from parent directories
 options:
   no_parent_owners: false
 ```

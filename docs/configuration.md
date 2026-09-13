@@ -94,6 +94,14 @@ tide:
 # validated now; enforcement lands in a later release
 hold:
   label: do-not-merge/hold
+
+# reviewers requested from OWNERS files when a pull request opens
+blunderbuss:
+  request_count: 2
+  max_request_count: 4
+  exclude_approvers: false
+  ignore_drafts: true
+  ignore_authors: ['dependabot[bot]']
 ```
 
 ### `labels`
@@ -150,6 +158,11 @@ Label | Color
 `lifecycle/stale` | `795548`
 `lifecycle/rotten` | `604460`
 `needs-*` | `ededed`
+
+Labels declared under `labels:` in [OWNERS files](./commands.md#owners) are **not** part of
+the catalogue: the job has no pull request to scope a tree walk to. List them in a
+`labels` section (or the `/label` allowlist) as well, or create them by hand;
+[`owners-label`](./labeling.md#labels-from-owners-files) skips a label the repository lacks.
 
 Names are unique case-insensitively (the first definition wins) and the job never
 deletes or renames a label. Label commands refuse labels the repository does not have
@@ -247,6 +260,46 @@ Field | Meaning
 --- | ---
 `label` | the label `/hold` applies
 
+### `blunderbuss`
+
+Modelled on Prow's [`blunderbuss`](https://github.com/kubernetes-sigs/prow/tree/main/pkg/plugins/blunderbuss)
+plugin: when a pull request opens, request reviews from the people the
+[OWNERS files](./commands.md#owners) of the base branch name for its changed files. The
+section is optional; with no OWNERS files in the repository the plugin is a no-op.
+
+Field | Default | Meaning
+--- | --- | ---
+`request_count` | `2` | reviewers to request; integer ≥ 1
+`max_request_count` | unset | never leave the pull request with more requested reviewers than this in total; ≥ `request_count`
+`exclude_approvers` | `false` | only `reviewers` are candidates, not `approvers`
+`ignore_drafts` | `true` | a draft waits for `ready_for_review`; `false` requests on `opened` and skips `ready_for_review`
+`ignore_authors` | `[]` | pull requests by these authors get no automatic request (case-insensitive)
+
+Event | Action
+--- | ---
+`pull_request` `opened` | request `request_count` reviewers, unless the PR is a draft and `ignore_drafts` is on, or the author is in `ignore_authors`
+`pull_request` `ready_for_review` | the same, only while `ignore_drafts` is on
+`issue_comment` [`/auto-cc`](./commands.md) | the same, on any open pull request, ignoring `ignore_drafts` and `ignore_authors`
+
+Candidates are the union of `reviewers` (plus `approvers` unless `exclude_approvers`) of
+every OWNERS file covering a changed file, minus the author, the already requested
+reviewers and the assignees. Like Prow, each candidate is weighted by the number of changed
+files they cover: the request is filled from the best-covering candidates first and drawn at
+random among equals. With `max_request_count`, `request_count` is reduced so that the
+already requested reviewers plus the new ones do not exceed it. Nobody left to request is a
+debug-logged no-op; a refused request fails the run. No comment is posted.
+
+The workflow token needs `pull-requests: write` and the workflow must subscribe to
+`ready_for_review` for drafts; see [events](./events.md#issues-and-pull_request).
+
+### `owners-label`
+
+No configuration. Whenever a pull request is `opened`, `reopened` or `synchronize`d the
+`labels:` of the OWNERS files covering its changed files are added; see
+[labeling](./labeling.md#labels-from-owners-files). The labels must already exist in the
+repository — declare them in a `labels` section for the [`label-sync` job](#the-label-catalogue)
+or create them by hand.
+
 Unknown top level keys are ignored and logged once at debug level.
 
 ## Legacy `.prowlabels.yaml`
@@ -271,8 +324,8 @@ Both forms share one parser. The top level `labels` key decides which form a doc
 `labels` is | Form | The `/label` allowlist is
 --- | --- | ---
 a **list** | legacy: every top level key is a label section | the top level `labels` list
-a **mapping** | new: `require_matching_label`, `tide`, `hold` may sit alongside | `labels.labels`
-absent, and `require_matching_label`, `tide` or `hold` is present | new | `labels.labels`
+a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss` may sit alongside | `labels.labels`
+absent, and `require_matching_label`, `tide`, `hold` or `blunderbuss` is present | new | `labels.labels`
 absent otherwise | legacy | none
 
 ```yaml
@@ -303,7 +356,7 @@ Key | Rule
 --- | ---
 `labels` | per section: a repository section replaces the organization section of the same name; other organization sections survive
 `require_matching_label` | lists concatenate, organization rules first
-`tide`, `hold` | shallow merge; a repository field wins
+`tide`, `hold`, `blunderbuss` | shallow merge; a repository field wins
 
 ```yaml
 # <owner>/.project prow.yaml
