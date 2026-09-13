@@ -44038,6 +44038,71 @@ async function pullRequestsForSha(octokit, context, sha) {
     }
 }
 
+;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
+
+
+
+
+
+const ownersLabel_triggerActions = new Set(['opened', 'reopened', 'synchronize']);
+/**
+ * ownersLabel is the `pull_request` handler modelled on Prow's owners-label
+ * plugin: on `opened`, `reopened` and `synchronize` it adds the `labels:`
+ * declared by the OWNERS files covering the changed files. Labels the
+ * repository does not have are logged and skipped; nothing is ever removed.
+ *
+ * @param context - the github context of the current action event
+ */
+async function ownersLabel(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !ownersLabel_triggerActions.has(action)) {
+        core_debug(`owners-label: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber);
+    const declared = new Set();
+    for (const owners of perFile.values()) {
+        owners?.labels.forEach(label => declared.add(label));
+    }
+    if (declared.size === 0) {
+        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
+        return;
+    }
+    const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
+    const missing = [...declared].filter(label => !current.has(lower(label)));
+    if (missing.length === 0) {
+        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
+        return;
+    }
+    let known;
+    try {
+        known = new Set((await repoLabelNames(octokit, context)).map(lower));
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const toAdd = missing.filter((label) => {
+        if (known.has(lower(label))) {
+            return true;
+        }
+        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
+        return false;
+    });
+    if (toAdd.length === 0) {
+        return;
+    }
+    await labelIssue(octokit, context, pullNumber, toAdd);
+}
+function lower(label) {
+    return label.toLowerCase();
+}
+
 ;// CONCATENATED MODULE: ./lib/pullReq/onPrLgtm.js
 
 
@@ -44073,8 +44138,9 @@ async function onPrLgtm(context) {
 
 
 
+
 /** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
-const pullRequestHandlers = [requireMatchingLabel];
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on

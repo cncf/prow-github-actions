@@ -4,12 +4,13 @@ import type { EventHandler } from '../utils/events'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
+import { ownersLabel } from '../plugins/ownersLabel'
 import { requireMatchingLabel } from '../plugins/requireMatchingLabel'
 import { runEventHandlers } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
 /** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
-export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel]
+export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel, ownersLabel]
 
 /**
  * This method handles any pull-request configuration for configured workflows:

@@ -8,6 +8,7 @@ import issuePayload from '../fixtures/issues/issue.json'
 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
+import { prHandlers } from '../utils/ownersFixtures'
 
 // removal is tied to new commits, so the cases below run on `synchronize`
 const pullReqEvent = { ...pullReqOpenedEvent, action: 'synchronize' }
@@ -40,8 +41,10 @@ describe('onPrLgtm', () => {
       default: false,
     })
 
+    // owners-label runs on synchronize too and finds no OWNERS files here
     const observeReq = new utils.ObserveRequest()
     server.use(
+      ...prHandlers({}, ['src/file1.txt']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -61,6 +64,7 @@ describe('onPrLgtm', () => {
 
     const observeReq = new utils.ObserveRequest()
     server.use(
+      ...prHandlers({}, ['src/file1.txt']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, issuePayload),
@@ -83,10 +87,11 @@ describe('onPrLgtm', () => {
     const payload = structuredClone(issuePayload)
     payload.labels.push({ ...payload.labels[0], name: 'lgtm' })
 
-    // the require-matching-label handler runs on these actions and reads the (absent) configuration
+    // require-matching-label reads the (absent) configuration on these actions; owners-label reads the (empty) OWNERS tree on opened
     const observeReq = new utils.ObserveRequest()
     server.use(
       ...utils.noOrgOrRepoConfigExcept(),
+      ...prHandlers({}, ['src/file1.txt']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),

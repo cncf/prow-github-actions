@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { ownersLabel } from '../../src/plugins/ownersLabel'
 import { requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq, pullRequestHandlers } from '../../src/pullReq/handlePullReq'
 
@@ -23,8 +24,8 @@ beforeEach(() => {
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-it('registers require-matching-label', () => {
-  expect(registeredHandlers).toEqual([requireMatchingLabel])
+it('registers require-matching-label and owners-label', () => {
+  expect(registeredHandlers).toEqual([requireMatchingLabel, ownersLabel])
 })
 
 // the lgtm PR job only acts on new commits; the fixture is an `opened` event

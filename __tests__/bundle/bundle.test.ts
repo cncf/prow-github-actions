@@ -84,6 +84,35 @@ describe('dist/index.js', () => {
     expect(calls.slice(reads.length)).toEqual(rest)
   }
 
+  // the pull request, its changed files and the OWNERS files of the base branch, as the OWNERS plugins read them
+  function routeOwners(ownersFiles: Record<string, string>, files: string[], pull: Record<string, unknown> = {}) {
+    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { base: { sha: 'basesha' }, user: { login: 'Codertocat' }, draft: false, requested_reviewers: [], assignees: [], ...pull } })
+    gh.route('GET', `${repo}/pulls/1/files`, {
+      status: 200,
+      body: files.map(filename => ({ filename, status: 'modified' })),
+    })
+    gh.route('GET', `${repo}/git/trees/basesha`, {
+      status: 200,
+      body: {
+        sha: 'basesha',
+        truncated: false,
+        tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
+      },
+    })
+    for (const [path, contents] of Object.entries(ownersFiles)) {
+      gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
+        status: 200,
+        body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
+      })
+    }
+  }
+
+  const ownersReads = [
+    `GET ${repo}/pulls/1`,
+    `GET ${repo}/pulls/1/files?per_page=100`,
+    `GET ${repo}/git/trees/basesha?recursive=true`,
+  ]
+
   it('is a syntactically valid bundle with no unresolved modules', () => {
     expect(fs.existsSync(bundlePath)).toBe(true)
 
@@ -490,32 +519,14 @@ describe('dist/index.js', () => {
       'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
     }
 
-    function routeOwners(files: string[]) {
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { base: { sha: 'basesha' } } })
-      gh.route('GET', `${repo}/pulls/1/files`, {
-        status: 200,
-        body: files.map(filename => ({ filename, status: 'modified' })),
-      })
-      gh.route('GET', `${repo}/git/trees/basesha`, {
-        status: 200,
-        body: {
-          sha: 'basesha',
-          truncated: false,
-          tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
-        },
-      })
-      for (const [path, contents] of Object.entries(ownersFiles)) {
-        gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
-          status: 200,
-          body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
-        })
-      }
+    function routeApprove(files: string[]) {
+      routeOwners(ownersFiles, files)
       gh.route('POST', `${repo}/pulls/1/reviews`, { status: 200, body: {} })
       gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
     }
 
     it('approves when a nested approver covers every changed file', async () => {
-      routeOwners(['sdk/x.go', 'sdk/internal/y.go'])
+      routeApprove(['sdk/x.go', 'sdk/internal/y.go'])
 
       const result = await runBundle({
         eventName: 'issue_comment',
@@ -545,7 +556,7 @@ describe('dist/index.js', () => {
     })
 
     it('refuses with a comment naming the file outside the approver\'s directory', async () => {
-      routeOwners(['sdk/x.go', 'olm/y.go'])
+      routeApprove(['sdk/x.go', 'olm/y.go'])
 
       const result = await runBundle({
         eventName: 'issue_comment',
@@ -629,6 +640,7 @@ describe('dist/index.js', () => {
   })
 
   it('pull_request lgtm job removes the lgtm label on a new push', async () => {
+    routeOwners({}, ['src/file1.txt'])
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
 
@@ -641,13 +653,16 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
+    // owners-label reads the (OWNERS-less) tree on synchronize, then the lgtm job runs
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      ...ownersReads,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
   })
 
   it('pull_request_target lgtm job removes the lgtm label on a new push', async () => {
+    routeOwners({}, ['src/file1.txt'])
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
     gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
 
@@ -660,10 +675,65 @@ describe('dist/index.js', () => {
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
+    // owners-label reads the (OWNERS-less) tree on synchronize, then the lgtm job runs
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      ...ownersReads,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/lgtm`,
     ])
+  })
+
+  describe('pull_request owners-label', () => {
+    const ownersFiles: Record<string, string> = {
+      'OWNERS': 'reviewers:\n- alice\n',
+      'sdk/OWNERS': 'reviewers:\n- bob\n- carol\nlabels:\n- area/sdk\n',
+    }
+    const ownersBlobs = [`GET ${repo}/git/blobs/${blobSha('OWNERS')}`, `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`].sort()
+
+    it('opened: adds the labels declared by the OWNERS covering the changed files', async () => {
+      routeOwners(ownersFiles, ['sdk/x.go'])
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/labels`, repoLabels('area/sdk', 'kind/bug'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+      const result = await runBundle({ eventName: 'pull_request', payload: pullReqOpenedEvent, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const labels = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
+      expect(labels).toHaveLength(1)
+      expect(labels[0].body).toEqual({ labels: ['area/sdk'] })
+      // require-matching-label's configuration probes interleave with the whole owners-label sequence
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`].sort())
+      expect(calls.indexOf(`POST ${repo}/issues/1/labels`)).toBeGreaterThan(calls.indexOf(labelsRead))
+    })
+
+    it('synchronize: adds the missing labels only', async () => {
+      routeOwners(ownersFiles, ['sdk/x.go'])
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/labels`, repoLabels('area/sdk'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+      const result = await runBundle({
+        eventName: 'pull_request',
+        payload: { ...pullReqOpenedEvent, action: 'synchronize' },
+        inputs: token,
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['area/sdk'] })
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, 3)).toEqual(ownersReads)
+      expect(calls.slice(3, 5).sort()).toEqual(ownersBlobs)
+      expect(calls.slice(5)).toEqual([
+        `GET ${repo}/issues/1`,
+        labelsRead,
+        `POST ${repo}/issues/1/labels`,
+      ])
+    })
   })
 
   it('pull_request lgtm job leaves the lgtm label alone when the pr is labeled', async () => {
