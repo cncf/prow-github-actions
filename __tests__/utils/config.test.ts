@@ -196,12 +196,19 @@ describe('parseProwConfig', () => {
       })
     })
 
+    it('accepts merge_on_events', () => {
+      expect(parseProwConfig('x', 'tide:\n  merge_on_events: false\n')).toEqual({
+        tide: { merge_on_events: false },
+      })
+    })
+
     it.each([
       ['a non-mapping', 'tide: [lgtm]\n', 'x: tide must be a mapping'],
       ['a non-list labels', 'tide:\n  labels: lgtm\n', 'x: tide.labels must be a list of label names'],
       ['a non-list missing_labels', 'tide:\n  missing_labels: [1]\n', 'x: tide.missing_labels must be a list of label names'],
       ['an empty label name', 'tide:\n  labels: [lgtm, ""]\n', 'x: tide.labels must be a list of label names'],
       ['an unknown merge method', 'tide:\n  merge_method: fast-forward\n', 'x: tide.merge_method must be one of merge, squash, rebase'],
+      ['a non-boolean merge_on_events', 'tide:\n  merge_on_events: yes please\n', 'x: tide.merge_on_events must be a boolean'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })

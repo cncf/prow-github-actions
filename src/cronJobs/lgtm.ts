@@ -4,6 +4,7 @@ import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { mergeOnce } from '../plugins/tide'
 import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
@@ -29,7 +30,9 @@ interface LgtmProgress {
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
  * and attempt to merge every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`).
+ * (`tide.labels` present, no `tide.missing_labels`). It is the backstop
+ * of the event-driven tide handlers: it does not read each PR's
+ * mergeable_state and lets GitHub refuse a merge instead.
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -155,18 +158,12 @@ async function tryMergePr(
     return false
   }
 
-  try {
-    await octokit.pulls.merge({
-      ...context.repo,
-      pull_number: pr.number,
-      merge_method: tide.merge_method,
-    })
+  const outcome = await mergeOnce(octokit, context, pr.number, tide)
+  if (outcome.result === 'merged') {
     return true
   }
-  catch (e) {
-    const message = e instanceof Error ? e.message : String(e)
-    core.error(`could not merge pr #${pr.number}: ${message}`)
-    failures.push({ number: pr.number, message })
-    return false
-  }
+
+  core.error(`could not merge pr #${pr.number}: ${outcome.message}`)
+  failures.push({ number: pr.number, message: outcome.message })
+  return false
 }

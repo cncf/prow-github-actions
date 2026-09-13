@@ -41093,10 +41093,14 @@ function normalizeTide(source, raw) {
     if (raw.merge_method !== undefined && !mergeMethods.includes(raw.merge_method)) {
         throw new Error(`${source}: tide.merge_method must be one of ${mergeMethods.join(', ')}`);
     }
+    if (raw.merge_on_events !== undefined && typeof raw.merge_on_events !== 'boolean') {
+        throw new Error(`${source}: tide.merge_on_events must be a boolean`);
+    }
     return stripUndefined({
         labels: raw.labels,
         missing_labels: raw.missing_labels,
         merge_method: raw.merge_method,
+        merge_on_events: raw.merge_on_events,
     });
 }
 function normalizeHold(source, raw) {
@@ -41158,7 +41162,7 @@ function mergeProwConfig(base, over) {
  * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
  * `hold`. A configured list replaces the default one, it does not extend it.
  * The merge method is `tide.merge_method`, else the `merge-method` action
- * input, else `merge`.
+ * input, else `merge`. `merge_on_events` defaults to true.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
@@ -41168,6 +41172,7 @@ function resolveTide(tide, inputMergeMethod = '') {
         labels: tide.labels ?? defaultTideLabels,
         missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
         merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
+        merge_on_events: tide.merge_on_events ?? true,
     };
 }
 function toMergeMethod(input) {
@@ -42040,6 +42045,138 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
+;// CONCATENATED MODULE: ./lib/plugins/tide.js
+
+
+
+// GitHub computes mergeability lazily: the first GET after a push starts the job and answers
+// `unknown`, so poll with backoff (7 s in total) before giving up on this event
+const unknownRetryDelaysMs = (/* unused pure expression or super */ null && ([1000, 2000, 4000]));
+// `has_hooks` is `clean` with a pending non-required pre-receive hook
+const mergeableStates = new Set(['clean', 'has_hooks']);
+/**
+ * fetchMergeability reads the pull request and, while GitHub reports its
+ * mergeability as `unknown`, re-reads it after growing waits. A state that
+ * is still unknown after the last wait is returned as is.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param options - see FetchMergeabilityOptions
+ */
+async function fetchMergeability(octokit, context, number, options = {}) {
+    const retryIf = options.retryIf ?? (() => true);
+    let pr = await getPull(octokit, context, number);
+    for (const delay of unknownRetryDelaysMs) {
+        if (!isUnknown(pr) || !retryIf(pr)) {
+            return pr;
+        }
+        core.debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`);
+        await sleep(delay);
+        pr = await getPull(octokit, context, number);
+    }
+    if (isUnknown(pr)) {
+        core.info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`);
+    }
+    return pr;
+}
+/**
+ * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
+ * cron and the event handlers. A refused merge is returned, not thrown.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ */
+async function mergeOnce(octokit, context, number, tide) {
+    try {
+        await octokit.pulls.merge({
+            ...context.repo,
+            pull_number: number,
+            merge_method: tide.merge_method,
+        });
+        return { result: 'merged' };
+    }
+    catch (e) {
+        return { result: 'failed', message: e instanceof Error ? e.message : String(e) };
+    }
+}
+/**
+ * tryMergePullRequest evaluates one pull request against the tide gate and
+ * GitHub's own mergeability and merges it when both pass. Unlike the cron,
+ * it only merges a `clean` (or `has_hooks`) pull request; every other state
+ * is skipped with the state as the reason. A refused merge is logged as an
+ * error and reported as `failed`; the caller decides whether that fails the run.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ */
+async function tryMergePullRequest(octokit, context, number, tide) {
+    const pr = await fetchMergeability(octokit, context, number, {
+        retryIf: candidate => blockedReason(candidate, tide) === undefined,
+    });
+    const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
+    if (reason !== undefined) {
+        core.info(`skipping pr #${number}: ${reason}`);
+        return 'skipped';
+    }
+    const outcome = await mergeOnce(octokit, context, number, tide);
+    if (outcome.result === 'merged') {
+        core.info(`merged pr #${number}`);
+        return 'merged';
+    }
+    // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
+    if (await isMerged(octokit, context, number)) {
+        core.info(`pr #${number} was merged concurrently`);
+        return 'skipped';
+    }
+    core.error(`could not merge pr #${number}: ${outcome.message}`);
+    return 'failed';
+}
+function blockedReason(pr, tide) {
+    if (pr.merged) {
+        return 'already merged';
+    }
+    if (!pr.state_open) {
+        return 'closed';
+    }
+    if (pr.locked) {
+        return 'locked';
+    }
+    if (pr.draft) {
+        return 'not mergeable (draft)';
+    }
+    const gate = meetsMergeGate(pr.labels, tide);
+    return gate.ok ? undefined : gate.reason;
+}
+function isUnknown(pr) {
+    return pr.state === 'unknown' || pr.mergeable === null;
+}
+async function getPull(octokit, context, number) {
+    const { data } = await octokit.pulls.get({ ...context.repo, pull_number: number });
+    return {
+        state: data.mergeable_state,
+        mergeable: data.mergeable ?? null,
+        labels: data.labels.map(label => label.name),
+        draft: data.draft ?? false,
+        locked: data.locked,
+        merged: data.merged,
+        state_open: data.state === 'open',
+        sha: data.head.sha,
+    };
+}
+async function isMerged(octokit, context, number) {
+    try {
+        return (await getPull(octokit, context, number)).merged;
+    }
+    catch {
+        return false;
+    }
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
 /**
  * matchesLabelPattern reports whether a label name matches a tide label
@@ -42096,7 +42233,7 @@ function anyLabelMatches(patterns, labels) {
  * @param labels - the labels on the pull request
  * @param tide - the resolved tide configuration
  */
-function meetsMergeGate(labels, tide) {
+function mergeGate_meetsMergeGate(labels, tide) {
     const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
     if (missing !== undefined) {
         return { ok: false, reason: `missing ${missing}` };
@@ -42114,11 +42251,14 @@ function meetsMergeGate(labels, tide) {
 
 
 
+
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
  * and attempt to merge every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`).
+ * (`tide.labels` present, no `tide.missing_labels`). It is the backstop
+ * of the event-driven tide handlers: it does not read each PR's
+ * mergeable_state and lets GitHub refuse a merge instead.
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -42207,25 +42347,18 @@ async function getOpenPrs(octokit, context = github_context, page) {
  * @returns whether the PR was merged
  */
 async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
-    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+    const gate = mergeGate_meetsMergeGate(pr.labels.map(e => e.name), tide);
     if (!gate.ok) {
         info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
-    try {
-        await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: pr.number,
-            merge_method: tide.merge_method,
-        });
+    const outcome = await mergeOnce(octokit, context, pr.number, tide);
+    if (outcome.result === 'merged') {
         return true;
     }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        error(`could not merge pr #${pr.number}: ${message}`);
-        failures.push({ number: pr.number, message });
-        return false;
-    }
+    error(`could not merge pr #${pr.number}: ${outcome.message}`);
+    failures.push({ number: pr.number, message: outcome.message });
+    return false;
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
@@ -43121,7 +43254,7 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, { 
  *
  * @param ms - milliseconds to wait
  */
-function sleep(ms) {
+function sleep_sleep(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
@@ -43251,7 +43384,7 @@ async function enforce(context, changedLabel, withGracePeriod) {
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
         core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep(graceMs);
+        await sleep_sleep(graceMs);
     }
     const labels = await getCurrentLabels(octokit, context, issueNumber);
     const errors = [];
