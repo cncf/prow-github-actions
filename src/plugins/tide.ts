@@ -3,8 +3,12 @@ import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
+import * as github from '@actions/github'
 
+import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
+import { newOctokit } from '../utils/octokit'
+import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
 
 export interface Mergeability {
@@ -34,6 +38,12 @@ export const unknownRetryDelaysMs = [1000, 2000, 4000]
 
 // `has_hooks` is `clean` with a pending non-required pre-receive hook
 const mergeableStates = new Set(['clean', 'has_hooks'])
+
+// `synchronize` is left out on purpose: a push removes lgtm (the lgtm PR job) and must not merge
+const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_for_review', 'edited'])
+const reviewActions = new Set(['submitted', 'dismissed'])
+// a suite or status that ended this way cannot have made the pull request more mergeable
+const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending'])
 
 /**
  * fetchMergeability reads the pull request and, while GitHub reports its
@@ -178,4 +188,97 @@ async function isMerged(octokit: Octokit, context: Context, number: number): Pro
   catch {
     return false
   }
+}
+
+/**
+ * tideOnPullRequest is the `pull_request` / `pull_request_target` handler:
+ * on `labeled`, `unlabeled`, `reopened`, `ready_for_review` and `edited` it
+ * evaluates the pull request. `opened` (nothing can be mergeable yet) and
+ * `synchronize` (a push removes `lgtm`) are skipped.
+ *
+ * @param context - the github context of the current action event
+ */
+export async function tideOnPullRequest(context: Context = github.context): Promise<void> {
+  const action: string | undefined = context.payload.action
+  if (action === undefined || !pullRequestActions.has(action)) {
+    core.debug(`tide: skipping ${action} action`)
+    return
+  }
+
+  await evaluate(context, [pullNumber(context)])
+}
+
+/**
+ * tideOnReview is the `pull_request_review` handler: a submitted or
+ * dismissed review may satisfy or break branch protection and thereby flip
+ * the pull request's mergeable_state. It does not turn reviews into `lgtm`.
+ *
+ * @param context - the github context of the current action event
+ */
+export async function tideOnReview(context: Context = github.context): Promise<void> {
+  const action: string | undefined = context.payload.action
+  if (action === undefined || !reviewActions.has(action)) {
+    core.debug(`tide: skipping ${action} review action`)
+    return
+  }
+
+  await evaluate(context, [pullNumber(context)])
+}
+
+/**
+ * tideOnCheckSuite is the `check_suite` and `status` handler: when checks
+ * finish it evaluates every open pull request whose head is the commit,
+ * from the payload's `pull_requests` or, when that is empty, by listing.
+ *
+ * @param context - the github context of the current action event
+ */
+export async function tideOnCheckSuite(context: Context = github.context): Promise<void> {
+  const suite = context.payload.check_suite
+  const conclusion: string | undefined = suite?.conclusion ?? context.payload.state
+  if (conclusion !== undefined && hopelessConclusions.has(conclusion)) {
+    core.debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`)
+    return
+  }
+
+  const sha: unknown = suite?.head_sha ?? context.payload.sha
+  if (typeof sha !== 'string') {
+    throw new TypeError(`github context payload missing head sha: ${JSON.stringify(context.payload)}`)
+  }
+
+  const listed: number[] = (suite?.pull_requests ?? []).map((pr: { number: number }) => pr.number)
+  await evaluate(context, listed, async octokit => pullRequestsForSha(octokit, context, sha))
+}
+
+async function evaluate(
+  context: Context,
+  numbers: number[],
+  lookup?: (octokit: Octokit) => Promise<number[]>,
+): Promise<void> {
+  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const config = await loadProwConfig(octokit, context)
+  const tide = resolveTide(config.tide, core.getInput('merge-method', { required: false }))
+  if (!tide.merge_on_events) {
+    core.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
+    return
+  }
+
+  const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers
+  if (candidates.length === 0) {
+    core.debug('tide: no open pull request to evaluate')
+    return
+  }
+
+  const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide)))
+  const failed = candidates.filter((_, i) => results[i] === 'failed')
+  if (failed.length > 0) {
+    throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`)
+  }
+}
+
+function pullNumber(context: Context): number {
+  const number: number | undefined = context.payload.pull_request?.number
+  if (number === undefined) {
+    throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`)
+  }
+  return number
 }

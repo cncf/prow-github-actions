@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { tideOnReview } from '../../src/plugins/tide'
 import { handlePullReqReview, pullRequestReviewHandlers } from '../../src/pullReq/handlePullReqReview'
 import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import * as utils from '../testUtils'
@@ -12,18 +13,23 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
-afterEach(() => {
-  server.resetHandlers()
+const registeredHandlers = [...pullRequestReviewHandlers]
+beforeEach(() => {
   pullRequestReviewHandlers.length = 0
 })
+afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
+
+it('registers tide', () => {
+  expect(registeredHandlers).toEqual([tideOnReview])
+})
 
 describe('handlePullReqReview', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
   })
 
-  it('resolves without calling the api or failing when no handlers are registered', async () => {
+  it('resolves without calling the api or failing when the registry is emptied', async () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 

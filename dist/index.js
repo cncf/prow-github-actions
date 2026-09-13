@@ -42045,138 +42045,6 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
-;// CONCATENATED MODULE: ./lib/plugins/tide.js
-
-
-
-// GitHub computes mergeability lazily: the first GET after a push starts the job and answers
-// `unknown`, so poll with backoff (7 s in total) before giving up on this event
-const unknownRetryDelaysMs = (/* unused pure expression or super */ null && ([1000, 2000, 4000]));
-// `has_hooks` is `clean` with a pending non-required pre-receive hook
-const mergeableStates = new Set(['clean', 'has_hooks']);
-/**
- * fetchMergeability reads the pull request and, while GitHub reports its
- * mergeability as `unknown`, re-reads it after growing waits. A state that
- * is still unknown after the last wait is returned as is.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param number - the pull request number
- * @param options - see FetchMergeabilityOptions
- */
-async function fetchMergeability(octokit, context, number, options = {}) {
-    const retryIf = options.retryIf ?? (() => true);
-    let pr = await getPull(octokit, context, number);
-    for (const delay of unknownRetryDelaysMs) {
-        if (!isUnknown(pr) || !retryIf(pr)) {
-            return pr;
-        }
-        core.debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`);
-        await sleep(delay);
-        pr = await getPull(octokit, context, number);
-    }
-    if (isUnknown(pr)) {
-        core.info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`);
-    }
-    return pr;
-}
-/**
- * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
- * cron and the event handlers. A refused merge is returned, not thrown.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param number - the pull request number
- * @param tide - the resolved tide configuration
- */
-async function mergeOnce(octokit, context, number, tide) {
-    try {
-        await octokit.pulls.merge({
-            ...context.repo,
-            pull_number: number,
-            merge_method: tide.merge_method,
-        });
-        return { result: 'merged' };
-    }
-    catch (e) {
-        return { result: 'failed', message: e instanceof Error ? e.message : String(e) };
-    }
-}
-/**
- * tryMergePullRequest evaluates one pull request against the tide gate and
- * GitHub's own mergeability and merges it when both pass. Unlike the cron,
- * it only merges a `clean` (or `has_hooks`) pull request; every other state
- * is skipped with the state as the reason. A refused merge is logged as an
- * error and reported as `failed`; the caller decides whether that fails the run.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param number - the pull request number
- * @param tide - the resolved tide configuration
- */
-async function tryMergePullRequest(octokit, context, number, tide) {
-    const pr = await fetchMergeability(octokit, context, number, {
-        retryIf: candidate => blockedReason(candidate, tide) === undefined,
-    });
-    const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
-    if (reason !== undefined) {
-        core.info(`skipping pr #${number}: ${reason}`);
-        return 'skipped';
-    }
-    const outcome = await mergeOnce(octokit, context, number, tide);
-    if (outcome.result === 'merged') {
-        core.info(`merged pr #${number}`);
-        return 'merged';
-    }
-    // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
-    if (await isMerged(octokit, context, number)) {
-        core.info(`pr #${number} was merged concurrently`);
-        return 'skipped';
-    }
-    core.error(`could not merge pr #${number}: ${outcome.message}`);
-    return 'failed';
-}
-function blockedReason(pr, tide) {
-    if (pr.merged) {
-        return 'already merged';
-    }
-    if (!pr.state_open) {
-        return 'closed';
-    }
-    if (pr.locked) {
-        return 'locked';
-    }
-    if (pr.draft) {
-        return 'not mergeable (draft)';
-    }
-    const gate = meetsMergeGate(pr.labels, tide);
-    return gate.ok ? undefined : gate.reason;
-}
-function isUnknown(pr) {
-    return pr.state === 'unknown' || pr.mergeable === null;
-}
-async function getPull(octokit, context, number) {
-    const { data } = await octokit.pulls.get({ ...context.repo, pull_number: number });
-    return {
-        state: data.mergeable_state,
-        mergeable: data.mergeable ?? null,
-        labels: data.labels.map(label => label.name),
-        draft: data.draft ?? false,
-        locked: data.locked,
-        merged: data.merged,
-        state_open: data.state === 'open',
-        sha: data.head.sha,
-    };
-}
-async function isMerged(octokit, context, number) {
-    try {
-        return (await getPull(octokit, context, number)).merged;
-    }
-    catch {
-        return false;
-    }
-}
-
 ;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
 /**
  * matchesLabelPattern reports whether a label name matches a tide label
@@ -42233,7 +42101,7 @@ function anyLabelMatches(patterns, labels) {
  * @param labels - the labels on the pull request
  * @param tide - the resolved tide configuration
  */
-function mergeGate_meetsMergeGate(labels, tide) {
+function meetsMergeGate(labels, tide) {
     const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
     if (missing !== undefined) {
         return { ok: false, reason: `missing ${missing}` };
@@ -42243,6 +42111,263 @@ function mergeGate_meetsMergeGate(labels, tide) {
         return { ok: false, reason: `blocked by ${blocking}` };
     }
     return { ok: true };
+}
+
+;// CONCATENATED MODULE: ./lib/utils/pulls.js
+/**
+ * Lists the numbers of the open pull requests whose head is the given commit,
+ * paging through `pulls.list` until a page comes back empty.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param sha - the head commit to look up
+ */
+async function pullRequestsForSha(octokit, context, sha) {
+    const numbers = [];
+    for (let page = 1;; page++) {
+        const { data } = await octokit.pulls.list({
+            ...context.repo,
+            state: 'open',
+            per_page: 100,
+            page,
+        });
+        if (data.length === 0) {
+            return numbers;
+        }
+        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/utils/sleep.js
+/**
+ * sleep resolves after the given delay. It lives in its own module so callers
+ * bind to it through an import and tests can replace it with a spy.
+ *
+ * @param ms - milliseconds to wait
+ */
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/tide.js
+
+
+
+
+
+
+
+// GitHub computes mergeability lazily: the first GET after a push starts the job and answers
+// `unknown`, so poll with backoff (7 s in total) before giving up on this event
+const unknownRetryDelaysMs = [1000, 2000, 4000];
+// `has_hooks` is `clean` with a pending non-required pre-receive hook
+const mergeableStates = new Set(['clean', 'has_hooks']);
+// `synchronize` is left out on purpose: a push removes lgtm (the lgtm PR job) and must not merge
+const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_for_review', 'edited']);
+const reviewActions = new Set(['submitted', 'dismissed']);
+// a suite or status that ended this way cannot have made the pull request more mergeable
+const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending']);
+/**
+ * fetchMergeability reads the pull request and, while GitHub reports its
+ * mergeability as `unknown`, re-reads it after growing waits. A state that
+ * is still unknown after the last wait is returned as is.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param options - see FetchMergeabilityOptions
+ */
+async function fetchMergeability(octokit, context, number, options = {}) {
+    const retryIf = options.retryIf ?? (() => true);
+    let pr = await getPull(octokit, context, number);
+    for (const delay of unknownRetryDelaysMs) {
+        if (!isUnknown(pr) || !retryIf(pr)) {
+            return pr;
+        }
+        core_debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`);
+        await sleep(delay);
+        pr = await getPull(octokit, context, number);
+    }
+    if (isUnknown(pr)) {
+        info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`);
+    }
+    return pr;
+}
+/**
+ * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
+ * cron and the event handlers. A refused merge is returned, not thrown.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ */
+async function mergeOnce(octokit, context, number, tide) {
+    try {
+        await octokit.pulls.merge({
+            ...context.repo,
+            pull_number: number,
+            merge_method: tide.merge_method,
+        });
+        return { result: 'merged' };
+    }
+    catch (e) {
+        return { result: 'failed', message: e instanceof Error ? e.message : String(e) };
+    }
+}
+/**
+ * tryMergePullRequest evaluates one pull request against the tide gate and
+ * GitHub's own mergeability and merges it when both pass. Unlike the cron,
+ * it only merges a `clean` (or `has_hooks`) pull request; every other state
+ * is skipped with the state as the reason. A refused merge is logged as an
+ * error and reported as `failed`; the caller decides whether that fails the run.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ */
+async function tryMergePullRequest(octokit, context, number, tide) {
+    const pr = await fetchMergeability(octokit, context, number, {
+        retryIf: candidate => blockedReason(candidate, tide) === undefined,
+    });
+    const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
+    if (reason !== undefined) {
+        info(`skipping pr #${number}: ${reason}`);
+        return 'skipped';
+    }
+    const outcome = await mergeOnce(octokit, context, number, tide);
+    if (outcome.result === 'merged') {
+        info(`merged pr #${number}`);
+        return 'merged';
+    }
+    // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
+    if (await isMerged(octokit, context, number)) {
+        info(`pr #${number} was merged concurrently`);
+        return 'skipped';
+    }
+    error(`could not merge pr #${number}: ${outcome.message}`);
+    return 'failed';
+}
+function blockedReason(pr, tide) {
+    if (pr.merged) {
+        return 'already merged';
+    }
+    if (!pr.state_open) {
+        return 'closed';
+    }
+    if (pr.locked) {
+        return 'locked';
+    }
+    if (pr.draft) {
+        return 'not mergeable (draft)';
+    }
+    const gate = meetsMergeGate(pr.labels, tide);
+    return gate.ok ? undefined : gate.reason;
+}
+function isUnknown(pr) {
+    return pr.state === 'unknown' || pr.mergeable === null;
+}
+async function getPull(octokit, context, number) {
+    const { data } = await octokit.pulls.get({ ...context.repo, pull_number: number });
+    return {
+        state: data.mergeable_state,
+        mergeable: data.mergeable ?? null,
+        labels: data.labels.map(label => label.name),
+        draft: data.draft ?? false,
+        locked: data.locked,
+        merged: data.merged,
+        state_open: data.state === 'open',
+        sha: data.head.sha,
+    };
+}
+async function isMerged(octokit, context, number) {
+    try {
+        return (await getPull(octokit, context, number)).merged;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * tideOnPullRequest is the `pull_request` / `pull_request_target` handler:
+ * on `labeled`, `unlabeled`, `reopened`, `ready_for_review` and `edited` it
+ * evaluates the pull request. `opened` (nothing can be mergeable yet) and
+ * `synchronize` (a push removes `lgtm`) are skipped.
+ *
+ * @param context - the github context of the current action event
+ */
+async function tideOnPullRequest(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !pullRequestActions.has(action)) {
+        core_debug(`tide: skipping ${action} action`);
+        return;
+    }
+    await evaluate(context, [pullNumber(context)]);
+}
+/**
+ * tideOnReview is the `pull_request_review` handler: a submitted or
+ * dismissed review may satisfy or break branch protection and thereby flip
+ * the pull request's mergeable_state. It does not turn reviews into `lgtm`.
+ *
+ * @param context - the github context of the current action event
+ */
+async function tideOnReview(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !reviewActions.has(action)) {
+        core_debug(`tide: skipping ${action} review action`);
+        return;
+    }
+    await evaluate(context, [pullNumber(context)]);
+}
+/**
+ * tideOnCheckSuite is the `check_suite` and `status` handler: when checks
+ * finish it evaluates every open pull request whose head is the commit,
+ * from the payload's `pull_requests` or, when that is empty, by listing.
+ *
+ * @param context - the github context of the current action event
+ */
+async function tideOnCheckSuite(context = github_context) {
+    const suite = context.payload.check_suite;
+    const conclusion = suite?.conclusion ?? context.payload.state;
+    if (conclusion !== undefined && hopelessConclusions.has(conclusion)) {
+        core_debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`);
+        return;
+    }
+    const sha = suite?.head_sha ?? context.payload.sha;
+    if (typeof sha !== 'string') {
+        throw new TypeError(`github context payload missing head sha: ${JSON.stringify(context.payload)}`);
+    }
+    const listed = (suite?.pull_requests ?? []).map((pr) => pr.number);
+    await evaluate(context, listed, async (octokit) => pullRequestsForSha(octokit, context, sha));
+}
+async function evaluate(context, numbers, lookup) {
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const config = await loadProwConfig(octokit, context);
+    const tide = resolveTide(config.tide, getInput('merge-method', { required: false }));
+    if (!tide.merge_on_events) {
+        core_debug('tide: merge_on_events is false, leaving the merge to the lgtm cron');
+        return;
+    }
+    const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
+    if (candidates.length === 0) {
+        core_debug('tide: no open pull request to evaluate');
+        return;
+    }
+    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide)));
+    const failed = candidates.filter((_, i) => results[i] === 'failed');
+    if (failed.length > 0) {
+        throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`);
+    }
+}
+function pullNumber(context) {
+    const number = context.payload.pull_request?.number;
+    if (number === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    return number;
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
@@ -42347,7 +42472,7 @@ async function getOpenPrs(octokit, context = github_context, page) {
  * @returns whether the PR was merged
  */
 async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
-    const gate = mergeGate_meetsMergeGate(pr.labels.map(e => e.name), tide);
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
     if (!gate.ok) {
         info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
@@ -43247,19 +43372,6 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, { 
     info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
 }
 
-;// CONCATENATED MODULE: ./lib/utils/sleep.js
-/**
- * sleep resolves after the given delay. It lives in its own module so callers
- * bind to it through an import and tests can replace it with a spy.
- *
- * @param ms - milliseconds to wait
- */
-function sleep_sleep(ms) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
 ;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
 
 
@@ -43324,7 +43436,7 @@ function applicableRules(config, isPullRequest, changedLabel) {
  * @param rule - the rule to apply
  * @param labels - the labels currently on the issue or pull request
  */
-function evaluate(rule, labels) {
+function requireMatchingLabel_evaluate(rule, labels) {
     const pattern = new RegExp(rule.regexp);
     const hasMatch = labels.some(label => pattern.test(label));
     const hasMissing = labels.some(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
@@ -43384,7 +43496,7 @@ async function enforce(context, changedLabel, withGracePeriod) {
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
         core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep_sleep(graceMs);
+        await sleep(graceMs);
     }
     const labels = await getCurrentLabels(octokit, context, issueNumber);
     const errors = [];
@@ -43411,7 +43523,7 @@ function subject(context) {
     throw new Error(`github context payload missing issue or pull request: ${JSON.stringify(payload)}`);
 }
 async function apply(octokit, context, issueNumber, rule, labels) {
-    const verdict = evaluate(rule, labels);
+    const verdict = requireMatchingLabel_evaluate(rule, labels);
     switch (verdict) {
         case 'add':
             await labelIssue(octokit, context, issueNumber, [rule.missing_label]);
@@ -44457,8 +44569,10 @@ async function handleIssues(context = github_context) {
 ;// CONCATENATED MODULE: ./lib/pullReq/handleCheckSuite.js
 
 
-/** handlers that run on every `check_suite` and `status` event; empty until event-driven merging lands */
-const checkSuiteHandlers = [];
+
+
+/** handlers that run on every `check_suite` and `status` event */
+const checkSuiteHandlers = [tideOnCheckSuite];
 /**
  * Dispatches a `check_suite` or legacy commit `status` event to the registered handlers.
  *
@@ -44466,29 +44580,6 @@ const checkSuiteHandlers = [];
  */
 async function handleCheckSuite(context = github_context) {
     await runEventHandlers(context.eventName, checkSuiteHandlers, context);
-}
-/**
- * Lists the numbers of the open pull requests whose head is the given commit,
- * paging through `pulls.list` until a page comes back empty.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param sha - the head commit to look up
- */
-async function pullRequestsForSha(octokit, context, sha) {
-    const numbers = [];
-    for (let page = 1;; page++) {
-        const { data } = await octokit.pulls.list({
-            ...context.repo,
-            state: 'open',
-            per_page: 100,
-            page,
-        });
-        if (data.length === 0) {
-            return numbers;
-        }
-        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
-    }
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
@@ -44593,8 +44684,9 @@ async function onPrLgtm(context) {
 
 
 
+
 /** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss];
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, tideOnPullRequest];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
@@ -44647,8 +44739,9 @@ async function handlePullReq(context = github_context) {
 ;// CONCATENATED MODULE: ./lib/pullReq/handlePullReqReview.js
 
 
-/** handlers that run on every `pull_request_review` event; empty for now */
-const pullRequestReviewHandlers = [];
+
+/** handlers that run on every `pull_request_review` event */
+const pullRequestReviewHandlers = [tideOnReview];
 /**
  * Dispatches a `pull_request_review` event to the registered handlers.
  *
