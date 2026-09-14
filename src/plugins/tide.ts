@@ -8,6 +8,7 @@ import * as github from '@actions/github'
 import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
+import { repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
 
@@ -249,6 +250,21 @@ export async function tideOnCheckSuite(context: Context = github.context): Promi
   await evaluate(context, listed, async octokit => pullRequestsForSha(octokit, context, sha))
 }
 
+/**
+ * loadTide reads the configuration and resolves the tide section. The
+ * `labels` default depends on whether the repository has OWNERS files
+ * (`[lgtm, approved]`) or not (`[lgtm]`); that lookup is skipped when
+ * `tide.labels` is configured, and memoized otherwise.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ */
+export async function loadTide(octokit: Octokit, context: Context): Promise<ResolvedTide> {
+  const config = await loadProwConfig(octokit, context)
+  const hasOwners = config.tide.labels === undefined ? await repoHasOwners(octokit, context) : false
+  return resolveTide(config.tide, core.getInput('merge-method', { required: false }), { hasOwners })
+}
+
 async function evaluate(
   context: Context,
   numbers: number[],
@@ -256,11 +272,11 @@ async function evaluate(
 ): Promise<void> {
   const octokit = newOctokit(core.getInput('github-token', { required: true }))
   const config = await loadProwConfig(octokit, context)
-  const tide = resolveTide(config.tide, core.getInput('merge-method', { required: false }))
-  if (!tide.merge_on_events) {
+  if (config.tide.merge_on_events === false) {
     core.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
     return
   }
+  const tide = await loadTide(octokit, context)
 
   const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers
   if (candidates.length === 0) {

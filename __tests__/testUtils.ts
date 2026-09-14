@@ -4,6 +4,7 @@ import { http } from 'msw'
 
 import { resetProwConfigCache } from '../src/utils/config'
 import { resetLabelCache } from '../src/utils/labeling'
+import { resetRepoHasOwnersCache } from '../src/utils/owners'
 import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
 
 type WebhookPayload = Context['payload']
@@ -63,6 +64,19 @@ export function repoHasLabels(
   return http.get(`${api}/repos/Codertocat/Hello-World/labels`, mockResponse(200, body, observeReq))
 }
 
+/**
+ * defaultBranchTree serves the recursive tree of Codertocat/Hello-World's
+ * default branch (`master` in every fixture), which is how the tide gate and
+ * the approve plugin learn whether the repository has OWNERS files.
+ *
+ * @param paths - the blob paths in the tree, ex: ['OWNERS', 'README.md']
+ * @param observeReq - optionally records the request
+ */
+export function defaultBranchTree(paths: string[] = [], observeReq?: ObserveRequest) {
+  const tree = paths.map(path => ({ path, mode: '100644', type: 'blob', sha: `blob-${path.replace(/\//g, '-')}` }))
+  return http.get(`${api}/repos/Codertocat/Hello-World/git/trees/master`, mockResponse(200, { sha: 'master', truncated: false, tree }, observeReq))
+}
+
 // @actions/github exports only the context instance; extend its class via the prototype
 const ContextClass = github.context.constructor as new () => Context
 
@@ -77,11 +91,12 @@ export class MockContext extends ContextClass {
 // Drop action inputs and the runner-provided GITHUB_* variables so that tests
 // are hermetic when they run inside GitHub Actions (github.context reads
 // GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
-// The configuration, repository label and pull request OWNERS caches live for one action run, so they are reset here too.
+// The configuration, repository label, pull request OWNERS and OWNERS-presence caches live for one action run, so they are reset here too.
 function clearActionEnv() {
   resetProwConfigCache()
   resetLabelCache()
   resetPullRequestOwnersCache()
+  resetRepoHasOwnersCache()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]

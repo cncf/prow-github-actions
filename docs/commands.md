@@ -16,9 +16,9 @@ These docs describe `main`. Features added since the latest release (`v2.0.0`) s
 
 Commands | Policy | Description
 --- | --- | ---
-`/approve` | [OWNERS](#owners) approver for **every** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | approve all the files for the current PR
+`/approve` | [OWNERS](#owners) approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | on a repo with OWNERS files: records the commenter's approval for the files they own and re-evaluates the [approve plugin](#approve), which adds `approved` once every changed file is covered and posts/edits the `[APPROVALNOTIFIER]` comment; no GitHub review is submitted. Otherwise: the bot submits an approving review
 `/approve no-issue` | same as `/approve` | same as `/approve`; accepted for Prow compatibility
-`/approve cancel` | same as `/approve` | dismisses the bot's latest approval on this pull-request
+`/approve cancel` | same as `/approve` | on a repo with OWNERS files: withdraws the commenter's approval and re-evaluates (`approved` is removed if the files they covered are no longer covered). Otherwise: dismisses the bot's latest approval
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must have been already assigned.
@@ -101,7 +101,7 @@ The API key is optional; unauthenticated access is best effort and may be rate l
 
 ## OWNERS
 
-A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) files is supported. When the repository contains any `OWNERS` file, the `/lgtm` and `/approve` commands are authorized against them; when it contains none, org members and collaborators may use both commands. The same files drive two `pull_request` plugins: [`owners-label`](./labeling.md#labels-from-owners-files) applies their `labels:` and [`blunderbuss`](./configuration.md#blunderbuss) requests reviews from their `reviewers`. See an [example][owners-example] using OWNERS files.
+A simplified version of [Prow's OWNERS](https://go.k8s.io/owners) files is supported. When the repository contains any `OWNERS` file, the `/lgtm` and `/approve` commands are authorized against them and [`/approve` aggregates approvals per OWNERS file](#approve); when it contains none, org members and collaborators may use both commands. The same files drive the `pull_request` plugins: [`owners-label`](./labeling.md#labels-from-owners-files) applies their `labels:`, [`blunderbuss`](./configuration.md#blunderbuss) requests reviews from their `reviewers`, and [`approve`](#approve) manages the `approved` label. See an [example][owners-example] using OWNERS files.
 
 ### Where OWNERS files live
 
@@ -113,11 +113,77 @@ Setting `options.no_parent_owners: true` in an `OWNERS` file stops the walk ther
 
 On a pull request the changed files are listed (for renames both the old and the new path count) and their OWNERS are read from the PR's **base** branch. The head branch is never consulted, so a pull request cannot grant itself approvers by editing an `OWNERS` file.
 
-- `/approve`: the commenter must be an `approver` for **every** changed file. The refusal names the first file that is not covered and the OWNERS files consulted for it.
+- `/approve`: the commenter must be an `approver` for **at least one** changed file; their approval then counts for the files they own and the [approve plugin](#approve) decides whether the whole pull request is approved. The refusal is `<user> is not an approver for any changed file`.
 - `/lgtm`: the commenter must be a `reviewer` or `approver` for **at least one** changed file (Prow's lgtm rule).
 - On an issue there are no changed files, so the root `OWNERS` of the default branch is used.
 
 The `approvers` role does not grant `/lgtm` on its own for issues; on pull requests an approver of a changed file may also `/lgtm`.
+
+### approve
+
+Modelled on Prow's [`approve`](https://github.com/kubernetes-sigs/prow/tree/main/pkg/plugins/approve)
+plugin. It only acts on pull requests whose base branch has OWNERS files; repositories without
+any OWNERS file keep the legacy `/approve` (a bot review, see [below](#repositories-without-owners-files)).
+
+**Coverage, not counting.** A pull request is approved when the current approvers *collectively*
+cover every changed file (both paths of a rename count). A user covers a file when an OWNERS file
+in the file's directory or above lists them under `approvers` (`options.no_parent_owners` stops
+the walk, like everywhere else). One approver may cover everything; a PR spanning `sdk/` and
+`olm/` with disjoint approvers needs one of each.
+
+**Who is a current approver** is recomputed from scratch on every evaluation from the PR's
+comments and reviews; nothing is remembered between runs but the `approved` label itself:
+
+Source | Effect
+--- | ---
+the PR author | approves implicitly every file their OWNERS entries cover ([`approve.require_self_approval: false`](./configuration.md#approve), Prow's default). They still cannot `/lgtm` their own PR
+`/approve`, `/approve no-issue` | adds the commenter, if they are an approver of at least one changed file
+`/approve cancel`, `/remove-approve` | removes the commenter
+a review in state `APPROVED` | adds the reviewer (unless [`ignore_review_state`](./configuration.md#approve))
+a review in state `CHANGES_REQUESTED` | removes the reviewer, even after a `/approve` (unless `ignore_review_state`)
+`/lgtm`, `/lgtm cancel` | count as `/approve`, `/approve cancel` only with [`lgtm_acts_as_approve`](./configuration.md#approve)
+comments or reviews by bots | never count
+
+Comments and reviews are ordered by time; each user's latest action wins, so `/approve` after a
+`CHANGES_REQUESTED` review re-adds them and a cancel after an approval removes them. A comment
+carrying both `/approve` and `/approve cancel` is a cancel.
+
+**What it writes:**
+
+- the `approved` label, added when the PR becomes covered and removed when it stops being covered.
+  Only written when the state changes; a human adding or removing it triggers a re-evaluation that
+  puts it back the way the coverage says. The label must [exist in the repository](./labeling.md#labels-must-exist-in-the-repository)
+  (`label-sync` creates it);
+- one `[APPROVALNOTIFIER] This PR is **APPROVED**` / `**NOT APPROVED**` comment, posted on the first
+  evaluation and edited in place afterwards (found by the hidden marker `<!-- prow-github-actions/approve -->`).
+  It lists the approvers so far, who to `/assign` to complete the approval (chosen greedily: whoever
+  covers the most still-uncovered files, ties alphabetically) and every OWNERS file the PR touches,
+  struck through with its approvers once covered, bold otherwise.
+
+**Sticky.** A push (`synchronize`) never removes `approved`; the PR is re-evaluated because the
+changed files may differ, and the comments and reviews still stand. This is the opposite of `lgtm`,
+which the [`lgtm` PR job](./pr-jobs.md) removes on every push.
+
+**Edge cases:** a pull request with **no changed files** is not approved (there is nothing anyone
+vouches for); a changed file no OWNERS file covers can never be approved and is listed as such in
+the notifier. `/approve cancel` by someone who never approved is a no-op re-evaluation.
+
+**No bot review.** On repositories with OWNERS files the bot submits no GitHub review any more:
+a review by `github-actions[bot]` would satisfy branch protection's "required approving reviews"
+on its own, which is the wrong signal once `approved` is what the [merge gate](./automatic-merging.md#the-merge-gate)
+requires. `/approve cancel` therefore dismisses nothing; it just recomputes.
+
+Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `labeled`/`unlabeled` of
+`approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
+See [events](./events.md).
+
+### Repositories without OWNERS files
+
+Zero behaviour change. `/approve` by an org member or collaborator makes the bot submit an
+`APPROVE` review; `/approve cancel` and `/remove-approve` dismiss its latest one; no `approved`
+label, no notifier. The same legacy path applies to `/approve` on an **issue** even when the
+repository has OWNERS files (the root OWNERS file authorizes it), since an issue has no changed
+files to cover.
 
 The pull request plugins resolve the same set of OWNERS files per changed file. `owners-label` applies the union of their `labels`; `blunderbuss` draws reviewers from the union of their `reviewers` (and `approvers`), weighting each by how many changed files they cover. Prow's owners-label takes only the deepest OWNERS file's labels; here labels inherit from parent directories like approvers do, and `options.no_parent_owners` stops that inheritance too.
 
@@ -135,7 +201,7 @@ The OWNERS file must be in YAML format. All entries are expected to be GitHub us
 
 Key | Meaning
 --- | ---
-`approvers` | list of usernames who may use `/approve` (and `/lgtm` on a pull request); reviewer candidates for `blunderbuss` unless `exclude_approvers`
+`approvers` | list of usernames whose `/approve` (or approving review, or authorship) covers the files under this directory; may also `/lgtm` on a pull request; reviewer candidates for `blunderbuss` unless `exclude_approvers`
 `reviewers` | list of usernames who may use `/lgtm`; reviewer candidates for `blunderbuss`
 `labels` | list of labels `owners-label` adds to a pull request touching this directory; applied verbatim, must [exist in the repository](./labeling.md#labels-from-owners-files)
 `options.no_parent_owners` | `true` stops inheritance from parent directories

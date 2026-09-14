@@ -158,7 +158,7 @@ tide:
 
 Key | Default | Rule
 --- | --- | ---
-`labels` | `[lgtm]` | every pattern must match at least one label on the PR
+`labels` | `[lgtm]`; `[lgtm, approved]` on a repository with [OWNERS files](./commands.md#owners) | every pattern must match at least one label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match any label on the PR
 `merge_method` | see below | `merge`, `squash` or `rebase`
 `merge_on_events` | `true` | `false` leaves merging to the cron; see [above](#merge_on_events)
@@ -166,8 +166,17 @@ Key | Default | Rule
 A configured list **replaces** the default list, it does not extend it: `missing_labels: [needs-rebase]`
 lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively; `*` matches any run of
 characters, `/` included, so `do-not-merge/*` covers the whole family while a bare `do-not-merge` matches
-only that exact label. `approved` is not in the default `labels` yet; it joins once
-[`/approve`](./commands.md) aggregates approvals per OWNERS file in a later release.
+only that exact label.
+
+The `labels` default follows the repository: with no `OWNERS` file anywhere on the default
+branch it is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
+[`/approve` plugin](./commands.md#approve) manages. The check is one recursive tree listing of
+the default branch per run (the event payload's `repository.default_branch`, else
+`GET /repos/{owner}/{repo}`), skipped entirely when `tide.labels` is configured.
+
+`lgtm` and `approved` age differently: a push (`synchronize`) removes `lgtm` (the
+[`lgtm` PR job](./pr-jobs.md)) but never `approved`, which is recomputed from the comments and
+reviews on the PR and stays until an approver cancels or a review requests changes.
 
 A PR that does not pass is skipped with the reason in the job log:
 
@@ -208,6 +217,43 @@ every `do-not-merge/*` label ([commands](./commands.md)); apply the others throu
 tooling, and remove them with `/remove`. Only `do-not-merge/hold` is in the
 [label catalogue](./configuration.md#the-label-catalogue); create the others by hand or list them in a
 `labels` section.
+
+## Upgrading to aggregated approval
+
+**BREAKING** for repositories with OWNERS files. `/approve` no longer makes the bot submit a
+GitHub review; it feeds the [approve plugin](./commands.md#approve), which manages the `approved`
+label, and the merge gate's default `labels` becomes `[lgtm, approved]` there.
+
+What | Before | Now (repositories with OWNERS files)
+--- | --- | ---
+`/approve` requires | approver for **every** changed file | approver for **at least one** changed file
+`/approve` does | the bot submits an `APPROVE` review | records the commenter's approval; `approved` is added once every changed file is covered; the `[APPROVALNOTIFIER]` comment is posted/edited
+the PR author | nothing | implicitly approves the files they own (`approve.require_self_approval: false`)
+GitHub reviews | ignored | `APPROVED` adds an approver, `CHANGES_REQUESTED` removes one
+`/approve cancel` | dismisses the bot's review | withdraws the commenter's approval; recomputes
+the merge gate requires | `lgtm` | `lgtm` **and** `approved`
+a push (`synchronize`) | — | removes `lgtm` (unchanged), keeps `approved`
+
+Repositories **without** OWNERS files are untouched: bot review, no label, gate `[lgtm]`.
+
+Steps:
+
+1. Run the [`label-sync` job](./cron-jobs.md#label-sync), or create `approved` by hand. Until it
+   exists an evaluation that wants to add it fails with
+   `the label(s) approved cannot be applied because the repository doesn't have them`.
+2. Subscribe the workflow to `pull_request` (`opened`, `reopened`, `synchronize`, `labeled`,
+   `unlabeled`) and `pull_request_review` (`submitted`, `dismissed`) so approvals from reviews and
+   authorship are picked up ([events](./events.md)). `/approve` comments work with `issue_comment` alone.
+3. Open PRs need an approver: an author who owns every changed file is approved on the next
+   evaluation; anyone else needs `/approve` (or an approving review) from the OWNERS approvers.
+4. If branch protection relied on the bot's approving review to satisfy "required approving
+   reviews", that review is no longer submitted. Either let this action's merge gate be the
+   approval signal (`approved` + `lgtm`, then it merges), or lower the required review count and
+   let a human's review, which the plugin also counts, satisfy the protection.
+5. To keep merging on `lgtm` alone, pin the gate: `tide: { labels: [lgtm] }`. The `approved`
+   label and the notifier are still maintained for information.
+
+This repository has no OWNERS files, so its own workflows are unaffected.
 
 ## Upgrading from the `hold` label
 

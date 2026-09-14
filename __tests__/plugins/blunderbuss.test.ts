@@ -310,7 +310,7 @@ describe('blunderbuss handler', () => {
   })
 
   it('is registered on the pull_request event after owners-label and shares its OWNERS fetch', async () => {
-    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'tideOnPullRequest'])
+    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'approveOnPullRequest', 'tideOnPullRequest'])
 
     utils.setupJobsEnv('')
     serveConfig()
@@ -325,6 +325,8 @@ describe('blunderbuss handler', () => {
       http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),
       utils.repoHasLabels(['area/sdk']),
       http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [])),
+      // the approve handler runs on opened too; an OWNERS-less default branch keeps it out of this test
+      utils.defaultBranchTree(),
     )
     const observe = observeRequestReviewers()
 

@@ -40798,10 +40798,12 @@ const mergeMethods = ['merge', 'squash', 'rebase'];
 const colorPattern = /^[0-9a-f]{6}$/i;
 const defaultHoldLabel = 'do-not-merge/hold';
 const defaultTideLabels = ['lgtm'];
+/** the `tide.labels` default of a repository with OWNERS files, where the approve plugin manages `approved` */
+const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40950,8 +40952,8 @@ function isNotFound(error) {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide`, `hold` and
- * `blunderbuss` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold`,
+ * `blunderbuss` and `approve` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40987,6 +40989,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.blunderbuss !== undefined) {
         config.blunderbuss = normalizeBlunderbuss(source, loaded.blunderbuss);
+    }
+    if (loaded.approve !== undefined) {
+        config.approve = normalizeApprove(source, loaded.approve);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41140,10 +41145,22 @@ function normalizeBlunderbuss(source, raw) {
         ignore_authors: raw.ignore_authors,
     });
 }
+const approveFlags = ['require_self_approval', 'ignore_review_state', 'lgtm_acts_as_approve'];
+function normalizeApprove(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: approve must be a mapping`);
+    }
+    for (const field of approveFlags) {
+        if (raw[field] !== undefined && typeof raw[field] !== 'boolean') {
+            throw new Error(`${source}: approve.${field} must be a boolean`);
+        }
+    }
+    return stripUndefined(Object.fromEntries(approveFlags.map(field => [field, raw[field]])));
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide, hold and blunderbuss
- * shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold, blunderbuss and
+ * approve shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41155,21 +41172,24 @@ function mergeProwConfig(base, over) {
         tide: { ...base.tide, ...over.tide },
         hold: { ...base.hold, ...over.hold },
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
+        approve: { ...base.approve, ...over.approve },
     };
 }
 /**
  * resolveTide applies the defaults to a parsed tide section: `labels`
- * `['lgtm']`, `missing_labels` the do-not-merge family, `needs-rebase` and
- * `hold`. A configured list replaces the default one, it does not extend it.
- * The merge method is `tide.merge_method`, else the `merge-method` action
- * input, else `merge`. `merge_on_events` defaults to true.
+ * `['lgtm']`, or `['lgtm', 'approved']` when the repository has OWNERS files;
+ * `missing_labels` the do-not-merge family, `needs-rebase` and `hold`. A
+ * configured list replaces the default one, it does not extend it. The merge
+ * method is `tide.merge_method`, else the `merge-method` action input, else
+ * `merge`. `merge_on_events` defaults to true.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
+ * @param options - see ResolveTideOptions
  */
-function resolveTide(tide, inputMergeMethod = '') {
+function resolveTide(tide, inputMergeMethod = '', options = {}) {
     return {
-        labels: tide.labels ?? defaultTideLabels,
+        labels: tide.labels ?? (options.hasOwners === true ? defaultOwnersTideLabels : defaultTideLabels),
         missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
         merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
         merge_on_events: tide.merge_on_events ?? true,
@@ -42113,6 +42133,258 @@ function meetsMergeGate(labels, tide) {
     return { ok: true };
 }
 
+;// CONCATENATED MODULE: ./lib/utils/owners.js
+
+
+
+/**
+ * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
+ * logins are case-insensitive.
+ *
+ * @param path - the path of the OWNERS file, used in error messages
+ * @param contents - the yaml contents
+ */
+function parseOwners(path, contents) {
+    const loaded = contents.trim() === '' ? {} : load(contents);
+    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
+        ? loaded
+        : {};
+    if ('filters' in doc) {
+        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
+    }
+    const options = doc.options;
+    const noParentOwners = typeof options === 'object'
+        && options !== null
+        && options.no_parent_owners === true;
+    return {
+        path,
+        approvers: roleList(path, doc, 'approvers'),
+        reviewers: roleList(path, doc, 'reviewers'),
+        labels: stringList(path, doc, 'labels', 'label names'),
+        noParentOwners,
+    };
+}
+function roleList(path, doc, role) {
+    return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase());
+}
+function stringList(path, doc, key, what) {
+    const value = doc[key];
+    if (value === undefined || value === null) {
+        return [];
+    }
+    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
+        throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
+    }
+    return value;
+}
+/**
+ * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
+ *
+ * @param path - a repository relative path
+ */
+function ownersDir(path) {
+    const slash = path.lastIndexOf('/');
+    return slash === -1 ? '' : path.slice(0, slash);
+}
+/**
+ * Resolve the OWNERS that apply to a file: walk from its directory up to the
+ * root, taking the union of every OWNERS file on the way. A file with
+ * options.no_parent_owners stops the walk. Labels union along the walk too,
+ * where Prow's owners-label uses only the deepest file's labels.
+ *
+ * @param file - the changed file
+ * @param owners - OWNERS files keyed by directory
+ * @returns undefined when no OWNERS file covers the file
+ */
+function effectiveOwners(file, owners) {
+    const approvers = new Set();
+    const reviewers = new Set();
+    const labels = new Set();
+    const sources = [];
+    let dir = ownersDir(file);
+    for (;;) {
+        const found = owners.get(dir);
+        if (found !== undefined) {
+            found.approvers.forEach(a => approvers.add(a));
+            found.reviewers.forEach(r => reviewers.add(r));
+            found.labels.forEach(l => labels.add(l));
+            sources.push(found.path);
+            if (found.noParentOwners) {
+                break;
+            }
+        }
+        if (dir === '') {
+            break;
+        }
+        dir = ownersDir(dir);
+    }
+    if (sources.length === 0) {
+        return undefined;
+    }
+    return { approvers, reviewers, labels, sources };
+}
+function ancestorDirs(paths) {
+    const dirs = new Set(['']);
+    for (const path of paths) {
+        for (let dir = ownersDir(path); dir !== ''; dir = ownersDir(dir)) {
+            dirs.add(dir);
+        }
+    }
+    return dirs;
+}
+function isOwnersPath(path) {
+    return path === 'OWNERS' || path.endsWith('/OWNERS');
+}
+function decode(data, path) {
+    const file = data;
+    if (!file.content || !file.encoding) {
+        throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
+    }
+    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
+}
+/**
+ * Load the OWNERS files at ref that can apply to the given paths.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param ref - the commit to read OWNERS files from
+ * @param pathsOfInterest - the changed files; only OWNERS in their ancestor directories are fetched
+ */
+async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
+    const dirs = ancestorDirs(pathsOfInterest);
+    let tree;
+    try {
+        const response = await octokit.git.getTree({
+            ...context.repo,
+            tree_sha: ref,
+            recursive: 'true',
+        });
+        tree = response.data;
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    if (tree.truncated) {
+        // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
+        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
+        return probeOwners(octokit, context, ref, dirs);
+    }
+    const entries = tree.tree.filter(entry => entry.type === 'blob'
+        && entry.path !== undefined
+        && entry.sha !== undefined
+        && isOwnersPath(entry.path));
+    const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
+    let files;
+    try {
+        files = await Promise.all(wanted.map(async (entry) => {
+            const blob = await octokit.git.getBlob({
+                ...context.repo,
+                file_sha: entry.sha,
+            });
+            return parseOwners(entry.path, decode(blob.data, entry.path));
+        }));
+    }
+    catch (e) {
+        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+    }
+    return {
+        owners: new Map(files.map(file => [ownersDir(file.path), file])),
+        hasOwners: entries.length > 0,
+    };
+}
+async function probeOwners(octokit, context, ref, dirs) {
+    const owners = new Map();
+    for (const dir of dirs) {
+        const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
+        let data;
+        try {
+            const response = await octokit.repos.getContent({
+                ...context.repo,
+                path,
+                ref,
+            });
+            data = response.data;
+        }
+        catch (e) {
+            if (owners_isNotFound(e)) {
+                continue;
+            }
+            throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
+        }
+        owners.set(dir, parseOwners(path, decode(data, path)));
+    }
+    return { owners, hasOwners: owners.size > 0 };
+}
+const hasOwnersCache = new Map();
+/**
+ * repoHasOwners reports whether the default branch carries any OWNERS file,
+ * which is what switches `/approve` and the tide gate to their OWNERS
+ * behaviour. One recursive tree listing per repository, memoized for the
+ * lifetime of the process; the payload's `repository.default_branch` spares
+ * the `repos.get` lookup when present.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ */
+function repoHasOwners(octokit, context) {
+    const key = `${context.repo.owner}/${context.repo.repo}`;
+    let pending = hasOwnersCache.get(key);
+    if (pending === undefined) {
+        pending = probeRepoOwners(octokit, context);
+        hasOwnersCache.set(key, pending);
+    }
+    return pending;
+}
+function resetRepoHasOwnersCache() {
+    hasOwnersCache.clear();
+}
+async function probeRepoOwners(octokit, context) {
+    const branch = await defaultBranch(octokit, context);
+    let tree;
+    try {
+        tree = (await octokit.git.getTree({ ...context.repo, tree_sha: branch, recursive: 'true' })).data;
+    }
+    catch (e) {
+        if (owners_isNotFound(e)) {
+            core_debug(`no tree at ${branch}: treating the repository as having no OWNERS files`);
+            return false;
+        }
+        throw new Error(`error listing the tree of ${branch}: ${e}`);
+    }
+    if (tree.tree.some(entry => entry.type === 'blob' && entry.path !== undefined && isOwnersPath(entry.path))) {
+        return true;
+    }
+    if (!tree.truncated) {
+        return false;
+    }
+    // a truncated listing may have dropped every OWNERS entry; the root file is the one Prow requires anyway
+    try {
+        await octokit.repos.getContent({ ...context.repo, path: 'OWNERS', ref: branch });
+        return true;
+    }
+    catch (e) {
+        if (owners_isNotFound(e)) {
+            return false;
+        }
+        throw new Error(`error probing for a root OWNERS file at ${branch}: ${e}`);
+    }
+}
+async function defaultBranch(octokit, context) {
+    const fromPayload = context.payload.repository?.default_branch;
+    if (typeof fromPayload === 'string' && fromPayload !== '') {
+        return fromPayload;
+    }
+    try {
+        return (await octokit.repos.get({ ...context.repo })).data.default_branch;
+    }
+    catch (e) {
+        throw new Error(`could not read the default branch: ${e}`);
+    }
+}
+function owners_isNotFound(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 404;
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
 /**
  * Lists the numbers of the open pull requests whose head is the given commit,
@@ -42152,6 +42424,7 @@ function sleep(ms) {
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/tide.js
+
 
 
 
@@ -42343,14 +42616,28 @@ async function tideOnCheckSuite(context = github_context) {
     const listed = (suite?.pull_requests ?? []).map((pr) => pr.number);
     await evaluate(context, listed, async (octokit) => pullRequestsForSha(octokit, context, sha));
 }
+/**
+ * loadTide reads the configuration and resolves the tide section. The
+ * `labels` default depends on whether the repository has OWNERS files
+ * (`[lgtm, approved]`) or not (`[lgtm]`); that lookup is skipped when
+ * `tide.labels` is configured, and memoized otherwise.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ */
+async function loadTide(octokit, context) {
+    const config = await loadProwConfig(octokit, context);
+    const hasOwners = config.tide.labels === undefined ? await repoHasOwners(octokit, context) : false;
+    return resolveTide(config.tide, getInput('merge-method', { required: false }), { hasOwners });
+}
 async function evaluate(context, numbers, lookup) {
     const octokit = newOctokit(getInput('github-token', { required: true }));
     const config = await loadProwConfig(octokit, context);
-    const tide = resolveTide(config.tide, getInput('merge-method', { required: false }));
-    if (!tide.merge_on_events) {
+    if (config.tide.merge_on_events === false) {
         core_debug('tide: merge_on_events is false, leaving the merge to the lgtm cron');
         return;
     }
+    const tide = await loadTide(octokit, context);
     const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
     if (candidates.length === 0) {
         core_debug('tide: no open pull request to evaluate');
@@ -42371,7 +42658,6 @@ function pullNumber(context) {
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
-
 
 
 
@@ -42436,11 +42722,6 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     }
     // Recurse, continue to next page
     return await cronLgtm(currentPage + 1, context, progress);
-}
-// the configuration is memoized per repository, so every page sees the same tide section
-async function loadTide(octokit, context) {
-    const config = await loadProwConfig(octokit, context);
-    return resolveTide(config.tide, getInput('merge-method', { required: false }));
 }
 /**
  * grabs pulls from github in baches of 100
@@ -42590,189 +42871,6 @@ function fixed_requireIssueNumber(context) {
     return issueNumber;
 }
 
-;// CONCATENATED MODULE: ./lib/utils/owners.js
-
-
-
-/**
- * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
- * logins are case-insensitive.
- *
- * @param path - the path of the OWNERS file, used in error messages
- * @param contents - the yaml contents
- */
-function parseOwners(path, contents) {
-    const loaded = contents.trim() === '' ? {} : load(contents);
-    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
-        ? loaded
-        : {};
-    if ('filters' in doc) {
-        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
-    }
-    const options = doc.options;
-    const noParentOwners = typeof options === 'object'
-        && options !== null
-        && options.no_parent_owners === true;
-    return {
-        path,
-        approvers: roleList(path, doc, 'approvers'),
-        reviewers: roleList(path, doc, 'reviewers'),
-        labels: stringList(path, doc, 'labels', 'label names'),
-        noParentOwners,
-    };
-}
-function roleList(path, doc, role) {
-    return stringList(path, doc, role, 'GitHub usernames').map(v => v.toLowerCase());
-}
-function stringList(path, doc, key, what) {
-    const value = doc[key];
-    if (value === undefined || value === null) {
-        return [];
-    }
-    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
-        throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
-    }
-    return value;
-}
-/**
- * The directory that contains a path: 'sdk/OWNERS' is 'sdk', 'OWNERS' is ''
- *
- * @param path - a repository relative path
- */
-function ownersDir(path) {
-    const slash = path.lastIndexOf('/');
-    return slash === -1 ? '' : path.slice(0, slash);
-}
-/**
- * Resolve the OWNERS that apply to a file: walk from its directory up to the
- * root, taking the union of every OWNERS file on the way. A file with
- * options.no_parent_owners stops the walk. Labels union along the walk too,
- * where Prow's owners-label uses only the deepest file's labels.
- *
- * @param file - the changed file
- * @param owners - OWNERS files keyed by directory
- * @returns undefined when no OWNERS file covers the file
- */
-function effectiveOwners(file, owners) {
-    const approvers = new Set();
-    const reviewers = new Set();
-    const labels = new Set();
-    const sources = [];
-    let dir = ownersDir(file);
-    for (;;) {
-        const found = owners.get(dir);
-        if (found !== undefined) {
-            found.approvers.forEach(a => approvers.add(a));
-            found.reviewers.forEach(r => reviewers.add(r));
-            found.labels.forEach(l => labels.add(l));
-            sources.push(found.path);
-            if (found.noParentOwners) {
-                break;
-            }
-        }
-        if (dir === '') {
-            break;
-        }
-        dir = ownersDir(dir);
-    }
-    if (sources.length === 0) {
-        return undefined;
-    }
-    return { approvers, reviewers, labels, sources };
-}
-function ancestorDirs(paths) {
-    const dirs = new Set(['']);
-    for (const path of paths) {
-        for (let dir = ownersDir(path); dir !== ''; dir = ownersDir(dir)) {
-            dirs.add(dir);
-        }
-    }
-    return dirs;
-}
-function isOwnersPath(path) {
-    return path === 'OWNERS' || path.endsWith('/OWNERS');
-}
-function decode(data, path) {
-    const file = data;
-    if (!file.content || !file.encoding) {
-        throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
-    }
-    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
-}
-/**
- * Load the OWNERS files at ref that can apply to the given paths.
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param ref - the commit to read OWNERS files from
- * @param pathsOfInterest - the changed files; only OWNERS in their ancestor directories are fetched
- */
-async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
-    const dirs = ancestorDirs(pathsOfInterest);
-    let tree;
-    try {
-        const response = await octokit.git.getTree({
-            ...context.repo,
-            tree_sha: ref,
-            recursive: 'true',
-        });
-        tree = response.data;
-    }
-    catch (e) {
-        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-    }
-    if (tree.truncated) {
-        // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
-        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
-        return probeOwners(octokit, context, ref, dirs);
-    }
-    const entries = tree.tree.filter(entry => entry.type === 'blob'
-        && entry.path !== undefined
-        && entry.sha !== undefined
-        && isOwnersPath(entry.path));
-    const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
-    let files;
-    try {
-        files = await Promise.all(wanted.map(async (entry) => {
-            const blob = await octokit.git.getBlob({
-                ...context.repo,
-                file_sha: entry.sha,
-            });
-            return parseOwners(entry.path, decode(blob.data, entry.path));
-        }));
-    }
-    catch (e) {
-        throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-    }
-    return {
-        owners: new Map(files.map(file => [ownersDir(file.path), file])),
-        hasOwners: entries.length > 0,
-    };
-}
-async function probeOwners(octokit, context, ref, dirs) {
-    const owners = new Map();
-    for (const dir of dirs) {
-        const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
-        let data;
-        try {
-            const response = await octokit.repos.getContent({
-                ...context.repo,
-                path,
-                ref,
-            });
-            data = response.data;
-        }
-        catch (e) {
-            if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-                continue;
-            }
-            throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
-        }
-        owners.set(dir, parseOwners(path, decode(data, path)));
-    }
-    return { owners, hasOwners: owners.size > 0 };
-}
-
 ;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
 
 const pullRequestOwners_cache = new Map();
@@ -42819,6 +42917,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
         draft: pull.draft === true,
         requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
         assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+        labels: (pull.labels ?? []).map(label => label.name),
         files,
         tree,
         perFile,
@@ -42990,9 +43089,10 @@ async function checkCommenterAuth(octokit, context, issueNum, user) {
 /**
  * When the repository has OWNERS files, use them to authorize the action,
  * otherwise fall back to allowing organization members and collaborators.
- * On a pull request the OWNERS covering each changed file are used
- * (approvers must cover every file, reviewers at least one); on an issue the
- * root OWNERS file is used.
+ * On a pull request the OWNERS covering each changed file are used: the user
+ * must hold the role for at least one changed file (an approver's /approve
+ * then counts for the files they cover; the approve plugin decides whether the
+ * whole PR is approved). On an issue the root OWNERS file is used.
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param role - the role to check
@@ -43045,9 +43145,8 @@ async function assertPullRequestOwner(octokit, context, role, username) {
         return { file, owners };
     });
     if (role === 'approvers') {
-        const failing = covered.find(({ owners }) => !owners.approvers.has(login));
-        if (failing !== undefined) {
-            throw new Error(`${username} is not an approver for ${failing.file} (OWNERS: ${failing.owners.sources.join(', ')})`);
+        if (!covered.some(({ owners }) => owners.approvers.has(login))) {
+            throw new Error(`${username} is not an approver for any changed file`);
         }
     }
     else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
@@ -43583,6 +43682,388 @@ function requireMatchingLabel_sameLabel(a, b) {
     return a.toLowerCase() === b.toLowerCase();
 }
 
+;// CONCATENATED MODULE: ./lib/plugins/approve.js
+
+
+
+
+
+
+
+
+
+const approvedLabel = 'approved';
+const notifierMarker = '<!-- prow-github-actions/approve -->';
+const commandsDoc = 'https://github.com/cncf/prow-github-actions/blob/main/docs/commands.md';
+const approve_pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled']);
+const approve_reviewActions = new Set(['submitted', 'dismissed']);
+/**
+ * approveSettings resolves the `approve` configuration with Prow's defaults:
+ * the author approves implicitly, reviews count, `/lgtm` does not.
+ *
+ * @param config - the merged prow configuration
+ */
+function approveSettings(config) {
+    const raw = config.approve;
+    return {
+        require_self_approval: raw.require_self_approval ?? false,
+        ignore_review_state: raw.ignore_review_state ?? false,
+        lgtm_acts_as_approve: raw.lgtm_acts_as_approve ?? false,
+    };
+}
+/**
+ * approvalEvents reads the `/approve`, `/approve cancel`, `/lgtm` family of
+ * comments and the APPROVED / CHANGES_REQUESTED reviews of humans into events,
+ * logins lowercased. Bots, other review states and comments without a command
+ * yield nothing; a comment carrying both a command and its cancel is a cancel.
+ *
+ * @param comments - the issue comments of the pull request
+ * @param reviews - the reviews of the pull request
+ */
+function approvalEvents(comments, reviews) {
+    const events = [];
+    for (const comment of comments) {
+        const login = humanLogin(comment.user);
+        const body = comment.body ?? '';
+        if (login === undefined || body === '') {
+            continue;
+        }
+        const at = new Date(comment.created_at);
+        const approveKind = commandKind(body, '/approve', '/remove-approve');
+        if (approveKind !== undefined) {
+            events.push({ user: login, kind: approveKind === 'cancel' ? 'cancel' : 'approve', at });
+        }
+        const lgtmKind = commandKind(body, '/lgtm', '/remove-lgtm');
+        if (lgtmKind !== undefined) {
+            events.push({ user: login, kind: lgtmKind === 'cancel' ? 'lgtm-cancel' : 'lgtm', at });
+        }
+    }
+    for (const review of reviews) {
+        const login = humanLogin(review.user);
+        if (login === undefined || review.submitted_at == null) {
+            continue;
+        }
+        const at = new Date(review.submitted_at);
+        if (review.state === 'APPROVED') {
+            events.push({ user: login, kind: 'review-approved', at });
+        }
+        else if (review.state === 'CHANGES_REQUESTED') {
+            events.push({ user: login, kind: 'review-changes', at });
+        }
+    }
+    return events;
+}
+function commandKind(body, command, removeAlias) {
+    if (hasCommand(removeAlias, body)) {
+        return 'cancel';
+    }
+    if (!hasCommand(command, body)) {
+        return undefined;
+    }
+    return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add';
+}
+function humanLogin(user) {
+    if (user?.login === undefined || user.login === '' || user.type === 'Bot' || user.login === 'github-actions[bot]') {
+        return undefined;
+    }
+    return user.login.toLowerCase();
+}
+/**
+ * computeApproval decides, like Prow's approve plugin, whether the current
+ * approvers collectively cover every changed file. It is recomputed from
+ * scratch on every evaluation: the events are the only input and the
+ * `approved` label is the only thing persisted, so no hidden state can drift.
+ *
+ * @param owners - the pull request and the OWNERS covering its files
+ * @param events - what users did on the pull request, in any order
+ * @param settings - the resolved `approve` configuration
+ */
+function computeApproval(owners, events, settings) {
+    const author = owners.author;
+    const approving = new Set();
+    if (!settings.require_self_approval && author !== '') {
+        approving.add(author);
+    }
+    // each user's latest action wins; a cancel or a CHANGES_REQUESTED review after an approval removes it
+    const ordered = [...events].sort((a, b) => a.at.getTime() - b.at.getTime());
+    for (const event of ordered) {
+        const user = event.user.toLowerCase();
+        if (settings.require_self_approval && user === author) {
+            continue;
+        }
+        switch (effectiveKind(event.kind, settings)) {
+            case 'add':
+                approving.add(user);
+                break;
+            case 'remove':
+                approving.delete(user);
+                break;
+            default:
+                break;
+        }
+    }
+    const coveredFiles = new Map();
+    const uncoveredFiles = [];
+    const covering = new Set();
+    for (const file of owners.files) {
+        const set = owners.perFile.get(file);
+        const approvers = set === undefined ? [] : [...approving].filter(login => set.approvers.has(login)).sort();
+        if (approvers.length > 0) {
+            coveredFiles.set(file, approvers);
+            approvers.forEach(login => covering.add(login));
+        }
+        else {
+            uncoveredFiles.push(file);
+        }
+    }
+    for (const login of approving) {
+        if (!covering.has(login)) {
+            core_debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`);
+        }
+    }
+    const excluded = new Set(covering);
+    if (settings.require_self_approval && author !== '') {
+        excluded.add(author);
+    }
+    return {
+        approvers: new Set([...covering].sort()),
+        coveredFiles,
+        uncoveredFiles,
+        suggested: suggestApprovers(owners, uncoveredFiles, excluded),
+        approved: owners.files.length > 0 && uncoveredFiles.length === 0,
+    };
+}
+function effectiveKind(kind, settings) {
+    switch (kind) {
+        case 'approve':
+            return 'add';
+        case 'cancel':
+            return 'remove';
+        case 'review-approved':
+            return settings.ignore_review_state ? 'ignore' : 'add';
+        case 'review-changes':
+            return settings.ignore_review_state ? 'ignore' : 'remove';
+        case 'lgtm':
+            return settings.lgtm_acts_as_approve ? 'add' : 'ignore';
+        case 'lgtm-cancel':
+            return settings.lgtm_acts_as_approve ? 'remove' : 'ignore';
+        default:
+            return 'ignore';
+    }
+}
+// greedy set cover: repeatedly take the approver who covers the most still-uncovered files, ties alphabetically
+function suggestApprovers(owners, uncovered, excluded) {
+    const remaining = new Set(uncovered);
+    const suggested = [];
+    while (remaining.size > 0) {
+        const coverage = new Map();
+        for (const file of remaining) {
+            for (const login of owners.perFile.get(file)?.approvers ?? []) {
+                if (!excluded.has(login)) {
+                    coverage.set(login, (coverage.get(login) ?? 0) + 1);
+                }
+            }
+        }
+        if (coverage.size === 0) {
+            break;
+        }
+        const [best] = [...coverage.entries()].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))[0];
+        suggested.push(best);
+        excluded.add(best);
+        for (const file of remaining) {
+            if (owners.perFile.get(file)?.approvers.has(best)) {
+                remaining.delete(file);
+            }
+        }
+    }
+    return suggested;
+}
+/**
+ * renderNotifier writes Prow's `[APPROVALNOTIFIER]` comment: the verdict,
+ * the approvers so far, who to assign next, and every OWNERS file the pull
+ * request touches, struck through once an approver covers it.
+ *
+ * @param state - the computed approval
+ * @param owners - the pull request and the OWNERS covering its files
+ * @param repo - the repository, for the OWNERS file links
+ * @param repo.owner - the repository owner
+ * @param repo.repo - the repository name
+ */
+function renderNotifier(state, owners, repo) {
+    const approvers = [...state.approvers].map(login => `*${login}*`).join(', ');
+    const lines = [
+        `[APPROVALNOTIFIER] This PR is **${state.approved ? 'APPROVED' : 'NOT APPROVED'}**`,
+        '',
+    ];
+    if (owners.files.length === 0) {
+        lines.push('This pull request changes no files, so there is nothing to approve.', notifierMarker);
+        return lines.join('\n');
+    }
+    lines.push(`This pull-request has been approved by:${approvers === '' ? '' : ` ${approvers}`}`);
+    if (state.approved) {
+        lines.push('', `The full list of commands accepted by this bot can be found [here](${commandsDoc}).`);
+    }
+    else if (state.suggested.length > 0) {
+        lines.push(`To complete the pull request process, please assign ${state.suggested.map(login => `**${login}**`).join(', ')} after the PR has been reviewed.`, `You can assign the PR to them by writing \`/assign ${state.suggested.map(login => `@${login}`).join(' ')}\` in a comment when ready.`);
+    }
+    lines.push('', '<details><summary>Needs approval from an approver in each of these files:</summary>', '');
+    for (const entry of ownersEntries(state, owners)) {
+        if (entry.path === undefined) {
+            lines.push(`- **${entry.file}** (no OWNERS file covers this file)`);
+            continue;
+        }
+        const link = `[${entry.path}](https://github.com/${repo.owner}/${repo.repo}/blob/${owners.baseSha}/${entry.path})`;
+        lines.push(entry.approvers.length > 0 ? `- ~~${link}~~ [${entry.approvers.join(', ')}]` : `- **${link}**`);
+    }
+    lines.push('', 'Approvers can indicate their approval by writing `/approve` in a comment', 'Approvers can cancel approval by writing `/approve cancel` in a comment', '</details>', notifierMarker);
+    return lines.join('\n');
+}
+// one line per deepest OWNERS file: every file it covers shares the same effective approvers
+function ownersEntries(state, owners) {
+    const byPath = new Map();
+    const uncoverable = [];
+    for (const file of owners.files) {
+        const set = owners.perFile.get(file);
+        if (set === undefined) {
+            uncoverable.push({ file, approvers: [] });
+            continue;
+        }
+        const path = set.sources[0];
+        const approvers = state.coveredFiles.get(file) ?? [];
+        const entry = byPath.get(path);
+        if (entry === undefined) {
+            byPath.set(path, { path, file, approvers });
+        }
+        else {
+            entry.approvers = [...new Set([...entry.approvers, ...approvers])].sort();
+        }
+    }
+    return [
+        ...[...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
+        ...uncoverable.sort((a, b) => a.file.localeCompare(b.file)),
+    ];
+}
+/**
+ * evaluateApproval recomputes the approval of a pull request from its
+ * comments and reviews, then makes the `approved` label and the notifier
+ * comment match: the label is added or removed only when it changes, the
+ * notifier is posted once and edited in place afterwards. A pull request
+ * whose base branch has no OWNERS files is left alone.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ */
+async function evaluateApproval(octokit, context, pullNumber) {
+    const owners = await loadPullRequestOwners(octokit, context, pullNumber);
+    if (!owners.tree.hasOwners) {
+        core_debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`);
+        return;
+    }
+    const settings = approveSettings(await loadProwConfig(octokit, context));
+    const comments = await listComments(octokit, context, pullNumber);
+    const reviews = settings.ignore_review_state ? [] : await listReviews(octokit, context, pullNumber);
+    const state = computeApproval(owners, approvalEvents(comments, reviews), settings);
+    info(state.approved
+        ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
+        : `approve: #${pullNumber} is not approved; nobody approves ${state.uncoveredFiles.join(', ') || 'anything'}`);
+    await syncLabel(octokit, context, owners, state.approved);
+    await upsertNotifier(octokit, context, pullNumber, comments, renderNotifier(state, owners, context.repo));
+}
+async function syncLabel(octokit, context, owners, approved) {
+    const present = owners.labels.filter(label => label.toLowerCase() === approvedLabel);
+    if (approved && present.length === 0) {
+        await labelIssue(octokit, context, owners.number, [approvedLabel]);
+    }
+    else if (!approved && present.length > 0) {
+        await removeLabels(octokit, context, owners.number, present);
+    }
+    else {
+        core_debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`);
+    }
+}
+async function upsertNotifier(octokit, context, pullNumber, comments, body) {
+    const existing = comments.find(comment => approve_isBot(comment.user) && (comment.body ?? '').includes(notifierMarker));
+    if (existing === undefined) {
+        await createComment(octokit, context, pullNumber, body);
+        return;
+    }
+    if ((existing.body ?? '').trim() === body.trim()) {
+        core_debug(`approve: the notifier on #${pullNumber} is up to date`);
+        return;
+    }
+    try {
+        await octokit.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+    }
+    catch (e) {
+        throw new Error(`could not update the approval notifier: ${e}`);
+    }
+}
+function approve_isBot(user) {
+    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
+}
+async function listComments(octokit, context, pullNumber) {
+    try {
+        return await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: pullNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list comments: ${e}`);
+    }
+}
+async function listReviews(octokit, context, pullNumber) {
+    try {
+        return await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: pullNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list reviews: ${e}`);
+    }
+}
+/**
+ * approveOnPullRequest is the `pull_request` handler: on `opened`,
+ * `reopened` and `synchronize`, and when a human adds or removes the
+ * `approved` label, it re-evaluates the approval. Approval is sticky across
+ * pushes; a push only matters because the changed files may differ.
+ *
+ * @param context - the github context of the current action event
+ */
+async function approveOnPullRequest(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !approve_pullRequestActions.has(action)) {
+        core_debug(`approve: skipping ${action} action`);
+        return;
+    }
+    if ((action === 'labeled' || action === 'unlabeled') && String(context.payload.label?.name ?? '').toLowerCase() !== approvedLabel) {
+        core_debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
+        return;
+    }
+    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
+}
+/**
+ * approveOnReview is the `pull_request_review` handler: a submitted or
+ * dismissed review may add (APPROVED) or remove (CHANGES_REQUESTED) an approver.
+ *
+ * @param context - the github context of the current action event
+ */
+async function approveOnReview(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !approve_reviewActions.has(action)) {
+        core_debug(`approve: skipping ${action} review action`);
+        return;
+    }
+    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
+}
+async function evaluateOnOwnersRepo(context, pullNumber) {
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    if (!(await repoHasOwners(octokit, context))) {
+        core_debug('approve: the repository has no OWNERS files');
+        return;
+    }
+    await evaluateApproval(octokit, context, pullNumber);
+}
+
 ;// CONCATENATED MODULE: ./lib/issueComment/approve.js
 
 
@@ -43590,13 +44071,21 @@ function requireMatchingLabel_sameLabel(a, b) {
 
 
 
+
+
+
 /**
- * the /approve command will create a "approve" review
- * from the github-actions bot
+ * /approve on a pull request whose base branch has OWNERS files records the
+ * commenter's approval for the files they own and re-evaluates the approve
+ * plugin's coverage, which manages the `approved` label and the notifier
+ * comment; no GitHub review is submitted. /approve cancel withdraws it the
+ * same way: the comment itself is the state, so both just recompute.
  *
- * If the argument 'cancel' is provided to the /approve command,
- * or /remove-approve is used, the last review will be removed.
- * The Prow argument 'no-issue' is accepted and behaves like a plain /approve.
+ * Anywhere else (an issue, or a repository without OWNERS files) the legacy
+ * behaviour is kept: org members and collaborators (or the root OWNERS
+ * approvers on an issue) make the github-actions bot submit an APPROVE
+ * review, and /approve cancel or /remove-approve dismisses its latest one.
+ * The Prow argument 'no-issue' is accepted and ignored.
  *
  * @param context - the github actions event context
  */
@@ -43610,24 +44099,16 @@ async function approve(context = github_context) {
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
-    try {
-        await assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', commenterLogin);
-    }
-    catch (e) {
-        const msg = `Cannot approve the pull request: ${e}`;
-        error(msg);
-        // Try to reply back that the user is unauthorized
-        try {
-            await createComment(octokit, context, issueNumber, msg);
-        }
-        catch (commentE) {
-            // Log the comment error but continue to throw the original auth error
-            error(`Could not comment with an auth error: ${commentE}`);
-        }
-        throw e;
-    }
     const isCancel = hasCommand('/remove-approve', commentBody)
         || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
+    if (context.payload.issue?.pull_request !== undefined) {
+        const owners = await loadPullRequestOwners(octokit, context, issueNumber);
+        if (owners.tree.hasOwners) {
+            await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel);
+            return;
+        }
+    }
+    await authorize(octokit, context, issueNumber, commenterLogin);
     if (isCancel) {
         try {
             await cancel(octokit, context, issueNumber, commenterLogin);
@@ -43649,6 +44130,34 @@ async function approve(context = github_context) {
     catch (e) {
         throw new Error(`could not create review: ${e}`);
     }
+}
+async function approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel) {
+    const settings = approveSettings(await loadProwConfig(octokit, context));
+    const isAuthor = commenterLogin.toLowerCase() === String(context.payload.issue?.user?.login ?? '').toLowerCase();
+    if (settings.require_self_approval && isAuthor && !isCancel) {
+        await approve_refuse(octokit, context, issueNumber, 'Cannot approve the pull request: you cannot approve your own PR (approve.require_self_approval is set).');
+    }
+    await authorize(octokit, context, issueNumber, commenterLogin);
+    await evaluateApproval(octokit, context, issueNumber);
+}
+async function authorize(octokit, context, issueNumber, commenterLogin) {
+    try {
+        await assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', commenterLogin);
+    }
+    catch (e) {
+        await approve_refuse(octokit, context, issueNumber, `Cannot approve the pull request: ${e}`, e);
+    }
+}
+// refuse logs and replies with msg, then fails the run with cause (or msg)
+async function approve_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+    error(msg);
+    try {
+        await createComment(octokit, context, issueNumber, msg);
+    }
+    catch (commentE) {
+        error(`Could not comment with an auth error: ${commentE}`);
+    }
+    throw cause;
 }
 /**
  * Removes the latest review from the github actions bot
@@ -44531,8 +45040,11 @@ function normalizeError(error) {
 ;// CONCATENATED MODULE: ./lib/utils/events.js
 
 /**
- * Runs every registered handler for an event and fails the run once with the
- * collected rejections. An empty registry is a debug-logged no-op.
+ * Runs every registered handler for an event, one after the other in
+ * registration order, and fails the run once with the collected rejections.
+ * The order matters: a handler that applies a label (approve) must finish
+ * before the one that reads the labels (tide). An empty registry is a
+ * debug-logged no-op.
  *
  * @param event - the github event name
  * @param handlers - the registry to run
@@ -44544,8 +45056,15 @@ async function runEventHandlers(event, handlers, context) {
         core_debug(`${event} event ${action} received; no handlers registered yet`);
         return;
     }
-    const results = await Promise.all(handlers.map(handler => handler(context).catch((e) => (e instanceof Error ? e : new Error(String(e))))));
-    const errors = results.filter((result) => result instanceof Error);
+    const errors = [];
+    for (const handler of handlers) {
+        try {
+            await handler(context);
+        }
+        catch (e) {
+            errors.push(e instanceof Error ? e : new Error(String(e)));
+        }
+    }
     if (errors.length > 0) {
         setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`);
     }
@@ -44685,8 +45204,9 @@ async function onPrLgtm(context) {
 
 
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, next to the `jobs` input */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, tideOnPullRequest];
+
+/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; approve before tide so the label it applies is seen */
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, approveOnPullRequest, tideOnPullRequest];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
@@ -44740,8 +45260,9 @@ async function handlePullReq(context = github_context) {
 
 
 
-/** handlers that run on every `pull_request_review` event */
-const pullRequestReviewHandlers = [tideOnReview];
+
+/** handlers that run on every `pull_request_review` event, in this order: approve first so tide sees the label */
+const pullRequestReviewHandlers = [approveOnReview, tideOnReview];
 /**
  * Dispatches a `pull_request_review` event to the registered handlers.
  *

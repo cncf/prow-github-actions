@@ -54,7 +54,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
 
     await expect(authorize('approvers', 'rita')).rejects.toThrow(
-      'rita is not an approver for src/file1.txt (OWNERS: OWNERS)',
+      'rita is not an approver for any changed file',
     )
     await expect(authorize('reviewers', 'nobody')).rejects.toThrow(
       'nobody is not a reviewer or approver for any changed file',
@@ -76,25 +76,27 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
 
     server.use(...prHandlers(owners, ['olm/y.go']))
     await expect(authorize('approvers', 'alice')).rejects.toThrow(
-      'alice is not an approver for olm/y.go (OWNERS: olm/OWNERS)',
+      'alice is not an approver for any changed file',
     )
 
     server.use(...prHandlers(owners, ['olm/y.go']))
     await expect(authorize('approvers', 'carol')).resolves.toBeUndefined()
   })
 
-  it('requires an approver to cover every changed file', async () => {
+  it('lets an approver of any changed file approve; the approve plugin decides the coverage', async () => {
     const owners = { 'OWNERS': rootOwners, 'sdk/OWNERS': sdkOwners, 'olm/OWNERS': olmOwners }
     const files = ['sdk/x.go', 'olm/y.go']
 
     server.use(...prHandlers(owners, files))
-    await expect(authorize('approvers', 'bob')).rejects.toThrow(
-      'bob is not an approver for olm/y.go (OWNERS: olm/OWNERS)',
-    )
-
-    const both = { ...owners, 'olm/OWNERS': `${olmOwners}- bob\n` }
-    server.use(...prHandlers(both, files))
     await expect(authorize('approvers', 'bob')).resolves.toBeUndefined()
+
+    server.use(...prHandlers(owners, files))
+    await expect(authorize('approvers', 'carol')).resolves.toBeUndefined()
+
+    server.use(...prHandlers(owners, files))
+    await expect(authorize('approvers', 'rita')).rejects.toThrow(
+      'rita is not an approver for any changed file',
+    )
   })
 
   it('lets a reviewer of any changed file lgtm', async () => {
@@ -147,7 +149,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     )
 
     await expect(authorize('approvers', 'mallory')).rejects.toThrow(
-      'mallory is not an approver for OWNERS (OWNERS: OWNERS)',
+      'mallory is not an approver for any changed file',
     )
     await expect(observeContents.notCalled()).resolves.toBe('not called')
   })
@@ -223,17 +225,18 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     )
   })
 
-  it('requires an approver to cover both sides of a rename', async () => {
+  it('counts both sides of a rename as changed files', async () => {
     const owners = { 'old/OWNERS': 'approvers:\n- olga\n', 'new/OWNERS': 'approvers:\n- nina\n' }
     const rename = { filename: 'new/a.go', previous_filename: 'old/a.go', status: 'renamed' }
 
+    // the approver of the old path alone may /approve; covering both sides is the approve plugin's job
     server.use(...prHandlers(owners, [rename]))
-    await expect(authorize('approvers', 'nina')).rejects.toThrow(
-      'nina is not an approver for old/a.go (OWNERS: old/OWNERS)',
-    )
+    await expect(authorize('approvers', 'olga')).resolves.toBeUndefined()
 
-    server.use(...prHandlers({ ...owners, OWNERS: 'approvers:\n- root\n' }, [rename]))
-    await expect(authorize('approvers', 'root')).resolves.toBeUndefined()
+    server.use(...prHandlers({ 'new/OWNERS': 'approvers:\n- nina\n' }, [rename]))
+    await expect(authorize('approvers', 'nina')).rejects.toThrow(
+      'no OWNERS file covers old/a.go',
+    )
   })
 
   it('pages through the changed files', async () => {
@@ -258,9 +261,8 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
       ...treeHandlers({ 'sdk/OWNERS': sdkOwners, 'olm/OWNERS': olmOwners }),
     )
 
-    await expect(authorize('approvers', 'bob')).rejects.toThrow(
-      'bob is not an approver for olm/y.go (OWNERS: olm/OWNERS)',
-    )
+    // carol only appears on the second page's directory
+    await expect(authorize('approvers', 'carol')).resolves.toBeUndefined()
     expect(seen).toEqual(['page=1&per_page=100', 'page=2&per_page=100'])
   })
 

@@ -232,9 +232,10 @@ export async function checkCommenterAuth(
 /**
  * When the repository has OWNERS files, use them to authorize the action,
  * otherwise fall back to allowing organization members and collaborators.
- * On a pull request the OWNERS covering each changed file are used
- * (approvers must cover every file, reviewers at least one); on an issue the
- * root OWNERS file is used.
+ * On a pull request the OWNERS covering each changed file are used: the user
+ * must hold the role for at least one changed file (an approver's /approve
+ * then counts for the files they cover; the approve plugin decides whether the
+ * whole PR is approved). On an issue the root OWNERS file is used.
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param role - the role to check
@@ -313,11 +314,8 @@ async function assertPullRequestOwner(
   })
 
   if (role === 'approvers') {
-    const failing = covered.find(({ owners }) => !owners.approvers.has(login))
-    if (failing !== undefined) {
-      throw new Error(
-        `${username} is not an approver for ${failing.file} (OWNERS: ${failing.owners.sources.join(', ')})`,
-      )
+    if (!covered.some(({ owners }) => owners.approvers.has(login))) {
+      throw new Error(`${username} is not an approver for any changed file`)
     }
   }
   else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {

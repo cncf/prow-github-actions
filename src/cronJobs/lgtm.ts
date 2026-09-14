@@ -4,8 +4,7 @@ import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { mergeOnce } from '../plugins/tide'
-import { loadProwConfig, resolveTide } from '../utils/config'
+import { loadTide, mergeOnce } from '../plugins/tide'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
 
@@ -100,12 +99,6 @@ export async function cronLgtm(
 
   // Recurse, continue to next page
   return await cronLgtm(currentPage + 1, context, progress)
-}
-
-// the configuration is memoized per repository, so every page sees the same tide section
-async function loadTide(octokit: Octokit, context: Context): Promise<ResolvedTide> {
-  const config = await loadProwConfig(octokit, context)
-  return resolveTide(config.tide, core.getInput('merge-method', { required: false }))
 }
 
 /**

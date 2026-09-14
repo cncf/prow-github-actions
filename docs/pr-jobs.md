@@ -4,7 +4,7 @@ The `jobs` input is space or newline delimited and case-insensitive.
 
 Jobs | Runs on | Description
 --- | --- | ---
-`lgtm` | `synchronize` only | Removes the `lgtm` label (if present) when new commits are pushed, so updated code must be reviewed again before [automatic merging](./automatic-merging.md).
+`lgtm` | `synchronize` only | Removes the `lgtm` label (if present) when new commits are pushed, so updated code must be reviewed again before [automatic merging](./automatic-merging.md). The `approved` label is **not** removed: [approval is sticky](./commands.md#approve).
 
 `lgtm` is the only PR job. Every other activity type (`opened`, `reopened`, `labeled`,
 `unlabeled`, `ready_for_review`, `edited`, `closed`, ...) is logged at debug level and

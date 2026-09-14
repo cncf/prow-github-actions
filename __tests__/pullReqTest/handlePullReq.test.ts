@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { approveOnPullRequest } from '../../src/plugins/approve'
 import { blunderbuss } from '../../src/plugins/blunderbuss'
 import { ownersLabel } from '../../src/plugins/ownersLabel'
 import { requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
@@ -26,8 +27,8 @@ beforeEach(() => {
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-it('registers require-matching-label, owners-label, blunderbuss and tide', () => {
-  expect(registeredHandlers).toEqual([requireMatchingLabel, ownersLabel, blunderbuss, tideOnPullRequest])
+it('registers require-matching-label, owners-label, blunderbuss, approve and tide, in that order', () => {
+  expect(registeredHandlers).toEqual([requireMatchingLabel, ownersLabel, blunderbuss, approveOnPullRequest, tideOnPullRequest])
 })
 
 // the lgtm PR job only acts on new commits; the fixture is an `opened` event
@@ -151,6 +152,37 @@ it('runs the registered pull_request handlers before the jobs', async () => {
   await expect(handlePullReq(runContext)).resolves.toBeUndefined()
   expect(handler).toHaveBeenCalledWith(runContext)
   expect(setFailed).not.toHaveBeenCalled()
+})
+
+it('runs the registered handlers one after the other in registration order', async () => {
+  utils.setupActionsEnv('/assign')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const order: string[] = []
+  pullRequestHandlers.push(
+    async () => {
+      order.push('first:start')
+      await new Promise(resolve => setTimeout(resolve, 20))
+      order.push('first:end')
+    },
+    async () => {
+      order.push('second')
+    },
+  )
+
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(order).toEqual(['first:start', 'first:end', 'second'])
+})
+
+it('keeps running the later handlers when an earlier one rejects', async () => {
+  utils.setupActionsEnv('/assign')
+  const runContext = new utils.MockContext({ ...prOpenedEvent, action: 'labeled' })
+  const later = vi.fn().mockResolvedValue(undefined)
+  pullRequestHandlers.push(vi.fn().mockRejectedValue(new Error('plugin boom')), later)
+
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  await expect(handlePullReq(runContext)).resolves.toBeUndefined()
+  expect(later).toHaveBeenCalledWith(runContext)
+  expect(setFailed).toHaveBeenCalledWith('error handling pull_request event: plugin boom')
 })
 
 it('fails the run when a registered pull_request handler rejects', async () => {

@@ -274,7 +274,7 @@ function prEvent(action: string, extra: Record<string, unknown> = {}) {
 
 describe('tideOnPullRequest', () => {
   beforeEach(() => {
-    server.use(...utils.noOrgOrRepoConfigExcept())
+    server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree())
   })
 
   it('labeled lgtm: merges a clean pr', async () => {
@@ -356,11 +356,66 @@ describe('tideOnPullRequest', () => {
   it('throws when the payload has no pull request', async () => {
     await expect(tideOnPullRequest(new utils.MockContext({ action: 'labeled' }))).rejects.toThrow('missing pull request')
   })
+
+  describe('on a repository with OWNERS files', () => {
+    beforeEach(() => {
+      server.use(utils.defaultBranchTree(['OWNERS', 'sdk/OWNERS']))
+    })
+
+    it('labeled lgtm without approved: one read, no merge, names the missing label', async () => {
+      const gets = servePull(pull(['lgtm']))
+      const merge = observeMerge()
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'lgtm' } }))).resolves.toBeUndefined()
+      await expect(merge.notCalled()).resolves.toBe('not called')
+      expect(gets).toHaveLength(1)
+      expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
+    })
+
+    it('labeled approved with lgtm present: merges', async () => {
+      servePull(pull(['lgtm', 'approved']))
+      const merge = observeMerge()
+
+      await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'approved' } }))).resolves.toBeUndefined()
+      await expect(merge.called()).resolves.toBe('called')
+    })
+
+    it('a configured tide.labels wins and the tree is not read', async () => {
+      const observeTree = new utils.ObserveRequest()
+      server.use(prowYaml('tide:\n  labels: [lgtm]\n'), utils.defaultBranchTree(['OWNERS'], observeTree))
+      servePull(pull(['lgtm']))
+      const merge = observeMerge()
+
+      await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'lgtm' } }))).resolves.toBeUndefined()
+      await expect(merge.called()).resolves.toBe('called')
+      await expect(observeTree.notCalled()).resolves.toBe('not called')
+    })
+
+    it('reads the tree once for several pull requests of one run', async () => {
+      let trees = 0
+      server.use(http.get(`${repo}/git/trees/master`, () => {
+        trees++
+        return new Response(JSON.stringify({ sha: 'x', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'a' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }))
+      server.use(
+        http.get(`${repo}/pulls/:number`, ({ params }) => new Response(JSON.stringify(pull(['lgtm'], { number: Number(params.number) })), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+      )
+      const context = new utils.MockContext({ ...checkSuiteCompletedEvent, check_suite: { ...checkSuiteCompletedEvent.check_suite, pull_requests: [{ number: 1 }, { number: 2 }] } })
+      context.eventName = 'check_suite'
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tideOnCheckSuite(context)).resolves.toBeUndefined()
+      expect(trees).toBe(1)
+      expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
+      expect(info).toHaveBeenCalledWith('skipping pr #2: missing approved')
+    })
+  })
 })
 
 describe('tideOnReview', () => {
   beforeEach(() => {
-    server.use(...utils.noOrgOrRepoConfigExcept())
+    server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree())
   })
 
   it.each(['submitted', 'dismissed'])('%s: evaluates the reviewed pr', async (action) => {
@@ -406,7 +461,7 @@ describe('tideOnCheckSuite', () => {
   }
 
   beforeEach(() => {
-    server.use(...utils.noOrgOrRepoConfigExcept())
+    server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree())
   })
 
   it('completed success with pull_requests in the payload: evaluates them without listing', async () => {

@@ -46,6 +46,10 @@ tide:
 
 hold:
   label: do-not-merge/hold
+
+approve:
+  require_self_approval: true
+  lgtm_acts_as_approve: true
 `
 
 describe('parseProwConfig', () => {
@@ -79,6 +83,7 @@ describe('parseProwConfig', () => {
       ],
       tide: { labels: ['lgtm', 'approved'], missing_labels: ['do-not-merge/hold'], merge_method: 'squash' },
       hold: { label: 'do-not-merge/hold' },
+      approve: { require_self_approval: true, lgtm_acts_as_approve: true },
     })
   })
 
@@ -291,6 +296,27 @@ describe('parseProwConfig', () => {
     })
   })
 
+  describe('approve', () => {
+    it('accepts every flag', () => {
+      expect(parseProwConfig('x', 'approve:\n  require_self_approval: true\n  ignore_review_state: true\n  lgtm_acts_as_approve: false\n')).toEqual({
+        approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: false },
+      })
+    })
+
+    it('accepts an empty mapping and marks the document as the new form on its own', () => {
+      expect(parseProwConfig('x', 'approve: {}\n')).toEqual({ approve: {} })
+    })
+
+    it.each([
+      ['a non-mapping', 'approve: true\n', 'x: approve must be a mapping'],
+      ['a non-boolean require_self_approval', 'approve:\n  require_self_approval: yes please\n', 'x: approve.require_self_approval must be a boolean'],
+      ['a non-boolean ignore_review_state', 'approve:\n  ignore_review_state: 1\n', 'x: approve.ignore_review_state must be a boolean'],
+      ['a non-boolean lgtm_acts_as_approve', 'approve:\n  lgtm_acts_as_approve: [true]\n', 'x: approve.lgtm_acts_as_approve must be a boolean'],
+    ])('rejects %s', (_, text, error) => {
+      expect(() => parseProwConfig('x', text)).toThrow(error)
+    })
+  })
+
   it('tolerates unknown top level keys in the new form and logs them once', () => {
     const debug = vi.spyOn(core, 'debug')
 
@@ -318,7 +344,7 @@ describe('parseProwConfig', () => {
 })
 
 describe('mergeProwConfig', () => {
-  it('replaces label sections per key, concatenates rules and shallow-merges tide, hold and blunderbuss', () => {
+  it('replaces label sections per key, concatenates rules and shallow-merges tide, hold, blunderbuss and approve', () => {
     const org = parseProwConfig('org', [
       'labels:',
       '  kind: [bug, cleanup]',
@@ -333,6 +359,9 @@ describe('mergeProwConfig', () => {
       'blunderbuss:',
       '  request_count: 1',
       '  ignore_authors: [bot]',
+      'approve:',
+      '  require_self_approval: true',
+      '  lgtm_acts_as_approve: true',
     ].join('\n'))
     const repo = parseProwConfig('repo', [
       'labels:',
@@ -343,6 +372,8 @@ describe('mergeProwConfig', () => {
       '  merge_method: squash',
       'blunderbuss:',
       '  request_count: 3',
+      'approve:',
+      '  require_self_approval: false',
     ].join('\n'))
 
     expect(mergeProwConfig(org, repo)).toEqual({
@@ -357,10 +388,11 @@ describe('mergeProwConfig', () => {
       tide: { labels: ['lgtm'], merge_method: 'squash' },
       hold: { label: 'hold' },
       blunderbuss: { request_count: 3, ignore_authors: ['bot'] },
+      approve: { require_self_approval: false, lgtm_acts_as_approve: true },
     })
   })
 
   it('fills every section when both sides are empty', () => {
-    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {} })
+    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {} })
   })
 })

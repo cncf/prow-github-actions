@@ -82,6 +82,16 @@ describe('resolveTide', () => {
     })
   })
 
+  it('requires approved as well when the repository has OWNERS files', () => {
+    expect(resolveTide({}, '', { hasOwners: true }).labels).toEqual(['lgtm', 'approved'])
+    expect(resolveTide({}, '', { hasOwners: false }).labels).toEqual(['lgtm'])
+  })
+
+  it('a configured labels list wins over the OWNERS default', () => {
+    expect(resolveTide({ labels: ['lgtm'] }, '', { hasOwners: true }).labels).toEqual(['lgtm'])
+    expect(resolveTide({ labels: ['ship-it'] }, '', { hasOwners: false }).labels).toEqual(['ship-it'])
+  })
+
   it('merge_on_events: false turns the event handlers off', () => {
     expect(resolveTide({ merge_on_events: false }).merge_on_events).toBe(false)
   })

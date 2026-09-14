@@ -72,7 +72,7 @@ reviewers:
   - sdk-reviewer
 ```
 
-A pull request that changes files under `sdk/` and elsewhere needs an approver for every changed file (`user1` or `admin1` here, since they are inherited from the root), while `/lgtm` needs a reviewer or approver of at least one changed file. OWNERS files are read from the base branch of the pull request.
+A pull request that changes files under `sdk/` and elsewhere is approved once the approvers who commented `/approve` (the author counts for the files they own) collectively cover every changed file: `sdk-maintainer` covers `sdk/`, `user1` or `admin1` cover everything since the root inherits downwards. The [approve plugin](./commands.md#approve) adds the `approved` label at that point and keeps an `[APPROVALNOTIFIER]` comment up to date; `/lgtm` needs a reviewer or approver of at least one changed file. OWNERS files are read from the base branch of the pull request. With OWNERS files present the merge gate requires `lgtm` **and** `approved` ([automatic merging](./automatic-merging.md#the-merge-gate)).
 
 Grant the default GITHUB_TOKEN permission to label issues and review pull requests.
 ```yaml

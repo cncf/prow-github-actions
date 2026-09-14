@@ -10,9 +10,9 @@ Event | Input | Does
 --- | --- | ---
 `issue_comment` | `prow-commands` | Runs the [`/commands`](./commands.md) found in the comment.
 `issues` | — | `opened`, `reopened`, `labeled`, `unlabeled`: applies the [`require_matching_label`](./configuration.md#require_matching_label) rules. Other activity types are logged and skipped.
-`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
+`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`approve`](./commands.md#approve) on `opened`, `reopened`, `synchronize` and on `labeled`/`unlabeled` of `approved`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
-`pull_request_review` | — | `submitted`, `dismissed`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can satisfy branch protection; it is not `lgtm`).
+`pull_request_review` | — | `submitted`, `dismissed`: [`approve`](./commands.md#approve) re-evaluates the approval (an `APPROVED` review adds an approver, `CHANGES_REQUESTED` removes one) on repositories with OWNERS files, then [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can also satisfy branch protection; it is not `lgtm`).
 `check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
 `schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `label-sync`).
 
@@ -60,20 +60,23 @@ or set [`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
 
 With no `require_matching_label` rule in any configuration tier the `issues` event only reads
 the configuration and exits 0. On `pull_request` the OWNERS plugins also read the pull request's
-changed files and the OWNERS files of the base branch; a repository without OWNERS files makes
-no further calls. `tide` reads the pull request once and stops when the merge gate fails.
+changed files and the OWNERS files of the base branch; `approve` and `tide` share one recursive
+listing of the default branch tree to learn whether the repository has OWNERS files at all, and a
+repository without them makes no further OWNERS calls. `tide` reads the pull request once and
+stops when the merge gate fails.
 
 Activity type | Handlers
 --- | ---
-`opened` | `require_matching_label`, `owners-label`, `blunderbuss`
-`reopened` | `require_matching_label`, `owners-label`, `tide`
-`synchronize` | `owners-label`, the `lgtm` job (`tide` waits for the next check suite: a push must not merge)
+`opened` | `require_matching_label`, `owners-label`, `blunderbuss`, `approve`
+`reopened` | `require_matching_label`, `owners-label`, `approve`, `tide`
+`synchronize` | `owners-label`, `approve` (the changed files may differ; approvals stay), the `lgtm` job (`tide` waits for the next check suite: a push must not merge)
 `ready_for_review` | `blunderbuss` (drafts wait for it by default), `tide`
-`labeled`, `unlabeled` | `require_matching_label`, `tide`
+`labeled`, `unlabeled` | `require_matching_label`, `approve` (only for the `approved` label: a human's change is re-evaluated), `tide`
 `edited` | `tide` (a base branch change alters mergeability)
 
-The handlers of one event run concurrently; `tide` re-reads the labels from the API rather than
-trusting the payload, so a label another handler just applied is seen.
+The handlers of one event run one after the other in the order listed, `tide` last, and `tide`
+re-reads the labels from the API rather than trusting the payload, so a label an earlier
+handler applied in the same run is seen.
 
 `owners-label` and `blunderbuss` read the OWNERS files of the PR's **base** branch, so they
 are safe on `pull_request_target`: nothing from the head branch is executed or trusted.

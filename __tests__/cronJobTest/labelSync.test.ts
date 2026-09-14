@@ -279,6 +279,9 @@ describe('label-sync job', () => {
         return json(page === '1' ? payload : [])
       }),
       http.put(`${repo}/pulls/2/merge`, utils.mockResponse(200, null, mergeReq)),
+      // the dispatch payload names no default branch, so the lgtm job's gate asks the api before listing the tree
+      http.get(repo, utils.mockResponse(200, { default_branch: 'master' })),
+      utils.defaultBranchTree(),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 

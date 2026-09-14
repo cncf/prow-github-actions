@@ -85,7 +85,7 @@ require_matching_label:
     prs: true
     grace_period_duration: 5s
 
-# the merge gate; these are the defaults
+# the merge gate; these are the defaults (labels is [lgtm, approved] once the repository has OWNERS files)
 tide:
   labels: [lgtm]
   missing_labels: [do-not-merge/*, needs-rebase, hold]
@@ -103,6 +103,12 @@ blunderbuss:
   exclude_approvers: false
   ignore_drafts: true
   ignore_authors: ['dependabot[bot]']
+
+# /approve on repositories with OWNERS files; these are the defaults
+approve:
+  require_self_approval: false
+  ignore_review_state: false
+  lgtm_acts_as_approve: false
 ```
 
 ### `labels`
@@ -248,7 +254,7 @@ default list rather than extending it.
 
 Field | Default | Meaning
 --- | --- | ---
-`labels` | `[lgtm]` | every pattern must match a label on the PR
+`labels` | `[lgtm]`; `[lgtm, approved]` when the repository has [OWNERS files](./commands.md#owners) | every pattern must match a label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match a label on the PR
 `merge_method` | the `merge-method` input, else `merge` | `merge`, `squash` or `rebase`; wins over the input
 `merge_on_events` | `true` | `false`: the `pull_request`, `pull_request_review` and `check_suite` handlers merge nothing; only the cron does ([event-driven merging](./automatic-merging.md#event-driven-merging))
@@ -256,6 +262,11 @@ Field | Default | Meaning
 Entries are label names compared case-insensitively; `*` matches any run of characters,
 `/` included. An empty name, an unknown `merge_method` or a non-boolean `merge_on_events`
 fails the run.
+
+The `labels` default is decided per run: when `tide.labels` is not configured, one recursive
+listing of the default branch tree (`GET /git/trees/{default_branch}`, memoized for the run)
+tells whether any `OWNERS` file exists; if so [`approved`](./commands.md#approve) joins `lgtm`.
+An explicit `labels` list always wins and skips the listing.
 
 ### `hold`
 
@@ -300,6 +311,17 @@ debug-logged no-op; a refused request fails the run. No comment is posted.
 The workflow token needs `pull-requests: write` and the workflow must subscribe to
 `ready_for_review` for drafts; see [events](./events.md#issues-and-pull_request).
 
+### `approve`
+
+Settings of the [`/approve` plugin](./commands.md#approve), which only acts on repositories
+with [OWNERS files](./commands.md#owners). Every field is a boolean; anything else fails the run.
+
+Field | Default | Meaning
+--- | --- | ---
+`require_self_approval` | `false` | `false`: the PR author implicitly approves every changed file their OWNERS entries cover (Prow's default). `true`: the author never counts, implicitly or through `/approve`
+`ignore_review_state` | `false` | `true`: GitHub reviews neither add (`APPROVED`) nor remove (`CHANGES_REQUESTED`) approvers
+`lgtm_acts_as_approve` | `false` | `true`: `/lgtm` counts as `/approve` and `/lgtm cancel` as `/approve cancel` when computing approval; the `lgtm` label is unaffected
+
 ### `owners-label`
 
 No configuration. Whenever a pull request is `opened`, `reopened` or `synchronize`d the
@@ -332,8 +354,8 @@ Both forms share one parser. The top level `labels` key decides which form a doc
 `labels` is | Form | The `/label` allowlist is
 --- | --- | ---
 a **list** | legacy: every top level key is a label section | the top level `labels` list
-a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss` may sit alongside | `labels.labels`
-absent, and `require_matching_label`, `tide`, `hold` or `blunderbuss` is present | new | `labels.labels`
+a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve` may sit alongside | `labels.labels`
+absent, and `require_matching_label`, `tide`, `hold`, `blunderbuss` or `approve` is present | new | `labels.labels`
 absent otherwise | legacy | none
 
 ```yaml
@@ -364,7 +386,7 @@ Key | Rule
 --- | ---
 `labels` | per section: a repository section replaces the organization section of the same name; other organization sections survive
 `require_matching_label` | lists concatenate, organization rules first
-`tide`, `hold`, `blunderbuss` | shallow merge; a repository field wins
+`tide`, `hold`, `blunderbuss`, `approve` | shallow merge; a repository field wins
 
 ```yaml
 # <owner>/.project prow.yaml

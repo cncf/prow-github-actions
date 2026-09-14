@@ -49,8 +49,8 @@ export const pullBody = {
   head: { sha: 'headsha' },
 }
 
-export function pullHandler(observe?: utils.ObserveRequest): HttpHandler {
-  return http.get(`${repo}/pulls/1`, utils.mockResponse(200, pullBody, observe))
+export function pullHandler(observe?: utils.ObserveRequest, overrides: Record<string, unknown> = {}): HttpHandler {
+  return http.get(`${repo}/pulls/1`, utils.mockResponse(200, { ...pullBody, ...overrides }, observe))
 }
 
 export function filesHandler(files: ChangedFile[], observe?: utils.ObserveRequest): HttpHandler {
@@ -115,6 +115,7 @@ export function contentsResponse(path: string, contents: string) {
 export function prHandlers(
   owners: Record<string, string>,
   files: (string | ChangedFile)[],
+  pull: Record<string, unknown> = {},
 ): HttpHandler[] {
-  return [pullHandler(), filesHandler(changedFiles(...files)), ...treeHandlers(owners)]
+  return [pullHandler(undefined, pull), filesHandler(changedFiles(...files)), ...treeHandlers(owners)]
 }
