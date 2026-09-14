@@ -227,6 +227,31 @@ export async function tideOnReview(context: Context = github.context): Promise<v
 }
 
 /**
+ * tideOnComment runs after the comment commands: the bot's own label writes
+ * fire no `labeled` event, so `/lgtm`, `/approve`, `/unhold`, `/remove-*` ...
+ * must evaluate the pull request here. Issues and closed pull requests are
+ * skipped without an API call.
+ *
+ * @param context - the github context of the current action event
+ */
+export async function tideOnComment(context: Context = github.context): Promise<void> {
+  const issue = context.payload.issue
+  if (issue === undefined) {
+    throw new Error(`github context payload missing issue: ${JSON.stringify(context.payload)}`)
+  }
+  if (issue.pull_request === undefined) {
+    core.debug(`tide: #${issue.number} is not a pull request`)
+    return
+  }
+  if (issue.state !== 'open') {
+    core.debug(`tide: pull request #${issue.number} is ${issue.state}`)
+    return
+  }
+
+  await evaluate(context, [issue.number])
+}
+
+/**
  * tideOnCheckSuite is the `check_suite` and `status` handler: when checks
  * finish it evaluates every open pull request whose head is the commit,
  * from the payload's `pull_requests` or, when that is empty, by listing.

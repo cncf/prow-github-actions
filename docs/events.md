@@ -8,7 +8,7 @@ exits 0 without calling the API.
 
 Event | Input | Does
 --- | --- | ---
-`issue_comment` | `prow-commands` | Runs the [`/commands`](./commands.md) found in the comment.
+`issue_comment` | `prow-commands` | Runs the [`/commands`](./commands.md) found in the comment; when one that writes labels ran, re-applies the [`require_matching_label`](./configuration.md#require_matching_label) rules and, on an open PR, runs [`tide`](./automatic-merging.md#event-driven-merging) ([why](#the-bots-writes-fire-no-events)).
 `issues` | — | `opened`, `reopened`, `labeled`, `unlabeled`: applies the [`require_matching_label`](./configuration.md#require_matching_label) rules. Other activity types are logged and skipped.
 `pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`approve`](./commands.md#approve) on `opened`, `reopened`, `synchronize` and on `labeled`/`unlabeled` of `approved`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
@@ -27,7 +27,7 @@ Feature | Events
 [`require_matching_label`](./configuration.md#require_matching_label) | `issues` and `pull_request` `[opened, reopened, labeled, unlabeled]`
 [`owners-label`](./labeling.md#labels-from-owners-files), [`blunderbuss`](./configuration.md#blunderbuss) | `pull_request` `[opened, reopened, synchronize, ready_for_review]`
 `lgtm` removed on new commits | `pull_request` `[synchronize]`
-[event-driven merging](./automatic-merging.md#event-driven-merging) | `pull_request` `[labeled, unlabeled, reopened, ready_for_review]`, `pull_request_review` `[submitted, dismissed]`, `check_suite` `[completed]`
+[event-driven merging](./automatic-merging.md#event-driven-merging) | `issue_comment` `[created]` (after a command), `pull_request` `[labeled, unlabeled, reopened, ready_for_review]`, `pull_request_review` `[submitted, dismissed]`, `check_suite` `[completed]`
 [`lgtm` backstop](./cron-jobs.md) | `schedule`
 [`label-sync`](./cron-jobs.md#label-sync) | `workflow_dispatch`, `push` (filtered to the configuration file)
 
@@ -71,6 +71,24 @@ Use `pull_request_target` instead of `pull_request` when fork PRs must be labele
 `pull_request` gets a read-only token on forks ([safety rule](./pr-jobs.md#pull_request_target)).
 Repositories that only want the cron to merge leave `pull_request_review` and `check_suite` out
 or set [`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
+
+## The bot's writes fire no events
+
+Labels, reviews and merges made with `GITHUB_TOKEN` do not trigger workflows (GitHub's recursion
+guard). The `lgtm` label the bot adds for `/lgtm` therefore fires no `labeled` event, and neither
+does the `needs-kind` that `/kind` should clear. A comment run that executed a command that writes
+labels (`/lgtm`, `/approve`, `/hold`, `/remove`, every label command and its `/remove-` form) so
+does itself what those events would have done, in this order:
+
+Step | Does | Cost
+--- | --- | ---
+[`require_matching_label`](./configuration.md#require_matching_label) | every rule that applies, no grace period; removes a stale `needs-*`, adds one the command broke (`/remove-kind`) | nothing without rules; one labels read with rules
+[`tide`](./automatic-merging.md#event-driven-merging) | the merge gate on an open PR: `/lgtm`, `/approve`, `/unhold`, `/remove-*` merge in the same run | one PR read; nothing on an issue or a closed PR; off with [`merge_on_events: false`](./automatic-merging.md#merge_on_events)
+
+Commands that cannot write a label (`/assign`, `/cc`, `/close`, `/milestone`, `/check-required-labels`
+on its own, ...) and comments without a configured command make no extra call at all. A
+failure in either step fails the run alongside the command's own error. Labels added by a human
+still fire `labeled`; the [cron](./cron-jobs.md) stays the backstop for events GitHub drops.
 
 ## `pull_request_target` and the reusable workflow
 

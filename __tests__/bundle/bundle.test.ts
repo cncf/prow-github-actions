@@ -12,7 +12,7 @@ import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEve
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
-import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
+import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
 import { bundlePath, runBundle } from './runBundle'
 
@@ -84,9 +84,19 @@ describe('dist/index.js', () => {
     expect(calls.slice(reads.length)).toEqual(rest)
   }
 
+  // a label command that never reads the configuration, then the sweep that follows it: the configuration
+  // reads (unordered) for the needs-* re-check and, on a pull request, tide's calls
+  function expectCommandThenSweep(command: string[], sweep: string[] = []) {
+    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+    expect(calls.slice(0, command.length)).toEqual(command)
+    const reads = configReads()
+    expect(calls.slice(command.length, command.length + reads.length).sort()).toEqual([...reads].sort())
+    expect(calls.slice(command.length + reads.length)).toEqual(sweep)
+  }
+
   // the pull request, its changed files and the OWNERS files of the base branch, as the OWNERS plugins read them
   function routeOwners(ownersFiles: Record<string, string>, files: string[], pull: Record<string, unknown> = {}) {
-    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { base: { sha: 'basesha' }, user: { login: 'Codertocat' }, draft: false, requested_reviewers: [], assignees: [], ...pull } })
+    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'Codertocat' }, requested_reviewers: [], assignees: [], ...pull } })
     gh.route('GET', `${repo}/pulls/1/files`, {
       status: 200,
       body: files.map(filename => ({ filename, status: 'modified' })),
@@ -424,10 +434,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
-      labelsRead,
-      `POST ${repo}/issues/1/labels`,
-    ])
+    expectCommandThenSweep([labelsRead, `POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /assign self-assigns an org member', async () => {
@@ -572,17 +579,28 @@ describe('dist/index.js', () => {
         `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
       ])
       expect(calls.slice(5, 5 + configReads().length).sort()).toEqual(configReads().sort())
+      // then the sweep: tide probes for OWNERS files on the default branch and reads the pr (approved alone is not the gate)
       expect(calls.slice(5 + configReads().length)).toEqual([
         `GET ${repo}/issues/1/comments?per_page=100`,
         `GET ${repo}/pulls/1/reviews?per_page=100`,
         labelsRead,
         `POST ${repo}/issues/1/labels`,
         `POST ${repo}/issues/1/comments`,
+        ownersProbe,
+        `GET ${repo}/pulls/1`,
       ])
-      expect(calls).toHaveLength(5 + configReads().length + 5)
+      expect(calls).toHaveLength(5 + configReads().length + 7)
     })
 
-    it('/approve cancel removes approved and edits the notifier to NOT APPROVED', async () => {
+    it('/approve cancel removes approved and edits the notifier to NOT APPROVED; the merge gate then misses approved', async () => {
+      // the first route wins in the fake: the pr's labels follow the removal so that tide sees the withdrawn approval
+      const labels = new Set(['approved', 'lgtm'])
+      gh.route('DELETE', `${repo}/issues/1/labels/approved`, () => {
+        labels.delete('approved')
+        return { status: 200, body: [] }
+      })
+      gh.route('GET', `${repo}/pulls/1`, () => ({ status: 200, body: { ...pullBody, user: { login: 'some-author' }, requested_reviewers: [], assignees: [], labels: [...labels].map(name => ({ name })) } }))
+      gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'o' }] } })
       routeApprove(['sdk/x.go'], {
         labels: ['approved', 'lgtm'],
         comments: [
@@ -602,6 +620,8 @@ describe('dist/index.js', () => {
       expect(patches).toHaveLength(1)
       expect((patches[0].body as { body: string }).body).toContain('This PR is **NOT APPROVED**')
       expect(gh.requestsMatching('PUT', /dismissals$/)).toEqual([])
+      expect(result.stdout).toContain('skipping pr #1: missing approved')
+      expect(gh.requestsMatching('PUT', /merge$/)).toEqual([])
     })
 
     it('refuses with a comment a commenter who approves none of the changed files', async () => {
@@ -649,13 +669,13 @@ describe('dist/index.js', () => {
       expect(reviews[0].body).toEqual({ event: 'APPROVE', comments: [] })
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
-      // the membership fallback checks org membership and collaborator status
-      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      // the membership fallback checks org membership and collaborator status; the sweep then reads the configuration and the pr
+      expectCommandThenSweep([
         ...ownersReads,
         `GET /orgs/Codertocat/members/bob`,
         `GET ${repo}/collaborators/bob`,
         `POST ${repo}/pulls/1/reviews`,
-      ])
+      ], [ownersProbe, `GET ${repo}/pulls/1`])
     })
   })
 
@@ -674,7 +694,7 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toMatch(/could not remove label foo/)
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+    expectCommandThenSweep([
       `GET ${repo}/collaborators/Codertocat`,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/foo`,
@@ -937,6 +957,68 @@ describe('dist/index.js', () => {
       expect(merges).toHaveLength(1)
       expect(merges[0].body).toEqual({ merge_method: 'squash' })
       expectRequests(configReads(), [ownersProbe, pullRead, merge])
+    })
+
+    it('issue_comment /lgtm on a clean pr: labels, then squash-merges from tide.merge_method in the same run', async () => {
+      gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_method: squash\n') })
+      routeOwners({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] })
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/labels`, repoLabels('lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/lgtm'),
+        inputs: { ...token, 'prow-commands': '/lgtm' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('merged pr #1')
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['lgtm'] })
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'squash' })
+      // the command authorizes and labels; the sweep then loads the configuration (no needs-* rule: no label read), and tide reads the pr and merges
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      const post = calls.indexOf(`POST ${repo}/issues/1/labels`)
+      expect(calls.slice(0, post).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`, labelsRead].sort())
+      const reads = configReads({ repo: '.github/prow.yaml' })
+      expect(calls.slice(post + 1, post + 1 + reads.length).sort()).toEqual([...reads].sort())
+      expect(calls.slice(post + 1 + reads.length)).toEqual([ownersProbe, pullRead, merge])
+    })
+
+    it('issue_comment /kind cleanup on a pr carrying needs-kind: labels, then clears needs-kind in the same run', async () => {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', {
+        status: 200,
+        body: yamlFile('require_matching_label:\n  - regexp: ^kind/\n    missing_label: needs-kind\n'),
+      })
+      gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+      gh.route('GET', `${repo}/labels`, repoLabels('kind/cleanup', 'needs-kind'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'needs-kind' }, { name: 'kind/cleanup' }] } })
+      gh.route('DELETE', `${repo}/issues/1/labels/needs-kind`, { status: 200, body: [] })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', ['kind/cleanup']) })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/kind cleanup'),
+        inputs: { ...token, 'prow-commands': '/kind' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('skipping pr #1: missing lgtm')
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      expectRequests([...configReads({ org: '.project', repo: '.prowlabels.yaml' }), labelsRead], [
+        `POST ${repo}/issues/1/labels`,
+        `GET ${repo}/issues/1`,
+        `DELETE ${repo}/issues/1/labels/needs-kind`,
+        ownersProbe,
+        pullRead,
+      ])
     })
 
     it('pull_request labeled lgtm on a repository with OWNERS files: approved is required too', async () => {

@@ -1,7 +1,7 @@
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
@@ -15,6 +15,8 @@ beforeAll(() =>
     onUnhandledRequest: 'error',
   }),
 )
+// a label command is followed by the needs-* re-check and the merge gate: no prow.yaml in any tier, no OWNERS files
+beforeEach(() => server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree()))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -28,24 +30,30 @@ function issueWithLabels(...names: string[]) {
   return payload
 }
 
+// mutations records the label writes; trace also records every configuration read, in arrival order
 function serveIssueAndRecordMutations(currentLabels: string[]) {
   const mutations: string[] = []
-  const yamlFetch = new utils.ObserveRequest()
+  const trace: string[] = []
   server.use(
     http.delete(`${repo}/issues/1/labels/:name`, async ({ request }) => {
       mutations.push(`DELETE ${new URL(request.url).pathname.split('/labels/')[1]}`)
+      trace.push('DELETE')
       return new Response(null, { status: 200 })
     }),
     http.post(`${repo}/issues/1/labels`, async ({ request }) => {
       const body = await request.json() as { labels: string[] }
       mutations.push(`POST ${body.labels.join(',')}`)
+      trace.push('POST')
       return new Response(null, { status: 200 })
     }),
     http.get(`${repo}/issues/1`, utils.mockResponse(200, issueWithLabels(...currentLabels))),
-    http.get(`${repo}/contents/:path`, utils.mockResponse(404, null, yamlFetch)),
+    http.get(`${repo}/contents/:path`, () => {
+      trace.push('GET yaml')
+      return new Response(null, { status: 404 })
+    }),
     utils.repoHasLabels(['help wanted', 'good first issue']),
   )
-  return { mutations, yamlFetch }
+  return { mutations, trace }
 }
 
 async function run(config: string, body: string) {
@@ -57,23 +65,23 @@ async function run(config: string, body: string) {
 }
 
 describe('/help and /good-first-issue', () => {
-  it('/help adds help wanted without reading .prowlabels.yaml', async () => {
-    const { mutations, yamlFetch } = serveIssueAndRecordMutations([])
+  it('/help adds help wanted without reading .prowlabels.yaml; only the needs-* re-check that follows reads it', async () => {
+    const { mutations, trace } = serveIssueAndRecordMutations([])
 
     const setFailed = await run('/help', '/help')
 
     expect(mutations).toEqual(['POST help wanted'])
-    await expect(yamlFetch.notCalled()).resolves.toBe('not called')
+    expect(trace[0]).toBe('POST')
     expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('/good-first-issue adds good first issue and help wanted in one request', async () => {
-    const { mutations, yamlFetch } = serveIssueAndRecordMutations([])
+    const { mutations, trace } = serveIssueAndRecordMutations([])
 
     const setFailed = await run('/good-first-issue', '/good-first-issue')
 
     expect(mutations).toEqual(['POST good first issue,help wanted'])
-    await expect(yamlFetch.notCalled()).resolves.toBe('not called')
+    expect(trace[0]).toBe('POST')
     expect(setFailed).not.toHaveBeenCalled()
   })
 
