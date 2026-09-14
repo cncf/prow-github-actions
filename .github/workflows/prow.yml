@@ -1,0 +1,86 @@
+# The reusable workflow a repository calls to run the whole bot; see docs/installing.md.
+#
+#   jobs:
+#     prow:
+#       uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+#
+# It runs the action at the commit of this very file, so the workflow and the action can
+# never drift and no floating action tag exists inside it. The caller owns the triggers,
+# the permissions (a reusable workflow cannot exceed what the caller grants) and the
+# concurrency group.
+name: Prow
+
+on:
+  workflow_call:
+    inputs:
+      prow-commands:
+        description: The /commands to enable on issue_comment; the default is every built-in command except /meow. Listing a dynamic /<key> command needs that labels section in prow.yaml.
+        type: string
+        required: false
+        default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels
+      jobs:
+        description: The jobs to run on schedule, workflow_dispatch, push and pull_request; 'lgtm' merges on the schedule and removes lgtm on new commits, 'label-sync' creates the labels prow.yaml describes.
+        type: string
+        required: false
+        default: lgtm
+      merge-method:
+        description: "'merge', 'squash' or 'rebase'; tide.merge_method in prow.yaml wins. Empty means the action's default, 'merge'."
+        type: string
+        required: false
+        default: ''
+      config:
+        description: An explicit prow configuration source, 'owner/repo:path[@ref]' or an https:// url, replacing the <org>/.project and <org>/.github lookup.
+        type: string
+        required: false
+        default: ''
+      dry-run:
+        description: When true the label-sync job only logs what it would create or update.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      token:
+        description: A token with org read access (for a private <org>/.project) or write access on fork pull requests; defaults to the caller's github.token.
+        required: false
+      cat-api-key:
+        description: The thecatapi.com key for /meow.
+        required: false
+
+jobs:
+  prow:
+    runs-on: ubuntu-latest
+    # everything the action can need across all events: tide merges (contents: write),
+    # labels, comments, assignees and reviews on issues and pull requests
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      # job.workflow_sha is the commit of this workflow file (the reusable one, not the
+      # caller's). It is empty on GitHub Enterprise Server, where actions/checkout would
+      # silently fall back to the default branch, so refuse to run there instead.
+      - name: Require the workflow's own commit
+        if: job.workflow_sha == ''
+        run: |
+          echo "::error::job.workflow_sha is empty; this reusable workflow needs github.com. Use 'uses: cncf/prow-github-actions@v3' directly instead."
+          exit 1
+
+      # Checks out cncf/prow-github-actions at that commit, never the caller's repository
+      # and never a pull request head, so the step is safe under pull_request_target.
+      # `uses: ./` would resolve against the caller's checkout, hence the path.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: cncf/prow-github-actions
+          ref: ${{ job.workflow_sha }}
+          path: .prow-github-actions
+          persist-credentials: false
+
+      - uses: ./.prow-github-actions
+        with:
+          github-token: ${{ secrets.token || github.token }}
+          cat-api-key: ${{ secrets.cat-api-key }}
+          prow-commands: ${{ inputs.prow-commands }}
+          jobs: ${{ inputs.jobs }}
+          merge-method: ${{ inputs.merge-method }}
+          config: ${{ inputs.config }}
+          dry-run: ${{ inputs.dry-run }}
