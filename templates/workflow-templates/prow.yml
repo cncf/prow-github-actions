@@ -31,9 +31,11 @@ permissions:
   issues: write
   pull-requests: write
 
-# one run at a time per issue or pull request; never cancel a run that may be merging
+# One run per comment (commands are never collapsed); per event+action for everything else,
+# so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
+# Never cancel a run that may be merging.
 concurrency:
-  group: prow-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:

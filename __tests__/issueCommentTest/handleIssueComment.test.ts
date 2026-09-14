@@ -1,5 +1,8 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
-import { expect, it, vi } from 'vitest'
+import { http } from 'msw'
+import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as approve from '../../src/issueComment/approve'
 import * as assign from '../../src/issueComment/assign'
@@ -10,9 +13,30 @@ import * as fixed from '../../src/labels/fixed'
 import * as hold from '../../src/labels/hold'
 import * as lgtm from '../../src/labels/lgtm'
 import * as prefixed from '../../src/labels/prefixed'
+import * as requireMatchingLabel from '../../src/plugins/requireMatchingLabel'
+import * as tide from '../../src/plugins/tide'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 
 import * as utils from '../testUtils'
+import { prCommentEvent, prHandlers, pullHandler, repo } from '../utils/ownersFixtures'
+
+const server = setupServer()
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+
+// the dispatch tests below mock every command; the sweep that follows a command is stubbed the same way
+let sweepStubs: ReturnType<typeof vi.spyOn>[]
+beforeEach(() => {
+  sweepStubs = [
+    vi.spyOn(requireMatchingLabel, 'checkRequiredLabels').mockResolvedValue(),
+    vi.spyOn(tide, 'tideOnComment').mockResolvedValue(),
+  ]
+})
+afterEach(() => {
+  server.resetHandlers()
+  server.events.removeAllListeners()
+})
+afterAll(() => server.close())
 
 it('ignores the comment if no command in comment', async () => {
   utils.setupActionsEnv('/assign')
@@ -511,4 +535,220 @@ it('resolves an upper-case alias in prow-commands to its base command', async ()
   await handleIssueComment(context)
   expect(hold.hold).toHaveBeenCalledTimes(1)
   expect(setFailed).not.toHaveBeenCalled()
+})
+
+describe('after a command ran', () => {
+  const kindRule = 'require_matching_label:\n  - regexp: ^kind/\n    missing_label: needs-kind\n'
+  const noRule = ''
+
+  let calls: string[]
+
+  function serveConfig(yamlText: string) {
+    const file = structuredClone(labelFileContents)
+    file.content = Buffer.from(`labels:\n  kind: [cleanup]\n${yamlText}`).toString('base64')
+    server.use(
+      http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file)),
+      ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml'),
+    )
+  }
+
+  function ok(method: 'get' | 'post' | 'put' | 'delete', path: string, body: unknown = {}) {
+    return http[method](`${repo}${path}`, utils.mockResponse(200, body))
+  }
+
+  // the commenter is an org member, not the pr author, and the repository has no OWNERS files
+  function reviewerHandlers() {
+    return [
+      http.get(`${utils.api}/orgs/Codertocat/members/Codertocat`, utils.mockResponse(204)),
+      http.get(`${repo}/collaborators/Codertocat`, utils.mockResponse(404)),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      utils.defaultBranchTree(),
+    ]
+  }
+
+  beforeEach(() => {
+    sweepStubs.forEach(stub => stub.mockRestore())
+    calls = []
+    server.events.on('request:start', ({ request }) => {
+      calls.push(`${request.method} ${new URL(request.url).pathname}`)
+    })
+  })
+
+  it('/lgtm on a clean pull request adds the label and merges in the same run', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig(noRule)
+    server.use(
+      ...reviewerHandlers(),
+      utils.repoHasLabels(['lgtm']),
+      ok('post', '/issues/1/labels', []),
+      ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+      ok('put', '/pulls/1/merge', { merged: true }),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+    const writes = calls.filter(call => !call.startsWith('GET'))
+    expect(writes).toEqual([`POST /repos/Codertocat/Hello-World/issues/1/labels`, `PUT /repos/Codertocat/Hello-World/pulls/1/merge`])
+    expect(calls.lastIndexOf('GET /repos/Codertocat/Hello-World/pulls/1')).toBeGreaterThan(calls.indexOf('POST /repos/Codertocat/Hello-World/issues/1/labels'))
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('merge_on_events: false leaves the merge to the cron', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig('tide:\n  merge_on_events: false\n')
+    server.use(...reviewerHandlers(), utils.repoHasLabels(['lgtm']), ok('post', '/issues/1/labels', []), ...prHandlers({}, ['src/file1.txt']))
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+    expect(calls).toContain('POST /repos/Codertocat/Hello-World/issues/1/labels')
+    expect(calls.filter(call => call === 'GET /repos/Codertocat/Hello-World/pulls/1')).toHaveLength(1)
+    expect(calls.some(call => call.startsWith('PUT'))).toBe(false)
+  })
+
+  it('/lgtm on an issue never reads a pull request', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig(noRule)
+    server.use(...reviewerHandlers(), utils.repoHasLabels(['lgtm']), ok('post', '/issues/1/labels', []))
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    const event = structuredClone(issueCommentEvent)
+    event.comment.body = '/lgtm'
+    event.issue.user.login = 'some-author'
+    await handleIssueComment(new utils.MockContext(event))
+
+    expect(calls).toContain('POST /repos/Codertocat/Hello-World/issues/1/labels')
+    expect(calls.some(call => call.includes('/pulls/'))).toBe(false)
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('/assign on a pull request makes only its own calls: no configuration probe, no labels or pull request read', async () => {
+    utils.setupActionsEnv('/assign')
+    server.use(
+      http.get(`${utils.api}/orgs/Codertocat/members/bob`, utils.mockResponse(204)),
+      http.get(`${repo}/collaborators/bob`, utils.mockResponse(404)),
+      ok('get', '/issues/1/comments', []),
+      http.post(`${repo}/issues/1/assignees`, utils.mockResponse(201, {})),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/assign @bob')))
+
+    expect(calls).toEqual([
+      'GET /orgs/Codertocat/members/bob',
+      'GET /repos/Codertocat/Hello-World/collaborators/bob',
+      'GET /repos/Codertocat/Hello-World/issues/1/comments',
+      'POST /repos/Codertocat/Hello-World/issues/1/assignees',
+    ])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a comment without a configured command makes no api call at all', async () => {
+    utils.setupActionsEnv('/lgtm')
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('looks good to me')))
+
+    expect(calls).toEqual([])
+  })
+
+  it('/kind cleanup removes a needs-kind the command just satisfied', async () => {
+    utils.setupActionsEnv('/kind')
+    serveConfig(kindRule)
+    server.use(
+      utils.defaultBranchTree(),
+      utils.repoHasLabels(['kind/cleanup', 'needs-kind']),
+      ok('post', '/issues/1/labels', []),
+      ok('get', '/issues/1', { labels: [{ name: 'needs-kind' }, { name: 'kind/cleanup' }] }),
+      ok('delete', '/issues/1/labels/needs-kind', []),
+      pullHandler(undefined, { labels: [{ name: 'kind/cleanup' }] }),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/kind cleanup')))
+
+    expect(calls.filter(call => !call.startsWith('GET'))).toEqual([
+      'POST /repos/Codertocat/Hello-World/issues/1/labels',
+      'DELETE /repos/Codertocat/Hello-World/issues/1/labels/needs-kind',
+    ])
+    expect(calls).toContain('GET /repos/Codertocat/Hello-World/pulls/1')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('/remove-kind that leaves no kind label adds needs-kind and the missing comment', async () => {
+    utils.setupActionsEnv('/kind')
+    serveConfig(`${kindRule}    missing_comment: Please add a kind label.\n`)
+    const postedLabels = new utils.ObserveRequest()
+    const postedComment = new utils.ObserveRequest()
+    const issueReads = [{ labels: [{ name: 'kind/cleanup' }] }, { labels: [] }]
+    server.use(
+      utils.defaultBranchTree(),
+      http.get(`${repo}/issues/1`, () => new Response(JSON.stringify(issueReads.length > 1 ? issueReads.shift() : issueReads[0]), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+      http.delete(`${repo}/issues/1/labels/kind%2Fcleanup`, utils.mockResponse(200, [])),
+      utils.repoHasLabels(['kind/cleanup', 'needs-kind']),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], postedLabels)),
+      ok('get', '/issues/1/comments', []),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, postedComment)),
+      pullHandler(undefined, { labels: [{ name: 'needs-kind' }] }),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/remove-kind cleanup')))
+
+    expect(await postedLabels.body()).toEqual({ labels: ['needs-kind'] })
+    expect(await postedComment.body().then(body => body.body)).toContain('Please add a kind label.')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a refused command still runs the sweep and fails with the command message', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig(noRule)
+    server.use(
+      utils.defaultBranchTree(),
+      ok('post', '/issues/1/comments', {}),
+      pullHandler(undefined, { labels: [] }),
+      ok('put', '/pulls/1/merge', { merged: true }),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm', 'Codertocat', 'Codertocat')))
+
+    expect(setFailed).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('you cannot LGTM your own PR.'))
+    expect(calls).toContain('GET /repos/Codertocat/Hello-World/pulls/1')
+    expect(calls.some(call => call.startsWith('PUT'))).toBe(false)
+  })
+
+  it('a closed pull request is not evaluated', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig(noRule)
+    server.use(...reviewerHandlers(), utils.repoHasLabels(['lgtm']), ok('post', '/issues/1/labels', []))
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    const event = prCommentEvent('/lgtm')
+    event.issue.state = 'closed'
+    server.use(...prHandlers({}, ['src/file1.txt'], { state: 'closed' }))
+    await handleIssueComment(new utils.MockContext(event))
+
+    expect(calls).toContain('POST /repos/Codertocat/Hello-World/issues/1/labels')
+    expect(calls.filter(call => call === 'GET /repos/Codertocat/Hello-World/pulls/1')).toHaveLength(1)
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a refused merge fails the run naming the pull request', async () => {
+    utils.setupActionsEnv('/lgtm')
+    serveConfig(noRule)
+    server.use(
+      ...reviewerHandlers(),
+      utils.repoHasLabels(['lgtm']),
+      ok('post', '/issues/1/labels', []),
+      ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+      http.put(`${repo}/pulls/1/merge`, utils.mockResponse(405, { message: 'Pull Request is not mergeable' })),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+    expect(setFailed).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('could not merge pull request(s) #1'))
+  })
 })

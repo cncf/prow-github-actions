@@ -4,7 +4,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchMergeability, tideOnCheckSuite, tideOnPullRequest, tideOnReview, tryMergePullRequest, unknownRetryDelaysMs } from '../../src/plugins/tide'
+import { fetchMergeability, tideOnCheckSuite, tideOnComment, tideOnPullRequest, tideOnReview, tryMergePullRequest, unknownRetryDelaysMs } from '../../src/plugins/tide'
 import { resolveTide } from '../../src/utils/config'
 import { newOctokit } from '../../src/utils/octokit'
 import * as sleepModule from '../../src/utils/sleep'
@@ -13,6 +13,7 @@ import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEve
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import * as utils from '../testUtils'
+import { prCommentEvent } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
@@ -410,6 +411,64 @@ describe('tideOnPullRequest', () => {
       expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
       expect(info).toHaveBeenCalledWith('skipping pr #2: missing approved')
     })
+  })
+})
+
+describe('tideOnComment', () => {
+  beforeEach(() => {
+    server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree())
+  })
+
+  it('evaluates the open pull request the comment is on', async () => {
+    const gets = servePull(pull(['lgtm']))
+    const merge = observeMerge()
+
+    await expect(tideOnComment(new utils.MockContext(prCommentEvent('/lgtm')))).resolves.toBeUndefined()
+    await expect(merge.called()).resolves.toBe('called')
+    expect(gets).toHaveLength(1)
+    expect(await merge.body()).toEqual({ merge_method: 'merge' })
+  })
+
+  it('an issue is not read', async () => {
+    const gets = servePull(pull(['lgtm']))
+    const debug = vi.spyOn(core, 'debug')
+
+    await expect(tideOnComment(new utils.MockContext({ ...prCommentEvent('/lgtm'), issue: { number: 1, state: 'open' } }))).resolves.toBeUndefined()
+    expect(gets).toHaveLength(0)
+    expect(debug).toHaveBeenCalledWith('tide: #1 is not a pull request')
+  })
+
+  it('a closed pull request is not read', async () => {
+    const gets = servePull(pull(['lgtm']))
+    const debug = vi.spyOn(core, 'debug')
+    const event = prCommentEvent('/lgtm')
+    event.issue.state = 'closed'
+
+    await expect(tideOnComment(new utils.MockContext(event))).resolves.toBeUndefined()
+    expect(gets).toHaveLength(0)
+    expect(debug).toHaveBeenCalledWith('tide: pull request #1 is closed')
+  })
+
+  it('merge_on_events: false is a no-op after reading the configuration', async () => {
+    server.use(prowYaml('tide:\n  merge_on_events: false\n'))
+    const gets = servePull(pull(['lgtm']))
+    const merge = observeMerge()
+
+    await expect(tideOnComment(new utils.MockContext(prCommentEvent('/lgtm')))).resolves.toBeUndefined()
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(0)
+  })
+
+  it('throws when the merge is refused so the run fails', async () => {
+    servePull(pull(['lgtm']))
+    observeMerge(405, { message: 'Pull Request is not mergeable' })
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await expect(tideOnComment(new utils.MockContext(prCommentEvent('/lgtm')))).rejects.toThrow('could not merge pull request(s) #1')
+  })
+
+  it('throws when the payload has no issue', async () => {
+    await expect(tideOnComment(new utils.MockContext({ action: 'created' }))).rejects.toThrow('missing issue')
   })
 })
 

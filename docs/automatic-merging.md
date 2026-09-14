@@ -5,7 +5,7 @@ reports it mergeable. Two paths get there:
 
 Path | Trigger | Reads `mergeable_state` | Role
 --- | --- | --- | ---
-event-driven | `pull_request`, `pull_request_review`, `check_suite`, `status` | yes: merges `clean` and `has_hooks` only | primary; merges within seconds of the last label, review or check
+event-driven | `issue_comment` (after a command), `pull_request`, `pull_request_review`, `check_suite`, `status` | yes: merges `clean` and `has_hooks` only | primary; merges within seconds of the last command, label, review or check
 `lgtm` cron job | `schedule` with `jobs: lgtm` | no: merges blindly and lets GitHub refuse | backstop for missed events; optional
 
 ## Event-driven merging
@@ -45,10 +45,17 @@ jobs:
 
 Event | Activity types evaluated | Pull request(s)
 --- | --- | ---
+`issue_comment` | `created`, after a label-writing [command](./commands.md) (`/lgtm`, `/approve`, `/hold`, `/remove`, `/kind`, ...) ran, on an open PR | `issue.number`
 `pull_request`, `pull_request_target` | `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited` | `pull_request.number`
 `pull_request_review` | `submitted`, `dismissed` | `pull_request.number`
 `check_suite` | `completed`, unless the conclusion is `failure`, `cancelled`, `timed_out` or `action_required` | `check_suite.pull_requests`, else every open PR whose head is `head_sha`
 `status` | `success` (`pending`, `failure`, `error` make no call) | every open PR whose head is `sha`
+
+The bot's own label writes fire no `labeled` event
+([events](./events.md#the-bots-writes-fire-no-events)), so `/lgtm`, `/approve`, `/unhold` and
+every other command that changes a gate label evaluate the PR in the same run, right after the
+command; a `/lgtm` on a `clean` PR merges it seconds later. A command that failed (an author's
+`/lgtm`) still evaluates, which changes nothing since no label was written.
 
 `opened` is skipped: nothing can be mergeable yet. `synchronize` is skipped on purpose: a push
 must remove `lgtm` (the [`lgtm` PR job](./pr-jobs.md)) and must not merge, and the job runs
@@ -96,9 +103,10 @@ tide:
   merge_on_events: false
 ```
 
-`false` turns all three handlers off after they read the configuration: no pull request is read,
-nothing is merged, the cron alone merges. Default `true`. Repositories that do not subscribe to
-the events get the same effect without the flag.
+`false` turns every event handler off after it reads the configuration, the evaluation after a
+comment command included: no pull request is read, nothing is merged, the cron alone merges.
+Default `true`. Repositories that do not subscribe to the events keep the after-command
+evaluation and get the rest of the effect without the flag.
 
 A merge performed with `GITHUB_TOKEN` does not trigger `push` workflows for other automation;
 use a PAT or GitHub App token if something must run after the merge.
@@ -106,7 +114,8 @@ use a PAT or GitHub App token if something must run after the merge.
 ## The `lgtm` cron job
 
 The cron is the backstop for missed events (a workflow run that was skipped, a webhook that was
-lost, a PR whose state was still `unknown` when the last event ran). It pages through every open
+lost, a PR whose state was still `unknown` when the last event ran), not for comment commands:
+those evaluate the PR themselves. It pages through every open
 pull request, applies the merge gate to the listed labels and sends the merge without reading
 `mergeable_state`; GitHub refuses what cannot merge.
 

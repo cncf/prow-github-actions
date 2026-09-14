@@ -12,6 +12,7 @@ import { addPrefixedLabels, dynamicPrefixedCommand, labelCommandName, prefixedLa
 import { remove } from '../labels/remove'
 import { autoCc } from '../plugins/blunderbuss'
 import { checkRequiredLabels } from '../plugins/requireMatchingLabel'
+import { tideOnComment } from '../plugins/tide'
 import { hasCommand } from '../utils/command'
 import { approve } from './approve'
 import { assign } from './assign'
@@ -64,6 +65,16 @@ function isDynamicLabelCommand(command: string): boolean {
     && !(command in commandAliases)
 }
 
+// only a command that may have written a label needs the post-command sweep; the rest stay free of extra calls
+const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove'])
+
+function changesLabels(command: string): boolean {
+  return labelWritingHandlers.has(command)
+    || prefixedLabelCommands.some(cmd => cmd.command === command)
+    || fixedLabelCommands.some(cmd => cmd.command === command)
+    || isDynamicLabelCommand(command)
+}
+
 function canonicalCommand(name: string): string {
   // the alias table wins so /remove-lgtm, /remove-hold and friends keep their bases
   for (const [command, aliases] of Object.entries(commandAliases)) {
@@ -107,44 +118,74 @@ export async function handleIssueComment(context: Context = github.context): Pro
     return
   }
 
-  await Promise.all(
-    commandConfig.map(async (command) => {
-      if (commandForms(command).some(form => hasCommand(form, commentBody))) {
-        const prefixed = prefixedLabelCommands.find(cmd => cmd.command === command)
-        if (prefixed) {
-          return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError)
-        }
-
-        const fixed = fixedLabelCommands.find(cmd => cmd.command === command)
-        if (fixed) {
-          return await fixedLabels(context, fixed, commentBody).catch(normalizeError)
-        }
-
-        const handler = handlers[command]
-        if (handler) {
-          return await handler(context).catch(normalizeError)
-        }
-
-        if (isDynamicLabelCommand(command)) {
-          return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError)
-        }
-
-        return new Error(
-          `could not execute ${command}. May not be supported - please refer to docs`,
-        )
+  const results = await Promise.all(
+    commandConfig.map(async (command): Promise<CommandResult> => {
+      if (!commandForms(command).some(form => hasCommand(form, commentBody))) {
+        return 'unmatched'
       }
+
+      const prefixed = prefixedLabelCommands.find(cmd => cmd.command === command)
+      if (prefixed) {
+        return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError)
+      }
+
+      const fixed = fixedLabelCommands.find(cmd => cmd.command === command)
+      if (fixed) {
+        return await fixedLabels(context, fixed, commentBody).catch(normalizeError)
+      }
+
+      const handler = handlers[command]
+      if (handler) {
+        return await handler(context).catch(normalizeError)
+      }
+
+      if (isDynamicLabelCommand(command)) {
+        return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError)
+      }
+
+      return new Error(
+        `could not execute ${command}. May not be supported - please refer to docs`,
+      )
     }),
   )
-    .then((results) => {
-      for (const result of results) {
-        if (result instanceof Error) {
-          throw new TypeError(`error handling issue comment: ${result}`)
-        }
-      }
-    })
-    .catch((e) => {
-      core.setFailed(`${e}`)
-    })
+
+  const failures: string[] = []
+  const commandError = results.find(result => result instanceof Error)
+  if (commandError !== undefined) {
+    failures.push(`${new TypeError(`error handling issue comment: ${commandError}`)}`)
+  }
+
+  if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
+    const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody)
+    failures.push(...await sweep(context, alreadyChecked))
+  }
+
+  if (failures.length > 0) {
+    core.setFailed(failures.join('; '))
+  }
+}
+
+type CommandResult = 'unmatched' | void | Error
+
+// The bot's own label writes fire no `labeled`/`unlabeled` event, so what those events would
+// trigger runs here, after the commands: the needs-* re-check, then the merge gate.
+async function sweep(context: Context, alreadyChecked: boolean): Promise<string[]> {
+  const failures: string[] = []
+  const steps: (() => Promise<void>)[] = [
+    ...(alreadyChecked ? [] : [() => checkRequiredLabels(context)]),
+    () => tideOnComment(context),
+  ]
+
+  for (const step of steps) {
+    try {
+      await step()
+    }
+    catch (e) {
+      failures.push(`${normalizeError(e)}`)
+    }
+  }
+
+  return failures
 }
 
 // a body may carry both '/kind bug' and '/remove-kind cleanup'; removals go first

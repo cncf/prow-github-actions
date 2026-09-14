@@ -16,7 +16,7 @@ These docs describe `main`. Features added since the latest release (`v2.0.0`) s
 
 Commands | Policy | Description
 --- | --- | ---
-`/approve` | [OWNERS](#owners) approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | on a repo with OWNERS files: records the commenter's approval for the files they own and re-evaluates the [approve plugin](#approve), which adds `approved` once every changed file is covered and posts/edits the `[APPROVALNOTIFIER]` comment; no GitHub review is submitted. Otherwise: the bot submits an approving review
+`/approve` | [OWNERS](#owners) approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | on a repo with OWNERS files: records the commenter's approval for the files they own and re-evaluates the [approve plugin](#approve), which adds `approved` once every changed file is covered and posts/edits the `[APPROVALNOTIFIER]` comment; no GitHub review is submitted. Otherwise: the bot submits an approving review. The [merge gate](./automatic-merging.md#event-driven-merging) is evaluated right after
 `/approve no-issue` | same as `/approve` | same as `/approve`; accepted for Prow compatibility
 `/approve cancel` | same as `/approve` | on a repo with OWNERS files: withdraws the commenter's approval and re-evaluates (`approved` is removed if the files they covered are no longer covered). Otherwise: dismisses the bot's latest approval
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
@@ -41,11 +41,11 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label. This is used for [automatic PR merging](./automatic-merging.md). Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after: a `clean` PR merges in the same run. Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
 `/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
-`/hold cancel` | anyone | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present
+`/hold cancel` | anyone | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present, and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after
 `/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
 `/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
 `/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
@@ -64,6 +64,8 @@ Label Commands | Policy | Description
 `/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
+
+Every label-writing command that ran (`/lgtm`, `/approve`, `/hold`, `/remove` and the label commands below) is followed by a re-check of the [`require_matching_label`](./configuration.md#require_matching_label) rules (`/kind cleanup` clears `needs-kind` in the same run) and, on an open PR, by the merge gate; see [events](./events.md#the-bots-writes-fire-no-events) for why.
 
 Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved`, `do-not-merge/*` and a configured `hold.label` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 

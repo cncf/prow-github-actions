@@ -57,6 +57,8 @@ const reusableJob = reusable.jobs.prow
 // inputs the reusable workflow deliberately maps from secrets rather than exposing as inputs
 const secretBackedInputs = ['github-token', 'cat-api-key']
 
+const templateGroup = String(loadYaml<Workflow>(templatePath).concurrency?.group)
+
 describe('the reusable workflow mirrors action.yml', () => {
   it('has exactly one job', () => {
     expect(Object.keys(reusable.jobs)).toEqual(['prow'])
@@ -180,6 +182,17 @@ describe.each([
     expect(caller.concurrency?.group).toContain('github.event.pull_request.number')
   })
 
+  it('has one concurrency group per comment and per event action', () => {
+    const group = String(caller.concurrency?.group)
+    expect(group).toContain('github.event_name')
+    expect(group).toContain('github.event.action')
+    expect(group).toContain('github.event.comment.id')
+    // an issue_comment payload carries both comment.id and issue.number; the comment must win
+    expect(group.indexOf('github.event.comment.id')).toBeLessThan(group.indexOf('github.event.pull_request.number'))
+    expect(group.indexOf('github.event.pull_request.number')).toBeLessThan(group.indexOf('github.event.issue.number'))
+    expect(group).toBe(templateGroup)
+  })
+
   it('routes label-sync to workflow_dispatch and push, everything else to the defaults', () => {
     expect(callerJobs.length).toBe(2)
     const labelSync = callerJobs.find(job => job.with?.jobs === 'label-sync')
@@ -188,6 +201,16 @@ describe.each([
     expect(prow).toBeDefined()
     expect(labelSync).toMatchObject({ if: 'github.event_name == \'workflow_dispatch\' || github.event_name == \'push\'' })
     expect(prow).toMatchObject({ if: 'github.event_name != \'workflow_dispatch\' && github.event_name != \'push\'' })
+  })
+})
+
+describe.each(['README.md', 'docs/installing.md', 'docs/events.md'])('%s', (file) => {
+  it('pastes the concurrency group of the template', () => {
+    const groups = read(file).split('\n').filter(line => line.trim().startsWith('group:')).map(line => line.trim().slice('group:'.length).trim())
+    expect(groups.length).toBeGreaterThan(0)
+    for (const group of groups) {
+      expect(group).toBe(templateGroup)
+    }
   })
 })
 

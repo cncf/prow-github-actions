@@ -42596,6 +42596,29 @@ async function tideOnReview(context = github_context) {
     await evaluate(context, [pullNumber(context)]);
 }
 /**
+ * tideOnComment runs after the comment commands: the bot's own label writes
+ * fire no `labeled` event, so `/lgtm`, `/approve`, `/unhold`, `/remove-*` ...
+ * must evaluate the pull request here. Issues and closed pull requests are
+ * skipped without an API call.
+ *
+ * @param context - the github context of the current action event
+ */
+async function tideOnComment(context = github_context) {
+    const issue = context.payload.issue;
+    if (issue === undefined) {
+        throw new Error(`github context payload missing issue: ${JSON.stringify(context.payload)}`);
+    }
+    if (issue.pull_request === undefined) {
+        core_debug(`tide: #${issue.number} is not a pull request`);
+        return;
+    }
+    if (issue.state !== 'open') {
+        core_debug(`tide: pull request #${issue.number} is ${issue.state}`);
+        return;
+    }
+    await evaluate(context, [issue.number]);
+}
+/**
  * tideOnCheckSuite is the `check_suite` and `status` handler: when checks
  * finish it evaluates every open pull request whose head is the commit,
  * from the payload's `pull_requests` or, when that is empty, by listing.
@@ -44917,6 +44940,7 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
 // hand-written commands; looked up lazily so the module bindings stay spy-able
 const handlers = {
     '/assign': context => assign_assign(context),
@@ -44951,6 +44975,14 @@ function isDynamicLabelCommand(command) {
         && !(command in handlers)
         && !(command in commandAliases);
 }
+// only a command that may have written a label needs the post-command sweep; the rest stay free of extra calls
+const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove']);
+function changesLabels(command) {
+    return labelWritingHandlers.has(command)
+        || prefixedLabelCommands.some(cmd => cmd.command === command)
+        || fixedLabelCommands.some(cmd => cmd.command === command)
+        || isDynamicLabelCommand(command);
+}
 function canonicalCommand(name) {
     // the alias table wins so /remove-lgtm, /remove-hold and friends keep their bases
     for (const [command, aliases] of Object.entries(commandAliases)) {
@@ -44984,36 +45016,57 @@ async function handleIssueComment(context = github_context) {
         setFailed(`please provide a list of space delimited commands / jobs to run. None found`);
         return;
     }
-    await Promise.all(commandConfig.map(async (command) => {
-        if (commandForms(command).some(form => hasCommand(form, commentBody))) {
-            const prefixed = prefixedLabelCommands.find(cmd => cmd.command === command);
-            if (prefixed) {
-                return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError);
-            }
-            const fixed = fixedLabelCommands.find(cmd => cmd.command === command);
-            if (fixed) {
-                return await fixedLabels(context, fixed, commentBody).catch(normalizeError);
-            }
-            const handler = handlers[command];
-            if (handler) {
-                return await handler(context).catch(normalizeError);
-            }
-            if (isDynamicLabelCommand(command)) {
-                return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError);
-            }
-            return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+    const results = await Promise.all(commandConfig.map(async (command) => {
+        if (!commandForms(command).some(form => hasCommand(form, commentBody))) {
+            return 'unmatched';
         }
-    }))
-        .then((results) => {
-        for (const result of results) {
-            if (result instanceof Error) {
-                throw new TypeError(`error handling issue comment: ${result}`);
-            }
+        const prefixed = prefixedLabelCommands.find(cmd => cmd.command === command);
+        if (prefixed) {
+            return await prefixedLabels(context, prefixed, commentBody).catch(normalizeError);
         }
-    })
-        .catch((e) => {
-        setFailed(`${e}`);
-    });
+        const fixed = fixedLabelCommands.find(cmd => cmd.command === command);
+        if (fixed) {
+            return await fixedLabels(context, fixed, commentBody).catch(normalizeError);
+        }
+        const handler = handlers[command];
+        if (handler) {
+            return await handler(context).catch(normalizeError);
+        }
+        if (isDynamicLabelCommand(command)) {
+            return await prefixedLabels(context, dynamicPrefixedCommand(command.slice(1)), commentBody).catch(normalizeError);
+        }
+        return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+    }));
+    const failures = [];
+    const commandError = results.find(result => result instanceof Error);
+    if (commandError !== undefined) {
+        failures.push(`${new TypeError(`error handling issue comment: ${commandError}`)}`);
+    }
+    if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
+        const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody);
+        failures.push(...await sweep(context, alreadyChecked));
+    }
+    if (failures.length > 0) {
+        setFailed(failures.join('; '));
+    }
+}
+// The bot's own label writes fire no `labeled`/`unlabeled` event, so what those events would
+// trigger runs here, after the commands: the needs-* re-check, then the merge gate.
+async function sweep(context, alreadyChecked) {
+    const failures = [];
+    const steps = [
+        ...(alreadyChecked ? [] : [() => checkRequiredLabels(context)]),
+        () => tideOnComment(context),
+    ];
+    for (const step of steps) {
+        try {
+            await step();
+        }
+        catch (e) {
+            failures.push(`${normalizeError(e)}`);
+        }
+    }
+    return failures;
 }
 // a body may carry both '/kind bug' and '/remove-kind cleanup'; removals go first
 async function prefixedLabels(context, cmd, body) {
