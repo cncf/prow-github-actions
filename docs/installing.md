@@ -48,7 +48,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: prow-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +68,7 @@ Trigger | Why
 `pull_request_target` | Fork pull requests get a write token, so they are labeled and merged too. Safe because nothing checks out or runs pull request code: the reusable workflow only checks out `cncf/prow-github-actions` at its own commit ([events](./events.md#pull_request_target-and-the-reusable-workflow)). Use `pull_request` if you prefer; fork PRs then get a read-only token.
 `schedule` | Backstop for merges the events missed ([jobs](./cron-jobs.md)). Hourly is plenty; drop it if you like.
 `workflow_dispatch`, `push` | The `label-sync` job, on demand and whenever `.github/prow.yaml` changes.
-`concurrency` | One run at a time per issue or pull request. `cancel-in-progress` stays `false`: a run that is merging must not be cancelled.
+`concurrency` | One group per comment, and per event and activity type for everything else ([events](./events.md#concurrency)). `cancel-in-progress` stays `false`: a run that is merging must not be cancelled.
 
 The `permissions` block is the ceiling: a reusable workflow's job can use at most what the
 caller grants. The reusable job asks for exactly `contents: write` (merges, reading OWNERS

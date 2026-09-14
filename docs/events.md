@@ -90,6 +90,30 @@ on its own, ...) and comments without a configured command make no extra call at
 failure in either step fails the run alongside the command's own error. Labels added by a human
 still fire `labeled`; the [cron](./cron-jobs.md) stays the backstop for events GitHub drops.
 
+## Concurrency
+
+The [caller](./installing.md) sets the concurrency group; the reusable workflow sets none. With
+`cancel-in-progress: false` GitHub keeps **one in-progress and one pending** run per group; a
+newer pending run replaces the older pending one, which is cancelled.
+
+```yaml
+concurrency:
+  group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+```
+
+Payload | Group | Why
+--- | --- | ---
+`issue_comment` | one per comment | two commands seconds apart while a run is in progress would otherwise leave the middle one pending, and the third would cancel it: a command must never be dropped. `comment.id` comes before `issue.number` because a comment payload carries both
+`pull_request` | one per activity type and PR | a pending `synchronize` run (removes `lgtm`) can only be replaced by a newer `synchronize`, never by a `labeled` run that would then merge unreviewed commits
+`issues`, `pull_request_review` | one per activity type and number | same rule
+`check_suite`, `schedule`, ... | one per run (`run_id`) | nothing to collapse
+
+A burst of the same activity type on one object (Dependabot's `opened` plus two `labeled` within
+a second) collapses to the newest pending run of each group. That is safe: every handler re-reads
+the labels and the pull request from the API rather than trusting the payload, so the run that
+survives sees the final state.
+
 ## `pull_request_target` and the reusable workflow
 
 The [reusable workflow](../.github/workflows/prow.yml) has one `actions/checkout` step, and it
