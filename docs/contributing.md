@@ -29,6 +29,13 @@ and `./lib/utils` are exported); the `Context` type lives in
 [Dependabot](../.github/dependabot.yml) keeps npm dependencies and pinned
 actions up to date on a weekly schedule.
 
+This repository runs the bot on itself through the reusable workflow
+([`prow.yml`](../.github/workflows/prow.yml)) from a single caller,
+[`prow-bot.yml`](../.github/workflows/prow-bot.yml); a pull request that touches
+either file is exercised by its own bot run. `__tests__/workflows.test.ts` checks
+that the reusable workflow, its callers and the [install templates](../templates)
+stay in step with `action.yml` and the label catalogue.
+
 ## Testing
 
 | Command | What it runs |

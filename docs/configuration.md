@@ -25,7 +25,7 @@ The configuration is read once per run, however many commands the comment carrie
 ### The `config` input
 
 ```yaml
-- uses: cncf/prow-github-actions@v2
+- uses: cncf/prow-github-actions@v3
   with:
     config: cncf/prow-config:configs/prow.yaml@v1
     github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -192,7 +192,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           jobs: label-sync
           github-token: '${{ secrets.GITHUB_TOKEN }}'

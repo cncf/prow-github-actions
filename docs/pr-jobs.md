@@ -32,7 +32,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -63,7 +63,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'

@@ -1,6 +1,6 @@
 # Prow github actions commands
 
-These docs describe `main`. Features added since the latest release (`v2.0.0`) ship in the next release, which also creates the floating `v2` tag; until then pin `@v2.0.0` for the released behaviour.
+These docs describe `main`. Features added since the latest release (`v2.0.0`) ship in the next release, `v3.0.0`, which also creates the floating `v3` tag; until then pin `@v2.0.0` for the released behaviour ([releasing](./releasing.md)).
 
 ## Command syntax
 
@@ -88,7 +88,7 @@ jobs:
   prow:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'

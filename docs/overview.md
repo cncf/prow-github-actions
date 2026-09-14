@@ -13,7 +13,11 @@ Workflows are broken down into commands and jobs
 that can be run with specific [Github "events"](https://docs.github.com/en/actions/reference/events-that-trigger-workflows);
 [events](./events.md) lists which ones the action routes.
 
+One caller workflow installs everything through the reusable workflow; see
+[installing](./installing.md).
+
 ## Read more
+- [Installing: one repository, an organization, upgrading](./installing.md)
 - [Events the action routes](./events.md)
 - [Prow github actions available commands](./commands.md)
 - [Labeling issues](./labeling.md)

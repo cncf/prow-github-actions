@@ -1,0 +1,46 @@
+# This repository runs the bot through its own reusable workflow; templates/workflow-templates/prow.yml
+# is the same file for consumers, with pull_request_target and @v3. Kept on pull_request here.
+name: Prow bot
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/prow.yaml]
+
+# the reusable workflow can use at most what is granted here
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# one run at a time per issue or pull request; never cancel a run that may be merging
+concurrency:
+  group: prow-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # commands, plugins, event-driven merging and the scheduled lgtm backstop
+  prow:
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
+    uses: ./.github/workflows/prow.yml
+    with:
+      prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc /meow /lifecycle /help /triage /check-required-labels
+
+  # on demand and whenever .github/prow.yaml changes on main
+  label-sync:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    uses: ./.github/workflows/prow.yml
+    with:
+      jobs: label-sync
