@@ -8,10 +8,68 @@ This project is inspired by [Prow](https://github.com/kubernetes/test-infra/tree
 
 Check out the _"EXAMPLE"_ issues and pull requests (open and closed) in this repo to see how this works!
 
-These docs describe `main`. Features added since the latest release (`v2.0.0`) ship in the next release, which also creates the floating `v2` tag; until then pin `@v2.0.0` for the released behaviour. The action requires the `node24` runtime (GitHub requires actions/runner 2.327.1 or newer for node24 on self-hosted runners) and works on GitHub Enterprise Server via `GITHUB_API_URL`.
+One caller workflow installs the whole bot. Copy [`templates/workflow-templates/prow.yml`](./templates/workflow-templates/prow.yml)
+to `.github/workflows/prow.yml`, or install **Prow** from *Actions → New workflow* once your
+organization ships it as a [workflow template](./docs/installing.md#an-organization):
 
----
-Run specified actions or jobs for issue and PR comments through a `workflow.yaml` file:
+```yaml
+name: Prow
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/prow.yaml]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: prow-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prow:
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+
+  label-sync:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    with:
+      jobs: label-sync
+```
+
+With no configuration at all this gives you every built-in `/command`, reviewers from OWNERS
+files, automatic merging on `lgtm` (plus `approved` when the repository has
+[OWNERS files](./docs/commands.md#owners)), and the `label-sync` job (run it once from
+*Actions → Prow → Run workflow* so the labels exist). Add a `prow.yaml` to the repository or to
+your organization's `.github` repository for label families and `needs-*` rules
+([starter](./templates/prow.yaml), [configuration](./docs/configuration.md)). The
+[Installing](./docs/installing.md) guide covers organizations, upgrading, inputs and secrets.
+
+These docs describe `main`. The next release is `v3.0.0`; it creates the floating `v3` tag
+the caller above references, and until then `@main` is the only ref of the reusable workflow
+that resolves ([releasing](./docs/releasing.md)). The action requires the `node24` runtime
+(GitHub requires actions/runner 2.327.1 or newer for node24 on self-hosted runners).
+
+### Using the action directly
+
+The action can also be a step of your own workflow, which is the form for GitHub Enterprise
+Server (the reusable workflow needs github.com) and for mixing it with other steps:
 
 ```yaml
 name: Prow github actions
@@ -28,91 +86,16 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-This is the full list of available commands. Prow-style aliases (`/unhold`, `/remove-kind`, ...) come with their base command, and listing an alias enables the whole command family.
-
-Configuration can live in the repo or in your org's `.project`/`.github` repo — see [configuration](./docs/configuration.md).
-
-Label commands only apply labels the repository already has. Create them from the configuration with the `label-sync` job, on demand or whenever `prow.yaml` changes:
-
-```yaml
-name: Sync labels from prow.yaml
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [.github/prow.yaml]
-
-permissions:
-  contents: read
-  issues: write
-
-jobs:
-  execute:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cncf/prow-github-actions@v2
-        with:
-          jobs: label-sync
-          github-token: '${{ secrets.GITHUB_TOKEN }}'
-```
-
-PRs merge automatically once they carry `lgtm` (and `approved` when the repository has [OWNERS files](./docs/commands.md#owners)), no `do-not-merge/*`, `needs-rebase` or `hold` label, and GitHub reports them mergeable. Subscribe to the events that change that ([automatic merging](./docs/automatic-merging.md)); the merge needs `contents: write`:
-
-```yaml
-name: Merge on lgtm
-on:
-  pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
-  pull_request_review:
-    types: [submitted, dismissed]
-  check_suite:
-    types: [completed]
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  execute:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cncf/prow-github-actions@v2
-        with:
-          jobs: lgtm
-          github-token: '${{ secrets.GITHUB_TOKEN }}'
-
-          # optional; defaults to 'merge', tide.merge_method in prow.yaml wins
-          merge-method: squash
-```
-
-An optional `schedule` workflow with `jobs: lgtm` is the backstop for missed events ([jobs](./docs/cron-jobs.md)).
-
-Prow Github actions also supports removing the lgtm label when new commits are pushed to a PR (the `synchronize` activity type; other types are skipped)
-
-```yaml
-name: Run Jobs on PR
-on: pull_request
-
-permissions:
-  pull-requests: write
-
-jobs:
-  execute:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: cncf/prow-github-actions@v2
-        with:
-          jobs: lgtm
-          github-token: '${{ secrets.GITHUB_TOKEN }}'
-```
+This is the full list of available commands. Prow-style aliases (`/unhold`, `/remove-kind`, ...) come with their base command, and listing an alias enables the whole command family. [Events](./docs/events.md#recommended-triggers) has the direct form subscribed to everything; [jobs](./docs/cron-jobs.md), [automatic merging](./docs/automatic-merging.md) and [PR jobs](./docs/pr-jobs.md) have the per-feature workflows.
 
 ## Documentation
+- [Installing](./docs/installing.md)
 - [Overview](./docs/overview.md)
 - [Events](./docs/events.md)
 - [Commands](./docs/commands.md)

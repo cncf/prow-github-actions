@@ -1,5 +1,9 @@
 # Examples
 
+The workflows below use the action directly, one feature at a time. To install everything with
+one file use the reusable workflow instead ([installing](./installing.md)); the `prow.yaml`
+examples apply either way.
+
 * [`prow.yaml`](#prowyaml)
 * [Review and approve pull requests](#review-and-approve-pull-requests)
 * [All prow github actions](#all-prow-github-actions)
@@ -94,7 +98,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /approve /lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -119,7 +123,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -144,7 +148,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /triage
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -170,7 +174,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'

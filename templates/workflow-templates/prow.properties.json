@@ -1,0 +1,8 @@
+{
+  "name": "Prow",
+  "description": "Chat-ops for issues and pull requests: /commands, needs-* labels, OWNERS reviewers, automatic merging on lgtm and labels created from prow.yaml (cncf/prow-github-actions).",
+  "iconName": "prow",
+  "categories": [
+    "Automation"
+  ]
+}

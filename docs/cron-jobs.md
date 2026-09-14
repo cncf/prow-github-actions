@@ -48,7 +48,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           jobs: label-sync
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -59,7 +59,8 @@ Input | Default | Meaning
 `dry-run` | `false` | `true` logs `would create [...]`, `would update [...]` and writes nothing
 
 When the configuration lives in the organization's `.project` or `.github` repository, a
-`schedule` trigger (for example daily) picks up changes made there.
+`schedule` trigger (for example daily) picks up changes made there. With the
+[reusable workflow](./installing.md) this is the caller's `label-sync` job.
 
 Removed: `pr-labeler` — the deprecated cron job that labeled PRs by file globs from
 `.github/labels.yaml` has been removed. Use

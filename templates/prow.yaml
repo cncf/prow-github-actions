@@ -1,0 +1,119 @@
+# Starter organization-wide prow configuration.
+# Put it at <org>/.github/prow.yaml (or in a private <org>/.project, read with a token that can
+# see it); every repository of the organization inherits it and may layer its own
+# .github/prow.yaml on top. Reference: docs/configuration.md.
+#
+# Every key under `labels` is a /<key> command; run the label-sync job once so the labels exist.
+# label-sync also creates the built-in lgtm, approved, do-not-merge/hold, help wanted and
+# good first issue labels. Colors follow kubernetes/test-infra's label_sync.
+labels:
+  kind:
+    - name: bug
+      color: e11d21
+      description: Categorizes issue or PR as related to a bug.
+    - name: cleanup
+      color: c5def5
+      description: Categorizes issue or PR as related to cleaning up code, process, or technical debt.
+    - name: documentation
+      color: c7def8
+      description: Categorizes issue or PR as related to documentation.
+    - name: feature
+      color: c7def8
+      description: Categorizes issue or PR as related to a new feature.
+    - name: failing-test
+      color: e11d21
+      description: Categorizes issue or PR as related to a consistently or frequently failing test.
+    - name: regression
+      color: e11d21
+      description: Categorizes issue or PR as related to a regression from a prior release.
+
+  # exclusive: a later /priority replaces the existing priority/* label
+  priority:
+    values:
+      - name: critical-urgent
+        color: e11d21
+        description: Highest priority. Must be actively worked on as someone's top priority right now.
+      - name: important-soon
+        color: eb6420
+        description: Must be staffed and worked on either currently, or very soon, ideally in time for the next release.
+      - name: important-longterm
+        color: eb6420
+        description: Important over the long term, but may not be staffed and/or may need multiple releases to complete.
+      - name: backlog
+        color: fbca04
+        description: Higher priority than priority/awaiting-more-evidence.
+      - name: awaiting-more-evidence
+        color: fef2c0
+        description: Lowest priority. Possibly useful, but not yet enough support to actually get it done.
+    exclusive: true
+
+  triage:
+    values:
+      - name: accepted
+        color: 8fc951
+        description: Indicates an issue or PR is ready to be actively worked on.
+      - name: needs-information
+        color: d455d0
+        description: Indicates an issue needs more information in order to work on it.
+      - name: duplicate
+        color: d455d0
+        description: Indicates an issue is a duplicate of other open issue.
+      - name: not-reproducible
+        color: d455d0
+        description: Indicates an issue can not be reproduced as described.
+    exclusive: true
+
+  # the built-in /lifecycle values, spelled out so their labels are created too
+  lifecycle:
+    values:
+      - name: frozen
+        color: d3e2f0
+        description: Indicates that an issue or PR should not be auto-closed due to staleness.
+      - name: stale
+        color: '795548'
+        description: Denotes an issue or PR has remained open with no activity and has become stale.
+      - name: rotten
+        color: '604460'
+        description: Denotes an issue or PR that has aged beyond stale and will be auto-closed.
+    exclusive: true
+
+  # the merge gate's deny list; /hold applies do-not-merge/hold
+  do-not-merge:
+    - name: hold
+      color: e11d21
+      description: Indicates that a PR should not merge because someone has issued a /hold command.
+    - name: work-in-progress
+      color: e11d21
+      description: Indicates that a PR should not merge because it is a work in progress.
+    - name: invalid-owners-file
+      color: e11d21
+      description: Indicates that a PR should not merge because it has an invalid OWNERS file in it.
+
+# needs-* labels until a matching label is applied; needs-* labels are colored ededed
+require_matching_label:
+  - regexp: ^kind/
+    missing_label: needs-kind
+    issues: true
+    prs: true
+    missing_comment: Please add a kind label with /kind <value>.
+  - regexp: ^triage/
+    missing_label: needs-triage
+    issues: true
+    prs: false
+
+# the merge gate; these are the defaults
+tide:
+  labels: [lgtm]
+  missing_labels: [do-not-merge/*, needs-rebase, hold]
+  merge_method: merge
+  merge_on_events: true
+
+# the label /hold applies; this is the default
+hold:
+  label: do-not-merge/hold
+
+# reviewers requested from OWNERS files when a pull request opens
+blunderbuss:
+  request_count: 2
+  ignore_drafts: true
+  ignore_authors: ['dependabot[bot]']

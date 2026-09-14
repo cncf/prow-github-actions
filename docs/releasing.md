@@ -30,10 +30,16 @@ Both workflows:
    - `prow-github-actions-<version>.intoto.jsonl` — SLSA provenance
 
 For stable releases, `release.yml` additionally moves the floating major tag
-(`v2`, `v3`, …) to the new release so that `uses: cncf/prow-github-actions@v2`
-tracks the latest `v2.x.y`. Pre-releases never move the floating tag. The `v2`
-floating tag does not exist until the first stable tag is pushed by this
-workflow; until then pin an exact release such as `@v2.0.0`.
+(`v2`, `v3`, …) to the new release so that `uses: cncf/prow-github-actions@v3`
+and `uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3` track the
+latest `v3.x.y`. Pre-releases never move the floating tag. The next release is
+a major: `v3` is created by `release.yml` on the first `v3.x.y` tag, and until
+then `@main` is the only ref of the reusable workflow that resolves.
+
+The [reusable workflow](../.github/workflows/prow.yml) is versioned with the
+action: it checks out `cncf/prow-github-actions` at `job.workflow_sha`, the
+commit of the workflow file itself, so a tag or sha names both the workflow and
+the action bundle that runs. Nothing in it needs updating at release time.
 
 ## Cutting a stable release
 
@@ -102,12 +108,15 @@ gh attestation verify prow-github-actions-${VERSION}.spdx.json \
 
 Releases follow [SemVer](https://semver.org/) with `v`-prefixed tags
 (`v1.0.0`, `v2.0.0-rc.1`, `v2.0.0`, …). Once it exists, the floating major tag
-(`v2`) always points at the latest stable `v2.x.y` release:
+(`v3`) always points at the latest stable `v3.x.y` release:
 
 ```yaml
-# track the latest v2.x.y
-- uses: cncf/prow-github-actions@v2
+# track the latest v3.x.y
+- uses: cncf/prow-github-actions@v3
 
 # or pin to an exact release
-- uses: cncf/prow-github-actions@v2.1.0
+- uses: cncf/prow-github-actions@v3.1.0
 ```
+
+The same refs work for the reusable workflow,
+`cncf/prow-github-actions/.github/workflows/prow.yml@v3`.

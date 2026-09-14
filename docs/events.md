@@ -16,10 +16,26 @@ Event | Input | Does
 `check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
 `schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `label-sync`).
 
+## Which events each feature needs
+
+With the [reusable workflow](./installing.md) the trigger block lives in the caller; the
+[template](../templates/workflow-templates/prow.yml) subscribes to all of these.
+
+Feature | Events
+--- | ---
+[`/commands`](./commands.md) | `issue_comment` `[created]`
+[`require_matching_label`](./configuration.md#require_matching_label) | `issues` and `pull_request` `[opened, reopened, labeled, unlabeled]`
+[`owners-label`](./labeling.md#labels-from-owners-files), [`blunderbuss`](./configuration.md#blunderbuss) | `pull_request` `[opened, reopened, synchronize, ready_for_review]`
+`lgtm` removed on new commits | `pull_request` `[synchronize]`
+[event-driven merging](./automatic-merging.md#event-driven-merging) | `pull_request` `[labeled, unlabeled, reopened, ready_for_review]`, `pull_request_review` `[submitted, dismissed]`, `check_suite` `[completed]`
+[`lgtm` backstop](./cron-jobs.md) | `schedule`
+[`label-sync`](./cron-jobs.md#label-sync) | `workflow_dispatch`, `push` (filtered to the configuration file)
+
 ## Recommended triggers
 
 One workflow can subscribe to everything; every handler skips what does not concern it. The
-merge needs `contents: write`.
+merge needs `contents: write`. This is the direct form of the
+[reusable-workflow caller](./installing.md#one-repository).
 
 ```yaml
 name: Prow github actions
@@ -44,7 +60,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v2
+      - uses: cncf/prow-github-actions@v3
         with:
           prow-commands: /lgtm /approve /hold /kind /area /priority /check-required-labels /auto-cc
           jobs: lgtm
@@ -55,6 +71,15 @@ Use `pull_request_target` instead of `pull_request` when fork PRs must be labele
 `pull_request` gets a read-only token on forks ([safety rule](./pr-jobs.md#pull_request_target)).
 Repositories that only want the cron to merge leave `pull_request_review` and `check_suite` out
 or set [`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
+
+## `pull_request_target` and the reusable workflow
+
+The [reusable workflow](../.github/workflows/prow.yml) has one `actions/checkout` step, and it
+checks out `cncf/prow-github-actions` at `job.workflow_sha`, the commit of the workflow file
+itself, never the caller's repository and never a pull request head. Under
+`pull_request_target` that step therefore fetches only this action's own code; the
+[safety rule](./pr-jobs.md#pull_request_target) holds and the
+[template](../templates/workflow-templates/prow.yml) uses `pull_request_target` by default.
 
 ## `issues` and `pull_request`
 
