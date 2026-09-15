@@ -17,6 +17,7 @@ One caller workflow installs everything through the reusable workflow; see
 [installing](./installing.md).
 
 ## Read more
+- [Prow for your organization: the guided path](./prow-for-your-org.md)
 - [Installing: one repository, an organization, upgrading](./installing.md)
 - [Events the action routes](./events.md)
 - [Prow github actions available commands](./commands.md)
