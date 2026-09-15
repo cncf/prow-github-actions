@@ -6,6 +6,8 @@ This project is inspired by [Prow](https://github.com/kubernetes/test-infra/tree
 
 ## Quickstart
 
+Setting up an organization? Start with [Prow for your organization](./docs/prow-for-your-org.md).
+
 Check out the _"EXAMPLE"_ issues and pull requests (open and closed) in this repo to see how this works!
 
 One caller workflow installs the whole bot. Copy [`templates/workflow-templates/prow.yml`](./templates/workflow-templates/prow.yml)
@@ -95,6 +97,7 @@ jobs:
 This is the full list of available commands. Prow-style aliases (`/unhold`, `/remove-kind`, ...) come with their base command, and listing an alias enables the whole command family. [Events](./docs/events.md#recommended-triggers) has the direct form subscribed to everything; [jobs](./docs/cron-jobs.md), [automatic merging](./docs/automatic-merging.md) and [PR jobs](./docs/pr-jobs.md) have the per-feature workflows.
 
 ## Documentation
+- [Prow for your organization](./docs/prow-for-your-org.md)
 - [Installing](./docs/installing.md)
 - [Overview](./docs/overview.md)
 - [Events](./docs/events.md)

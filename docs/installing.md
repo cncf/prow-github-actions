@@ -1,5 +1,7 @@
 # Installing
 
+New to this? [Prow for your organization](./prow-for-your-org.md) is the guided path; this page is the reference.
+
 One caller workflow runs the whole bot through the reusable workflow
 [`cncf/prow-github-actions/.github/workflows/prow.yml`](../.github/workflows/prow.yml).
 The caller owns the triggers, the permissions and the concurrency group; the reusable
