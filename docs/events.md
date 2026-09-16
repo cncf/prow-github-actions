@@ -14,7 +14,7 @@ Event | Input | Does
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
 `pull_request_review` | — | `submitted`, `dismissed`: [`approve`](./commands.md#approve) re-evaluates the approval (an `APPROVED` review adds an approver, `CHANGES_REQUESTED` removes one) on repositories with OWNERS files, then [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can also satisfy branch protection; it is not `lgtm`). On a fork PR the token is read-only ([below](#fork-pull-requests-under-pull_request)).
 `check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
-`schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `label-sync`).
+`schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `sweep`, `label-sync`).
 
 ## Which events each feature needs
 
@@ -29,6 +29,7 @@ Feature | Events
 `lgtm` removed on new commits | `pull_request` `[synchronize]`
 [event-driven merging](./automatic-merging.md#event-driven-merging) | `issue_comment` `[created]` (after a command), `pull_request` `[labeled, unlabeled, reopened, ready_for_review]`, `pull_request_review` `[submitted, dismissed]`, `check_suite` `[completed]`
 [`lgtm` backstop](./cron-jobs.md) | `schedule`
+[`sweep`](./cron-jobs.md#sweep) (fork PRs under `pull_request`) | `schedule`
 [`label-sync`](./cron-jobs.md#label-sync) | `workflow_dispatch`, `push` (filtered to the configuration file)
 
 ## Recommended triggers

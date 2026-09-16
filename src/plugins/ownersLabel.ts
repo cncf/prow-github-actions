@@ -1,3 +1,4 @@
+import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
@@ -32,6 +33,18 @@ export async function ownersLabel(context: Context = github.context): Promise<vo
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
 
+  await applyOwnersLabels(octokit, context, pullNumber)
+}
+
+/**
+ * applyOwnersLabels adds the `labels:` of the OWNERS files covering the
+ * pull request's changed files that the pull request does not carry yet.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ */
+export async function applyOwnersLabels(octokit: Octokit, context: Context, pullNumber: number): Promise<void> {
   const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber)
   const declared = new Set<string>()
   for (const owners of perFile.values()) {

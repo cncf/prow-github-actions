@@ -137,7 +137,7 @@ Every input is optional. Each maps to the `action.yml` input of the same name.
 Input | Default | Meaning
 --- | --- | ---
 `prow-commands` | every built-in command except `/meow` | The [`/commands`](./commands.md) to enable on `issue_comment`. Setting it replaces the list: add `/meow` or a dynamic `/<key>` command here.
-`jobs` | `lgtm` | The [jobs](./cron-jobs.md) for `schedule`, `workflow_dispatch` and `push`, and the [PR jobs](./pr-jobs.md) for `pull_request`: `lgtm` merges on the schedule and strips `lgtm` from updated PRs.
+`jobs` | `lgtm` | The [jobs](./cron-jobs.md) for `schedule`, `workflow_dispatch` and `push`, and the [PR jobs](./pr-jobs.md) for `pull_request`: `lgtm` merges on the schedule and strips `lgtm` from updated PRs; `sweep` evaluates recently updated PRs (fork PRs under `pull_request`).
 `merge-method` | `merge` | `merge`, `squash` or `rebase`; `tide.merge_method` in `prow.yaml` wins.
 `config` | — | An explicit configuration source, `owner/repo:path[@ref]` or an `https://` url ([configuration](./configuration.md#the-config-input)).
 `dry-run` | `false` | `label-sync` logs what it would create or update and writes nothing.

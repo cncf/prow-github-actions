@@ -154,9 +154,9 @@ function activityTypes(on: Mapping, event: string): string[] {
 }
 
 describe.each([
-  [templatePath, 'pull_request_target'],
-  [dogfoodPath, 'pull_request'],
-])('%s calls the reusable workflow', (file, pullRequestEvent) => {
+  [templatePath, 'pull_request_target', false],
+  [dogfoodPath, 'pull_request', true],
+])('%s calls the reusable workflow', (file, pullRequestEvent, hasSweep) => {
   const caller = loadYaml<Workflow>(file)
   const callerJobs = Object.values(caller.jobs)
 
@@ -193,14 +193,21 @@ describe.each([
     expect(group).toBe(templateGroup)
   })
 
-  it('routes label-sync to workflow_dispatch and push, everything else to the defaults', () => {
-    expect(callerJobs.length).toBe(2)
+  it('routes label-sync to workflow_dispatch and push, the sweep (if any) to schedule, everything else to the defaults', () => {
+    expect(callerJobs.length).toBe(hasSweep ? 3 : 2)
     const labelSync = callerJobs.find(job => job.with?.jobs === 'label-sync')
     const prow = callerJobs.find(job => job.with?.jobs === undefined)
     expect(labelSync).toBeDefined()
     expect(prow).toBeDefined()
     expect(labelSync).toMatchObject({ if: 'github.event_name == \'workflow_dispatch\' || github.event_name == \'push\'' })
-    expect(prow).toMatchObject({ if: 'github.event_name != \'workflow_dispatch\' && github.event_name != \'push\'' })
+    if (!hasSweep) {
+      expect(prow).toMatchObject({ if: 'github.event_name != \'workflow_dispatch\' && github.event_name != \'push\'' })
+      return
+    }
+    expect(prow).toMatchObject({ if: 'github.event_name != \'workflow_dispatch\' && github.event_name != \'push\' && github.event_name != \'schedule\'' })
+    const sweep = caller.jobs.sweep
+    expect(sweep).toMatchObject({ if: 'github.event_name == \'schedule\'' })
+    expect(String(sweep.with?.jobs).split(/\s+/)).toEqual(expect.arrayContaining(['sweep', 'lgtm']))
   })
 })
 

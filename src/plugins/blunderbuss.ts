@@ -125,13 +125,30 @@ export async function autoCc(context: Context = github.context, rng: Rng = Math.
   await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng })
 }
 
-async function requestOwnersReviewers(
+export interface RequestReviewersOptions {
+  /** `/auto-cc`: ignore the draft state and `ignore_authors` */
+  explicit: boolean
+  rng: Rng
+}
+
+/**
+ * requestOwnersReviewers runs the blunderbuss selection on one pull request
+ * and requests the picked reviewers; a no-op when nobody is left to pick.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ * @param settings - the resolved blunderbuss configuration
+ * @param options - see RequestReviewersOptions
+ */
+export async function requestOwnersReviewers(
   octokit: Octokit,
   context: Context,
   pullNumber: number,
   settings: BlunderbussSettings,
-  { explicit, rng }: { explicit: boolean, rng: Rng },
+  options: RequestReviewersOptions,
 ): Promise<void> {
+  const { explicit, rng } = options
   const pull = await loadPullRequestOwners(octokit, context, pullNumber)
 
   if (!explicit) {

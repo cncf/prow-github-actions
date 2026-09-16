@@ -159,6 +159,7 @@ describe('loadProwConfig', () => {
         blunderbuss: {},
         approve: {},
         lgtm: {},
+        sweep: {},
         sources: [],
       })
     })

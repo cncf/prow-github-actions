@@ -7,11 +7,27 @@ import * as github from '@actions/github'
 
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
+import { parseDuration } from '../utils/duration'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 import { sleep } from '../utils/sleep'
 
+export { parseDuration } from '../utils/duration'
+
 export type Verdict = 'add' | 'remove' | 'none'
+
+/** an issue or pull request to apply the rules to */
+export interface RuleSubject {
+  issueNumber: number
+  isPullRequest: boolean
+}
+
+export interface EnforceOptions {
+  /** only the rules concerning this label, on a `labeled`/`unlabeled` event */
+  changedLabel?: string
+  /** wait for the rules' `grace_period_duration` first, as `opened`/`reopened` do */
+  withGracePeriod?: boolean
+}
 
 const triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled'])
 const graceActions = new Set(['opened', 'reopened'])
@@ -19,40 +35,10 @@ const graceActions = new Set(['opened', 'reopened'])
 /** github actions minutes are billed, so a rule may not park the runner for longer */
 export const maxGracePeriodMs = 30_000
 
-const durationUnits: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }
-const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy
-
 interface IssueComment {
   id: number
   body?: string | null
   user?: { login?: string, type?: string } | null
-}
-
-/**
- * parseDuration reads a Go style duration such as `5s`, `2m30s` or `500ms`
- * and returns milliseconds; an empty or `0` value is zero.
- *
- * @param text - the configured `grace_period_duration`
- */
-export function parseDuration(text: string | undefined): number {
-  const value = (text ?? '').trim()
-  if (value === '' || value === '0') {
-    return 0
-  }
-
-  let ms = 0
-  let consumed = 0
-  durationPart.lastIndex = 0
-  for (let match = durationPart.exec(value); match !== null; match = durationPart.exec(value)) {
-    ms += Number.parseFloat(match[1]) * durationUnits[match[2]]
-    consumed = durationPart.lastIndex
-  }
-
-  if (consumed !== value.length) {
-    throw new Error(`invalid grace_period_duration '${text}': expected a duration such as 5s, 2m or 500ms`)
-  }
-
-  return Math.round(ms)
 }
 
 /**
@@ -137,13 +123,27 @@ async function enforce(context: Context, changedLabel: string | undefined, withG
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
 
+  await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod })
+}
+
+/**
+ * enforceRequiredLabels applies the configured rules to one issue or pull
+ * request: nothing is read when no rule is configured or applies.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param target - the issue or pull request
+ * @param options - see EnforceOptions
+ */
+export async function enforceRequiredLabels(octokit: Octokit, context: Context, target: RuleSubject, options: EnforceOptions = {}): Promise<void> {
+  const { changedLabel, withGracePeriod = false } = options
   const config = await loadProwConfig(octokit, context)
   if (config.require_matching_label.length === 0) {
     core.debug('require-matching-label: no rules configured')
     return
   }
 
-  const { issueNumber, isPullRequest } = subject(context)
+  const { issueNumber, isPullRequest } = target
   const rules = applicableRules(config, isPullRequest, changedLabel)
   if (rules.length === 0) {
     core.debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`)
@@ -173,7 +173,7 @@ async function enforce(context: Context, changedLabel: string | undefined, withG
   }
 }
 
-function subject(context: Context): { issueNumber: number, isPullRequest: boolean } {
+function subject(context: Context): RuleSubject {
   const { payload } = context
   if (payload.pull_request !== undefined) {
     return { issueNumber: payload.pull_request.number, isPullRequest: true }

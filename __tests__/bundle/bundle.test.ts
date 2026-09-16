@@ -1582,6 +1582,119 @@ describe('dist/index.js', () => {
     })
   })
 
+  describe('schedule sweep job', () => {
+    const listPage = (page: number) => `GET ${repo}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=${page}`
+    const bound = [{ context: 'prow/lgtm', state: 'success' }]
+
+    function runSweep() {
+      return runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'sweep' }, apiUrl: gh.url })
+    }
+
+    function forkPr(number: number, labels: string[], overrides: Record<string, unknown> = {}) {
+      const stamp = new Date().toISOString()
+      return openPr(labels, {
+        number,
+        created_at: stamp,
+        updated_at: stamp,
+        requested_reviewers: [],
+        assignees: [],
+        draft: false,
+        mergeable: true,
+        mergeable_state: 'clean',
+        user: { login: 'dave' },
+        head: { sha: `sha${number}`, repo: { full_name: 'dave/Hello-World' } },
+        base: { sha: 'basesha' },
+        ...overrides,
+      })
+    }
+
+    function routeList(prs: unknown[]) {
+      gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
+      gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+        const page = new URL(req.path, gh.url).searchParams.get('page')
+        return { status: 200, body: page === '1' ? prs : [] }
+      })
+    }
+
+    it('on a repository without OWNERS files: a recently updated fork pr with a bound lgtm is merged, one updated long ago is not read', async () => {
+      const fresh = forkPr(1, ['lgtm'])
+      const old = forkPr(2, ['lgtm'], { updated_at: '2011-01-26T19:01:12Z' })
+      routeList([fresh, old])
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: fresh })
+      gh.commitStatuses(repo, 'sha1', bound)
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('sweep: 1 candidate updated since')
+      expect(result.stdout).toContain('sweep: #1 merged')
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge', sha: 'sha1' })
+      // the configuration, the window's page, then the OWNERS probe once; per candidate: the pr, its binding, the merge
+      expectRequests(configReads(), [
+        listPage(1),
+        `GET ${repo}`,
+        ownersProbe,
+        `GET ${repo}/pulls/1`,
+        `GET ${repo}/commits/sha1/status?per_page=100`,
+        `PUT ${repo}/pulls/1/merge`,
+      ])
+    })
+
+    it('on a repository with OWNERS files: a new fork pr gets needs-kind, the OWNERS labels, reviewers and the approval notifier', async () => {
+      const ownersFiles: Record<string, string> = { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- bob\n- carol\nlabels:\n- area/sdk\n' }
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', {
+        status: 200,
+        body: yamlFile('require_matching_label:\n  - regexp: ^kind/\n    missing_label: needs-kind\n    prs: true\n'),
+      })
+      const pr = forkPr(1, [])
+      routeList([pr])
+      gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })) } })
+      routeOwners(ownersFiles, ['sdk/x.go'], pr)
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/labels`, repoLabels('needs-kind', 'area/sdk', 'approved', 'lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('sweep: #1 evaluated')
+      expect(result.stdout).toContain('skipping pr #1: missing lgtm')
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['needs-kind'] }, { labels: ['area/sdk'] }])
+      const reviewers = gh.requestsMatching('POST', /requested_reviewers$/)
+      expect(reviewers).toHaveLength(1)
+      expect((reviewers[0].body as { reviewers: string[] }).reviewers).toHaveLength(2)
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect((comments[0].body as { body: string }).body).toContain('[APPROVALNOTIFIER] This PR is **NOT APPROVED**')
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+    })
+
+    it('one pull request failing does not stop the next; the run fails listing it', async () => {
+      const one = forkPr(1, ['lgtm'])
+      const two = forkPr(2, ['lgtm'])
+      routeList([one, two])
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: one })
+      gh.route('GET', `${repo}/pulls/2`, { status: 200, body: two })
+      gh.commitStatuses(repo, 'sha1', bound)
+      gh.commitStatuses(repo, 'sha2', bound)
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 405, body: { message: 'Pull Request is not mergeable' } })
+      gh.route('PUT', `${repo}/pulls/2/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('sweep: 1 pull request(s) failed: #1 (tide: Pull Request is not mergeable)'))).toBe(true)
+      expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
+    })
+  })
+
   describe('workflow_dispatch label-sync job', () => {
     const orgConfig = yamlFile('labels:\n  kind:\n    - name: bug\n      color: d73a4a\n      description: Something is not working\n    - cleanup\n')
     const builtins = [

@@ -40790,7 +40790,36 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 
 //# sourceMappingURL=js-yaml.mjs.map
+;// CONCATENATED MODULE: ./lib/utils/duration.js
+const durationUnits = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy;
+/**
+ * parseDuration reads a Go style duration such as `5s`, `2m30s` or `500ms`
+ * and returns milliseconds; an empty or `0` value is zero.
+ *
+ * @param text - the configured duration
+ * @param field - the configuration field, for the error message
+ */
+function parseDuration(text, field = 'grace_period_duration') {
+    const value = (text ?? '').trim();
+    if (value === '' || value === '0') {
+        return 0;
+    }
+    let ms = 0;
+    let consumed = 0;
+    durationPart.lastIndex = 0;
+    for (let match = durationPart.exec(value); match !== null; match = durationPart.exec(value)) {
+        ms += Number.parseFloat(match[1]) * durationUnits[match[2]];
+        consumed = durationPart.lastIndex;
+    }
+    if (consumed !== value.length) {
+        throw new Error(`invalid ${field} '${text}': expected a duration such as 5s, 2m or 500ms`);
+    }
+    return Math.round(ms);
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/config.js
+
 
 
 
@@ -40803,7 +40832,9 @@ const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep'];
+const defaultSweepLookback = '1h';
+const maxSweepLookbackMs = 24 * 3_600_000;
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40953,7 +40984,7 @@ function isNotFound(error) {
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
  * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
- * `approve` and `lgtm` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * `approve`, `lgtm` and `sweep` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40995,6 +41026,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.lgtm !== undefined) {
         config.lgtm = normalizeLgtm(source, loaded.lgtm);
+    }
+    if (loaded.sweep !== undefined) {
+        config.sweep = normalizeSweep(source, loaded.sweep);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41169,10 +41203,40 @@ function normalizeLgtm(source, raw) {
     }
     return stripUndefined({ bind_to_commit: raw.bind_to_commit });
 }
+function normalizeSweep(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: sweep must be a mapping`);
+    }
+    if (raw.lookback !== undefined) {
+        if (typeof raw.lookback !== 'string') {
+            throw new TypeError(`${source}: sweep.lookback must be a duration string such as 1h or 30m`);
+        }
+        let ms;
+        try {
+            ms = parseDuration(raw.lookback, 'sweep.lookback');
+        }
+        catch (e) {
+            throw new Error(`${source}: ${e instanceof Error ? e.message : e}`);
+        }
+        if (ms <= 0) {
+            throw new Error(`${source}: sweep.lookback must be longer than 0`);
+        }
+    }
+    return stripUndefined({ lookback: raw.lookback });
+}
+/**
+ * resolveSweepLookback returns the sweep window in milliseconds: the
+ * configured `sweep.lookback`, else 1h, never more than 24h.
+ *
+ * @param sweep - the merged sweep section
+ */
+function resolveSweepLookback(sweep) {
+    return Math.min(maxSweepLookbackMs, parseDuration(sweep.lookback ?? defaultSweepLookback, 'sweep.lookback'));
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
  * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
- * approve and lgtm shallow-merge.
+ * approve, lgtm and sweep shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41186,6 +41250,7 @@ function mergeProwConfig(base, over) {
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
         approve: { ...base.approve, ...over.approve },
         lgtm: { ...base.lgtm, ...over.lgtm },
+        sweep: { ...base.sweep, ...over.sweep },
     };
 }
 /**
@@ -43014,7 +43079,1015 @@ async function tryMergePr(pr, octokit, context = github_context, policy, failure
     return verdict.result === 'merged';
 }
 
+;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
+
+const pullRequestOwners_cache = new Map();
+/**
+ * loadPullRequestOwners reads the pull request, its changed files and the
+ * OWNERS files of the base branch that cover them. The result is memoized per
+ * pull request for the lifetime of the process, so every plugin acting on the
+ * same event shares one fetch.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param pullNumber - the pull request
+ */
+function loadPullRequestOwners(octokit, context, pullNumber) {
+    const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
+    let pending = pullRequestOwners_cache.get(key);
+    if (pending === undefined) {
+        pending = pullRequestOwners_load(octokit, context, pullNumber);
+        pullRequestOwners_cache.set(key, pending);
+    }
+    return pending;
+}
+function resetPullRequestOwnersCache() {
+    pullRequestOwners_cache.clear();
+}
+async function pullRequestOwners_load(octokit, context, pullNumber) {
+    const { data: pull } = await octokit.pulls.get({
+        ...context.repo,
+        pull_number: pullNumber,
+    });
+    const changed = await octokit.paginate(octokit.pulls.listFiles, {
+        ...context.repo,
+        pull_number: pullNumber,
+        per_page: 100,
+    });
+    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
+    // OWNERS come from the base branch so a PR cannot grant itself approvers
+    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
+    const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]));
+    return {
+        number: pullNumber,
+        baseSha: pull.base.sha,
+        headSha: pull.head.sha,
+        author: (pull.user?.login ?? '').toLowerCase(),
+        draft: pull.draft === true,
+        requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+        assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+        labels: (pull.labels ?? []).map(label => label.name),
+        files,
+        tree,
+        perFile,
+    };
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/approve.js
+
+
+
+
+
+
+
+
+
+const approvedLabel = 'approved';
+const notifierMarker = '<!-- prow-github-actions/approve -->';
+const commandsDoc = 'https://github.com/cncf/prow-github-actions/blob/main/docs/commands.md';
+const approve_pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled']);
+const approve_reviewActions = new Set(['submitted', 'dismissed']);
+/**
+ * approveSettings resolves the `approve` configuration with Prow's defaults:
+ * the author approves implicitly, reviews count, `/lgtm` does not.
+ *
+ * @param config - the merged prow configuration
+ */
+function approveSettings(config) {
+    const raw = config.approve;
+    return {
+        require_self_approval: raw.require_self_approval ?? false,
+        ignore_review_state: raw.ignore_review_state ?? false,
+        lgtm_acts_as_approve: raw.lgtm_acts_as_approve ?? false,
+    };
+}
+/**
+ * approvalEvents reads the `/approve`, `/approve cancel`, `/lgtm` family of
+ * comments and the APPROVED / CHANGES_REQUESTED reviews of humans into events,
+ * logins lowercased. Bots, other review states and comments without a command
+ * yield nothing; a comment carrying both a command and its cancel is a cancel.
+ *
+ * @param comments - the issue comments of the pull request
+ * @param reviews - the reviews of the pull request
+ */
+function approvalEvents(comments, reviews) {
+    const events = [];
+    for (const comment of comments) {
+        const login = humanLogin(comment.user);
+        const body = comment.body ?? '';
+        if (login === undefined || body === '') {
+            continue;
+        }
+        const at = new Date(comment.created_at);
+        const approveKind = commandKind(body, '/approve', '/remove-approve');
+        if (approveKind !== undefined) {
+            events.push({ user: login, kind: approveKind === 'cancel' ? 'cancel' : 'approve', at });
+        }
+        const lgtmKind = commandKind(body, '/lgtm', '/remove-lgtm');
+        if (lgtmKind !== undefined) {
+            events.push({ user: login, kind: lgtmKind === 'cancel' ? 'lgtm-cancel' : 'lgtm', at });
+        }
+    }
+    for (const review of reviews) {
+        const login = humanLogin(review.user);
+        if (login === undefined || review.submitted_at == null) {
+            continue;
+        }
+        const at = new Date(review.submitted_at);
+        if (review.state === 'APPROVED') {
+            events.push({ user: login, kind: 'review-approved', at });
+        }
+        else if (review.state === 'CHANGES_REQUESTED') {
+            events.push({ user: login, kind: 'review-changes', at });
+        }
+    }
+    return events;
+}
+function commandKind(body, command, removeAlias) {
+    if (hasCommand(removeAlias, body)) {
+        return 'cancel';
+    }
+    if (!hasCommand(command, body)) {
+        return undefined;
+    }
+    return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add';
+}
+function humanLogin(user) {
+    if (user?.login === undefined || user.login === '' || user.type === 'Bot' || user.login === 'github-actions[bot]') {
+        return undefined;
+    }
+    return user.login.toLowerCase();
+}
+/**
+ * computeApproval decides, like Prow's approve plugin, whether the current
+ * approvers collectively cover every changed file. It is recomputed from
+ * scratch on every evaluation: the events are the only input and the
+ * `approved` label is the only thing persisted, so no hidden state can drift.
+ *
+ * @param owners - the pull request and the OWNERS covering its files
+ * @param events - what users did on the pull request, in any order
+ * @param settings - the resolved `approve` configuration
+ */
+function computeApproval(owners, events, settings) {
+    const author = owners.author;
+    const approving = new Set();
+    if (!settings.require_self_approval && author !== '') {
+        approving.add(author);
+    }
+    // each user's latest action wins; a cancel or a CHANGES_REQUESTED review after an approval removes it
+    const ordered = [...events].sort((a, b) => a.at.getTime() - b.at.getTime());
+    for (const event of ordered) {
+        const user = event.user.toLowerCase();
+        if (settings.require_self_approval && user === author) {
+            continue;
+        }
+        switch (effectiveKind(event.kind, settings)) {
+            case 'add':
+                approving.add(user);
+                break;
+            case 'remove':
+                approving.delete(user);
+                break;
+            default:
+                break;
+        }
+    }
+    const coveredFiles = new Map();
+    const uncoveredFiles = [];
+    const covering = new Set();
+    for (const file of owners.files) {
+        const set = owners.perFile.get(file);
+        const approvers = set === undefined ? [] : [...approving].filter(login => set.approvers.has(login)).sort();
+        if (approvers.length > 0) {
+            coveredFiles.set(file, approvers);
+            approvers.forEach(login => covering.add(login));
+        }
+        else {
+            uncoveredFiles.push(file);
+        }
+    }
+    for (const login of approving) {
+        if (!covering.has(login)) {
+            core_debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`);
+        }
+    }
+    const excluded = new Set(covering);
+    if (settings.require_self_approval && author !== '') {
+        excluded.add(author);
+    }
+    return {
+        approvers: new Set([...covering].sort()),
+        coveredFiles,
+        uncoveredFiles,
+        suggested: suggestApprovers(owners, uncoveredFiles, excluded),
+        approved: owners.files.length > 0 && uncoveredFiles.length === 0,
+    };
+}
+function effectiveKind(kind, settings) {
+    switch (kind) {
+        case 'approve':
+            return 'add';
+        case 'cancel':
+            return 'remove';
+        case 'review-approved':
+            return settings.ignore_review_state ? 'ignore' : 'add';
+        case 'review-changes':
+            return settings.ignore_review_state ? 'ignore' : 'remove';
+        case 'lgtm':
+            return settings.lgtm_acts_as_approve ? 'add' : 'ignore';
+        case 'lgtm-cancel':
+            return settings.lgtm_acts_as_approve ? 'remove' : 'ignore';
+        default:
+            return 'ignore';
+    }
+}
+// greedy set cover: repeatedly take the approver who covers the most still-uncovered files, ties alphabetically
+function suggestApprovers(owners, uncovered, excluded) {
+    const remaining = new Set(uncovered);
+    const suggested = [];
+    while (remaining.size > 0) {
+        const coverage = new Map();
+        for (const file of remaining) {
+            for (const login of owners.perFile.get(file)?.approvers ?? []) {
+                if (!excluded.has(login)) {
+                    coverage.set(login, (coverage.get(login) ?? 0) + 1);
+                }
+            }
+        }
+        if (coverage.size === 0) {
+            break;
+        }
+        const [best] = [...coverage.entries()].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))[0];
+        suggested.push(best);
+        excluded.add(best);
+        for (const file of remaining) {
+            if (owners.perFile.get(file)?.approvers.has(best)) {
+                remaining.delete(file);
+            }
+        }
+    }
+    return suggested;
+}
+/**
+ * renderNotifier writes Prow's `[APPROVALNOTIFIER]` comment: the verdict,
+ * the approvers so far, who to assign next, and every OWNERS file the pull
+ * request touches, struck through once an approver covers it.
+ *
+ * @param state - the computed approval
+ * @param owners - the pull request and the OWNERS covering its files
+ * @param repo - the repository, for the OWNERS file links
+ * @param repo.owner - the repository owner
+ * @param repo.repo - the repository name
+ */
+function renderNotifier(state, owners, repo) {
+    const approvers = [...state.approvers].map(login => `*${login}*`).join(', ');
+    const lines = [
+        `[APPROVALNOTIFIER] This PR is **${state.approved ? 'APPROVED' : 'NOT APPROVED'}**`,
+        '',
+    ];
+    if (owners.files.length === 0) {
+        lines.push('This pull request changes no files, so there is nothing to approve.', notifierMarker);
+        return lines.join('\n');
+    }
+    lines.push(`This pull-request has been approved by:${approvers === '' ? '' : ` ${approvers}`}`);
+    if (state.approved) {
+        lines.push('', `The full list of commands accepted by this bot can be found [here](${commandsDoc}).`);
+    }
+    else if (state.suggested.length > 0) {
+        lines.push(`To complete the pull request process, please assign ${state.suggested.map(login => `**${login}**`).join(', ')} after the PR has been reviewed.`, `You can assign the PR to them by writing \`/assign ${state.suggested.map(login => `@${login}`).join(' ')}\` in a comment when ready.`);
+    }
+    lines.push('', '<details><summary>Needs approval from an approver in each of these files:</summary>', '');
+    for (const entry of ownersEntries(state, owners)) {
+        if (entry.path === undefined) {
+            lines.push(`- **${entry.file}** (no OWNERS file covers this file)`);
+            continue;
+        }
+        const link = `[${entry.path}](https://github.com/${repo.owner}/${repo.repo}/blob/${owners.baseSha}/${entry.path})`;
+        lines.push(entry.approvers.length > 0 ? `- ~~${link}~~ [${entry.approvers.join(', ')}]` : `- **${link}**`);
+    }
+    lines.push('', 'Approvers can indicate their approval by writing `/approve` in a comment', 'Approvers can cancel approval by writing `/approve cancel` in a comment', '</details>', notifierMarker);
+    return lines.join('\n');
+}
+// one line per deepest OWNERS file: every file it covers shares the same effective approvers
+function ownersEntries(state, owners) {
+    const byPath = new Map();
+    const uncoverable = [];
+    for (const file of owners.files) {
+        const set = owners.perFile.get(file);
+        if (set === undefined) {
+            uncoverable.push({ file, approvers: [] });
+            continue;
+        }
+        const path = set.sources[0];
+        const approvers = state.coveredFiles.get(file) ?? [];
+        const entry = byPath.get(path);
+        if (entry === undefined) {
+            byPath.set(path, { path, file, approvers });
+        }
+        else {
+            entry.approvers = [...new Set([...entry.approvers, ...approvers])].sort();
+        }
+    }
+    return [
+        ...[...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
+        ...uncoverable.sort((a, b) => a.file.localeCompare(b.file)),
+    ];
+}
+/**
+ * evaluateApproval recomputes the approval of a pull request from its
+ * comments and reviews, then makes the `approved` label and the notifier
+ * comment match: the label is added or removed only when it changes, the
+ * notifier is posted once and edited in place afterwards. A pull request
+ * whose base branch has no OWNERS files is left alone.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ */
+async function evaluateApproval(octokit, context, pullNumber) {
+    const owners = await loadPullRequestOwners(octokit, context, pullNumber);
+    if (!owners.tree.hasOwners) {
+        core_debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`);
+        return;
+    }
+    const settings = approveSettings(await loadProwConfig(octokit, context));
+    const comments = await listComments(octokit, context, pullNumber);
+    const reviews = settings.ignore_review_state ? [] : await listReviews(octokit, context, pullNumber);
+    const state = computeApproval(owners, approvalEvents(comments, reviews), settings);
+    info(state.approved
+        ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
+        : `approve: #${pullNumber} is not approved; nobody approves ${state.uncoveredFiles.join(', ') || 'anything'}`);
+    await syncLabel(octokit, context, owners, state.approved);
+    await upsertNotifier(octokit, context, pullNumber, comments, renderNotifier(state, owners, context.repo));
+}
+async function syncLabel(octokit, context, owners, approved) {
+    const present = owners.labels.filter(label => label.toLowerCase() === approvedLabel);
+    if (approved && present.length === 0) {
+        await labelIssue(octokit, context, owners.number, [approvedLabel]);
+    }
+    else if (!approved && present.length > 0) {
+        await removeLabels(octokit, context, owners.number, present);
+    }
+    else {
+        core_debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`);
+    }
+}
+async function upsertNotifier(octokit, context, pullNumber, comments, body) {
+    const existing = comments.find(comment => approve_isBot(comment.user) && (comment.body ?? '').includes(notifierMarker));
+    if (existing === undefined) {
+        await createComment(octokit, context, pullNumber, body);
+        return;
+    }
+    if ((existing.body ?? '').trim() === body.trim()) {
+        core_debug(`approve: the notifier on #${pullNumber} is up to date`);
+        return;
+    }
+    try {
+        await octokit.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+    }
+    catch (e) {
+        throw new Error(`could not update the approval notifier: ${e}`);
+    }
+}
+function approve_isBot(user) {
+    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
+}
+async function listComments(octokit, context, pullNumber) {
+    try {
+        return await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: pullNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list comments: ${e}`);
+    }
+}
+async function listReviews(octokit, context, pullNumber) {
+    try {
+        return await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: pullNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list reviews: ${e}`);
+    }
+}
+/**
+ * approveOnPullRequest is the `pull_request` handler: on `opened`,
+ * `reopened` and `synchronize`, and when a human adds or removes the
+ * `approved` label, it re-evaluates the approval. Approval is sticky across
+ * pushes; a push only matters because the changed files may differ.
+ *
+ * @param context - the github context of the current action event
+ */
+async function approveOnPullRequest(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !approve_pullRequestActions.has(action)) {
+        core_debug(`approve: skipping ${action} action`);
+        return;
+    }
+    if ((action === 'labeled' || action === 'unlabeled') && String(context.payload.label?.name ?? '').toLowerCase() !== approvedLabel) {
+        core_debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
+        return;
+    }
+    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
+}
+/**
+ * approveOnReview is the `pull_request_review` handler: a submitted or
+ * dismissed review may add (APPROVED) or remove (CHANGES_REQUESTED) an approver.
+ *
+ * @param context - the github context of the current action event
+ */
+async function approveOnReview(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !approve_reviewActions.has(action)) {
+        core_debug(`approve: skipping ${action} review action`);
+        return;
+    }
+    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
+}
+async function evaluateOnOwnersRepo(context, pullNumber) {
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    if (!(await repoHasOwners(octokit, context))) {
+        core_debug('approve: the repository has no OWNERS files');
+        return;
+    }
+    await evaluateApproval(octokit, context, pullNumber);
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
+
+
+
+
+
+/**
+ * blunderbussSettings resolves the `blunderbuss` configuration with Prow's
+ * defaults: two reviewers, approvers count, drafts wait for ready_for_review.
+ *
+ * @param config - the merged prow configuration
+ */
+function blunderbussSettings(config) {
+    const raw = config.blunderbuss;
+    return {
+        request_count: raw.request_count ?? 2,
+        max_request_count: raw.max_request_count,
+        exclude_approvers: raw.exclude_approvers ?? false,
+        ignore_drafts: raw.ignore_drafts ?? true,
+        ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
+    };
+}
+/**
+ * pickReviewers chooses `count` logins. Like Prow, a reviewer is weighted by
+ * the number of changed files they cover: candidates are tiered by that count
+ * and the request is filled from the highest tier down, drawing at random
+ * within the tier that would overflow it.
+ *
+ * @param coverage - login to the number of changed files the login covers
+ * @param count - how many reviewers to pick
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+function pickReviewers(coverage, count, rng = Math.random) {
+    const tiers = new Map();
+    for (const [login, files] of coverage) {
+        tiers.set(files, [...(tiers.get(files) ?? []), login]);
+    }
+    const picked = [];
+    for (const files of [...tiers.keys()].sort((a, b) => b - a)) {
+        const remaining = count - picked.length;
+        if (remaining <= 0) {
+            break;
+        }
+        const tier = [...tiers.get(files)].sort();
+        picked.push(...(tier.length <= remaining ? tier : sample(tier, remaining, rng)));
+    }
+    return picked;
+}
+function sample(items, count, rng) {
+    const pool = [...items];
+    const drawn = [];
+    while (drawn.length < count && pool.length > 0) {
+        const [item] = pool.splice(Math.floor(rng() * pool.length), 1);
+        drawn.push(item);
+    }
+    return drawn;
+}
+/**
+ * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
+ * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
+ * requests reviews from the OWNERS reviewers covering the changed files.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function blunderbuss(context = github_context, rng = Math.random) {
+    const action = context.payload.action;
+    if (action !== 'opened' && action !== 'ready_for_review') {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    if (action === 'ready_for_review' && !settings.ignore_drafts) {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
+}
+/**
+ * autoCc is the `/auto-cc` comment command: it runs the blunderbuss selection
+ * on the pull request regardless of its draft state or author.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function autoCc(context = github_context, rng = Math.random) {
+    const issue = context.payload.issue;
+    if (issue?.pull_request === undefined) {
+        core_debug('blunderbuss: /auto-cc only applies to pull requests');
+        return;
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
+}
+/**
+ * requestOwnersReviewers runs the blunderbuss selection on one pull request
+ * and requests the picked reviewers; a no-op when nobody is left to pick.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ * @param settings - the resolved blunderbuss configuration
+ * @param options - see RequestReviewersOptions
+ */
+async function requestOwnersReviewers(octokit, context, pullNumber, settings, options) {
+    const { explicit, rng } = options;
+    const pull = await loadPullRequestOwners(octokit, context, pullNumber);
+    if (!explicit) {
+        if (settings.ignore_drafts && pull.draft) {
+            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
+            return;
+        }
+        if (settings.ignore_authors.includes(pull.author)) {
+            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
+            return;
+        }
+    }
+    const excluded = new Set([pull.author, ...pull.requestedReviewers, ...pull.assignees]);
+    const coverage = new Map();
+    for (const owners of pull.perFile.values()) {
+        if (owners === undefined) {
+            continue;
+        }
+        const logins = new Set([...owners.reviewers, ...(settings.exclude_approvers ? [] : owners.approvers)]);
+        for (const login of logins) {
+            if (!excluded.has(login)) {
+                coverage.set(login, (coverage.get(login) ?? 0) + 1);
+            }
+        }
+    }
+    if (coverage.size === 0) {
+        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
+        return;
+    }
+    let count = settings.request_count;
+    if (settings.max_request_count !== undefined) {
+        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
+        if (count <= 0) {
+            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
+            return;
+        }
+    }
+    const reviewers = pickReviewers(coverage, count, rng);
+    try {
+        await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
+    }
+    catch (e) {
+        throw new Error(`could not request reviewers: ${e}`);
+    }
+    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
+
+
+
+
+
+const triggerActions = new Set(['opened', 'reopened', 'synchronize']);
+/**
+ * ownersLabel is the `pull_request` handler modelled on Prow's owners-label
+ * plugin: on `opened`, `reopened` and `synchronize` it adds the `labels:`
+ * declared by the OWNERS files covering the changed files. Labels the
+ * repository does not have are logged and skipped; nothing is ever removed.
+ *
+ * @param context - the github context of the current action event
+ */
+async function ownersLabel(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !triggerActions.has(action)) {
+        core_debug(`owners-label: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await applyOwnersLabels(octokit, context, pullNumber);
+}
+/**
+ * applyOwnersLabels adds the `labels:` of the OWNERS files covering the
+ * pull request's changed files that the pull request does not carry yet.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ */
+async function applyOwnersLabels(octokit, context, pullNumber) {
+    const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber);
+    const declared = new Set();
+    for (const owners of perFile.values()) {
+        owners?.labels.forEach(label => declared.add(label));
+    }
+    if (declared.size === 0) {
+        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
+        return;
+    }
+    const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
+    const missing = [...declared].filter(label => !current.has(lower(label)));
+    if (missing.length === 0) {
+        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
+        return;
+    }
+    let known;
+    try {
+        known = new Set((await repoLabelNames(octokit, context)).map(lower));
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const toAdd = missing.filter((label) => {
+        if (known.has(lower(label))) {
+            return true;
+        }
+        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
+        return false;
+    });
+    if (toAdd.length === 0) {
+        return;
+    }
+    await labelIssue(octokit, context, pullNumber, toAdd);
+}
+function lower(label) {
+    return label.toLowerCase();
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
+
+
+
+
+
+
+
+
+
+const requireMatchingLabel_triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
+const graceActions = new Set(['opened', 'reopened']);
+/** github actions minutes are billed, so a rule may not park the runner for longer */
+const maxGracePeriodMs = 30_000;
+/**
+ * applicableRules narrows the configured rules to the ones that concern this
+ * object and, on a `labeled`/`unlabeled` event, this label. Unlike Prow, a
+ * change to the `missing_label` itself also re-evaluates the rule, so a
+ * `needs-*` label removed by hand while nothing matches comes back.
+ *
+ * @param config - the merged prow configuration
+ * @param isPullRequest - whether the object is a pull request
+ * @param changedLabel - the label that was added or removed, if any
+ */
+function applicableRules(config, isPullRequest, changedLabel) {
+    return config.require_matching_label.filter((rule) => {
+        if ((isPullRequest ? rule.prs : rule.issues) !== true) {
+            return false;
+        }
+        if (changedLabel === undefined) {
+            return true;
+        }
+        return new RegExp(rule.regexp).test(changedLabel) || requireMatchingLabel_sameLabel(rule.missing_label, changedLabel);
+    });
+}
+/**
+ * evaluate decides what a rule wants done given the labels on the object.
+ *
+ * @param rule - the rule to apply
+ * @param labels - the labels currently on the issue or pull request
+ */
+function requireMatchingLabel_evaluate(rule, labels) {
+    const pattern = new RegExp(rule.regexp);
+    const hasMatch = labels.some(label => pattern.test(label));
+    const hasMissing = labels.some(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
+    if (hasMatch && hasMissing) {
+        return 'remove';
+    }
+    if (!hasMatch && !hasMissing) {
+        return 'add';
+    }
+    return 'none';
+}
+/**
+ * requireMatchingLabel is the `issues` / `pull_request` event handler: on
+ * `opened`, `reopened`, `labeled` and `unlabeled` it applies every
+ * configured `require_matching_label` rule that concerns the object.
+ *
+ * @param context - the github context of the current action event
+ */
+async function requireMatchingLabel(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !requireMatchingLabel_triggerActions.has(action)) {
+        core_debug(`require-matching-label: skipping ${action} action`);
+        return;
+    }
+    const changedLabel = action === 'labeled' || action === 'unlabeled'
+        ? context.payload.label?.name
+        : undefined;
+    await enforce(context, changedLabel, graceActions.has(action));
+}
+/**
+ * checkRequiredLabels is the `/check-required-labels` comment command: it
+ * re-evaluates every applicable rule on an open issue or pull request at once.
+ *
+ * @param context - the github context of the current action event
+ */
+async function checkRequiredLabels(context = github_context) {
+    if (context.payload.issue?.state !== 'open') {
+        core_debug('require-matching-label: the issue is not open, nothing to check');
+        return;
+    }
+    await enforce(context, undefined, false);
+}
+async function enforce(context, changedLabel, withGracePeriod) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod });
+}
+/**
+ * enforceRequiredLabels applies the configured rules to one issue or pull
+ * request: nothing is read when no rule is configured or applies.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param target - the issue or pull request
+ * @param options - see EnforceOptions
+ */
+async function enforceRequiredLabels(octokit, context, target, options = {}) {
+    const { changedLabel, withGracePeriod = false } = options;
+    const config = await loadProwConfig(octokit, context);
+    if (config.require_matching_label.length === 0) {
+        core_debug('require-matching-label: no rules configured');
+        return;
+    }
+    const { issueNumber, isPullRequest } = target;
+    const rules = applicableRules(config, isPullRequest, changedLabel);
+    if (rules.length === 0) {
+        core_debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
+        return;
+    }
+    const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
+    if (withGracePeriod && graceMs > 0) {
+        core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
+        await sleep(graceMs);
+    }
+    const labels = await getCurrentLabels(octokit, context, issueNumber);
+    const errors = [];
+    for (const rule of rules) {
+        try {
+            await apply(octokit, context, issueNumber, rule, labels);
+        }
+        catch (e) {
+            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : e}`);
+        }
+    }
+    if (errors.length > 0) {
+        throw new Error(`require-matching-label ${errors.join('; ')}`);
+    }
+}
+function subject(context) {
+    const { payload } = context;
+    if (payload.pull_request !== undefined) {
+        return { issueNumber: payload.pull_request.number, isPullRequest: true };
+    }
+    if (payload.issue !== undefined) {
+        return { issueNumber: payload.issue.number, isPullRequest: payload.issue.pull_request !== undefined };
+    }
+    throw new Error(`github context payload missing issue or pull request: ${JSON.stringify(payload)}`);
+}
+async function apply(octokit, context, issueNumber, rule, labels) {
+    const verdict = requireMatchingLabel_evaluate(rule, labels);
+    switch (verdict) {
+        case 'add':
+            await labelIssue(octokit, context, issueNumber, [rule.missing_label]);
+            if (rule.missing_comment !== undefined) {
+                await postMissingComment(octokit, context, issueNumber, rule);
+            }
+            return;
+        case 'remove': {
+            const present = labels.filter(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
+            await removeLabels(octokit, context, issueNumber, present);
+            if (rule.missing_comment !== undefined) {
+                await deleteMissingComments(octokit, context, issueNumber, rule);
+            }
+            return;
+        }
+        default:
+            core_debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
+    }
+}
+// the marker is an invisible HTML comment that lets a later run find and delete the bot's own comment
+function markerFor(rule) {
+    return `<!-- prow-github-actions/require-matching-label: ${rule.missing_label} -->`;
+}
+async function postMissingComment(octokit, context, issueNumber, rule) {
+    const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule);
+    if (existing.length > 0) {
+        core_debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
+        return;
+    }
+    await createComment(octokit, context, issueNumber, `${rule.missing_comment}\n\n${markerFor(rule)}`);
+}
+async function deleteMissingComments(octokit, context, issueNumber, rule) {
+    for (const comment of await botCommentsWithMarker(octokit, context, issueNumber, rule)) {
+        try {
+            await octokit.issues.deleteComment({ ...context.repo, comment_id: comment.id });
+        }
+        catch (e) {
+            throw new Error(`could not delete comment ${comment.id}: ${e}`);
+        }
+    }
+}
+async function botCommentsWithMarker(octokit, context, issueNumber, rule) {
+    const marker = markerFor(rule);
+    let comments;
+    try {
+        comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list comments: ${e}`);
+    }
+    return comments.filter(comment => requireMatchingLabel_isBot(comment) && (comment.body ?? '').includes(marker));
+}
+function requireMatchingLabel_isBot(comment) {
+    return comment.user?.type === 'Bot' || comment.user?.login === 'github-actions[bot]';
+}
+function requireMatchingLabel_sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/sweep.js
+
+
+
+
+
+
+
+
+
+
+
+/** pull requests evaluated at once; keeps a busy repository within the api's secondary rate limits */
+const sweepConcurrency = 3;
+const pageSize = 100;
+/**
+ * sweep is the scheduled job of the `pull_request` install mode: for every
+ * open pull request updated within `sweep.lookback` it does what the
+ * `pull_request` and `pull_request_review` handlers would have done with a
+ * write token, in their order: the `require_matching_label` rules, the OWNERS
+ * labels, blunderbuss on a fresh pull request nobody reviews yet, the
+ * approval, then the merge path (lgtm binding, mergeability, merge). Each
+ * pull request is evaluated sequentially, a few pull requests at a time; a
+ * failure on one is collected and the rest still run. The run fails at the
+ * end listing the failures.
+ *
+ * @param context - the github actions event context
+ * @param now - the current time, injectable for tests
+ */
+async function sweep(context = github_context, now = new Date()) {
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const config = await loadProwConfig(octokit, context);
+    const lookbackMs = resolveSweepLookback(config.sweep);
+    const since = new Date(now.getTime() - lookbackMs);
+    const candidates = await recentlyUpdatedPulls(octokit, context, since);
+    info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`);
+    const result = { candidates: candidates.map(pr => pr.number), merged: [], failures: [] };
+    if (candidates.length === 0) {
+        return result;
+    }
+    const plugins = {
+        hasOwners: await repoHasOwners(octokit, context),
+        tide: await loadTide(octokit, context),
+        lgtm: lgtmSettings(config),
+        config,
+        since,
+    };
+    await forEachLimited(candidates, sweepConcurrency, async (pr) => {
+        const outcome = await sweepPullRequest(octokit, context, pr, plugins);
+        if (outcome.merged) {
+            result.merged.push(pr.number);
+        }
+        if (outcome.errors.length > 0) {
+            result.failures.push({ number: pr.number, message: outcome.errors.join('; ') });
+        }
+    });
+    if (result.failures.length > 0) {
+        const list = result.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+        throw new Error(`sweep: ${result.failures.length} pull request(s) failed: ${list}`);
+    }
+    return result;
+}
+async function sweepPullRequest(octokit, context, pr, plugins) {
+    const outcome = { merged: false, errors: [] };
+    const ownersSteps = [
+        ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
+        ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
+        ['approve', () => evaluateApproval(octokit, context, pr.number)],
+    ];
+    const steps = [
+        ['require-matching-label', () => enforceRequiredLabels(octokit, context, { issueNumber: pr.number, isPullRequest: true })],
+        ...(plugins.hasOwners ? ownersSteps : []),
+        ['tide', async () => {
+                const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm);
+                if (verdict.result === 'merged') {
+                    outcome.merged = true;
+                }
+                else if (verdict.result === 'failed') {
+                    throw new Error(verdict.message);
+                }
+            }],
+    ];
+    for (const [name, step] of steps) {
+        try {
+            await step();
+        }
+        catch (e) {
+            outcome.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
+    return outcome;
+}
+async function requestReviewersIfFresh(octokit, context, pr, plugins) {
+    if (new Date(pr.created_at) < plugins.since) {
+        core_debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`);
+        return;
+    }
+    if (pr.draft === true || (pr.requested_reviewers ?? []).length > 0) {
+        core_debug(`sweep: #${pr.number} is a draft or already has requested reviewers`);
+        return;
+    }
+    const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 });
+    if (reviews.length > 0) {
+        core_debug(`sweep: #${pr.number} already has reviews`);
+        return;
+    }
+    await requestOwnersReviewers(octokit, context, pr.number, blunderbussSettings(plugins.config), { explicit: false, rng: Math.random });
+}
+async function recentlyUpdatedPulls(octokit, context, since) {
+    const candidates = [];
+    for (let page = 1;; page++) {
+        let items;
+        try {
+            items = (await octokit.pulls.list({ ...context.repo, state: 'open', sort: 'updated', direction: 'desc', per_page: pageSize, page })).data;
+        }
+        catch (e) {
+            throw new Error(`sweep: could not list the open pull requests: ${e}`);
+        }
+        candidates.push(...items.filter(pr => new Date(pr.updated_at) >= since));
+        const exhausted = items.length < pageSize || new Date(items[items.length - 1].updated_at) < since;
+        if (exhausted) {
+            return candidates;
+        }
+    }
+}
+async function forEachLimited(items, limit, fn) {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            await fn(items[next++]);
+        }
+    });
+    await Promise.all(workers);
+}
+
 ;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
+
 
 
 
@@ -43043,6 +44116,11 @@ async function handleCronJobs(context = github_context) {
             case 'label-sync':
                 core_debug('running label-sync job');
                 return await labelSync(context).catch(async (e) => {
+                    return e;
+                });
+            case 'sweep':
+                core_debug('running sweep job');
+                return await sweep(context).catch(async (e) => {
                     return e;
                 });
             case '':
@@ -43116,60 +44194,6 @@ function fixed_requireIssueNumber(context) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
     return issueNumber;
-}
-
-;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
-
-const pullRequestOwners_cache = new Map();
-/**
- * loadPullRequestOwners reads the pull request, its changed files and the
- * OWNERS files of the base branch that cover them. The result is memoized per
- * pull request for the lifetime of the process, so every plugin acting on the
- * same event shares one fetch.
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param pullNumber - the pull request
- */
-function loadPullRequestOwners(octokit, context, pullNumber) {
-    const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
-    let pending = pullRequestOwners_cache.get(key);
-    if (pending === undefined) {
-        pending = pullRequestOwners_load(octokit, context, pullNumber);
-        pullRequestOwners_cache.set(key, pending);
-    }
-    return pending;
-}
-function resetPullRequestOwnersCache() {
-    pullRequestOwners_cache.clear();
-}
-async function pullRequestOwners_load(octokit, context, pullNumber) {
-    const { data: pull } = await octokit.pulls.get({
-        ...context.repo,
-        pull_number: pullNumber,
-    });
-    const changed = await octokit.paginate(octokit.pulls.listFiles, {
-        ...context.repo,
-        pull_number: pullNumber,
-        per_page: 100,
-    });
-    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
-    // OWNERS come from the base branch so a PR cannot grant itself approvers
-    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
-    const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]));
-    return {
-        number: pullNumber,
-        baseSha: pull.base.sha,
-        headSha: pull.head.sha,
-        author: (pull.user?.login ?? '').toLowerCase(),
-        draft: pull.draft === true,
-        requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
-        assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
-        labels: (pull.labels ?? []).map(label => label.name),
-        files,
-        tree,
-        perFile,
-    };
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/auth.js
@@ -43585,746 +44609,6 @@ async function remove(context = github_context) {
         throw new Error(`remove: command args missing from body`);
     }
     await removeLabels(octokit, context, issueNumber, toRemove);
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
-
-
-
-
-
-/**
- * blunderbussSettings resolves the `blunderbuss` configuration with Prow's
- * defaults: two reviewers, approvers count, drafts wait for ready_for_review.
- *
- * @param config - the merged prow configuration
- */
-function blunderbussSettings(config) {
-    const raw = config.blunderbuss;
-    return {
-        request_count: raw.request_count ?? 2,
-        max_request_count: raw.max_request_count,
-        exclude_approvers: raw.exclude_approvers ?? false,
-        ignore_drafts: raw.ignore_drafts ?? true,
-        ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
-    };
-}
-/**
- * pickReviewers chooses `count` logins. Like Prow, a reviewer is weighted by
- * the number of changed files they cover: candidates are tiered by that count
- * and the request is filled from the highest tier down, drawing at random
- * within the tier that would overflow it.
- *
- * @param coverage - login to the number of changed files the login covers
- * @param count - how many reviewers to pick
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-function pickReviewers(coverage, count, rng = Math.random) {
-    const tiers = new Map();
-    for (const [login, files] of coverage) {
-        tiers.set(files, [...(tiers.get(files) ?? []), login]);
-    }
-    const picked = [];
-    for (const files of [...tiers.keys()].sort((a, b) => b - a)) {
-        const remaining = count - picked.length;
-        if (remaining <= 0) {
-            break;
-        }
-        const tier = [...tiers.get(files)].sort();
-        picked.push(...(tier.length <= remaining ? tier : sample(tier, remaining, rng)));
-    }
-    return picked;
-}
-function sample(items, count, rng) {
-    const pool = [...items];
-    const drawn = [];
-    while (drawn.length < count && pool.length > 0) {
-        const [item] = pool.splice(Math.floor(rng() * pool.length), 1);
-        drawn.push(item);
-    }
-    return drawn;
-}
-/**
- * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
- * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
- * requests reviews from the OWNERS reviewers covering the changed files.
- *
- * @param context - the github context of the current action event
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-async function blunderbuss(context = github_context, rng = Math.random) {
-    const action = context.payload.action;
-    if (action !== 'opened' && action !== 'ready_for_review') {
-        core_debug(`blunderbuss: skipping ${action} action`);
-        return;
-    }
-    const pullNumber = context.payload.pull_request?.number;
-    if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
-    }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
-    if (action === 'ready_for_review' && !settings.ignore_drafts) {
-        core_debug(`blunderbuss: skipping ${action} action`);
-        return;
-    }
-    await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
-}
-/**
- * autoCc is the `/auto-cc` comment command: it runs the blunderbuss selection
- * on the pull request regardless of its draft state or author.
- *
- * @param context - the github context of the current action event
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-async function autoCc(context = github_context, rng = Math.random) {
-    const issue = context.payload.issue;
-    if (issue?.pull_request === undefined) {
-        core_debug('blunderbuss: /auto-cc only applies to pull requests');
-        return;
-    }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
-    await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
-}
-async function requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit, rng }) {
-    const pull = await loadPullRequestOwners(octokit, context, pullNumber);
-    if (!explicit) {
-        if (settings.ignore_drafts && pull.draft) {
-            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
-            return;
-        }
-        if (settings.ignore_authors.includes(pull.author)) {
-            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
-            return;
-        }
-    }
-    const excluded = new Set([pull.author, ...pull.requestedReviewers, ...pull.assignees]);
-    const coverage = new Map();
-    for (const owners of pull.perFile.values()) {
-        if (owners === undefined) {
-            continue;
-        }
-        const logins = new Set([...owners.reviewers, ...(settings.exclude_approvers ? [] : owners.approvers)]);
-        for (const login of logins) {
-            if (!excluded.has(login)) {
-                coverage.set(login, (coverage.get(login) ?? 0) + 1);
-            }
-        }
-    }
-    if (coverage.size === 0) {
-        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
-        return;
-    }
-    let count = settings.request_count;
-    if (settings.max_request_count !== undefined) {
-        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
-        if (count <= 0) {
-            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
-            return;
-        }
-    }
-    const reviewers = pickReviewers(coverage, count, rng);
-    try {
-        await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
-    }
-    catch (e) {
-        throw new Error(`could not request reviewers: ${e}`);
-    }
-    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
-
-
-
-
-
-
-
-const triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
-const graceActions = new Set(['opened', 'reopened']);
-/** github actions minutes are billed, so a rule may not park the runner for longer */
-const maxGracePeriodMs = 30_000;
-const durationUnits = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
-const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy;
-/**
- * parseDuration reads a Go style duration such as `5s`, `2m30s` or `500ms`
- * and returns milliseconds; an empty or `0` value is zero.
- *
- * @param text - the configured `grace_period_duration`
- */
-function parseDuration(text) {
-    const value = (text ?? '').trim();
-    if (value === '' || value === '0') {
-        return 0;
-    }
-    let ms = 0;
-    let consumed = 0;
-    durationPart.lastIndex = 0;
-    for (let match = durationPart.exec(value); match !== null; match = durationPart.exec(value)) {
-        ms += Number.parseFloat(match[1]) * durationUnits[match[2]];
-        consumed = durationPart.lastIndex;
-    }
-    if (consumed !== value.length) {
-        throw new Error(`invalid grace_period_duration '${text}': expected a duration such as 5s, 2m or 500ms`);
-    }
-    return Math.round(ms);
-}
-/**
- * applicableRules narrows the configured rules to the ones that concern this
- * object and, on a `labeled`/`unlabeled` event, this label. Unlike Prow, a
- * change to the `missing_label` itself also re-evaluates the rule, so a
- * `needs-*` label removed by hand while nothing matches comes back.
- *
- * @param config - the merged prow configuration
- * @param isPullRequest - whether the object is a pull request
- * @param changedLabel - the label that was added or removed, if any
- */
-function applicableRules(config, isPullRequest, changedLabel) {
-    return config.require_matching_label.filter((rule) => {
-        if ((isPullRequest ? rule.prs : rule.issues) !== true) {
-            return false;
-        }
-        if (changedLabel === undefined) {
-            return true;
-        }
-        return new RegExp(rule.regexp).test(changedLabel) || requireMatchingLabel_sameLabel(rule.missing_label, changedLabel);
-    });
-}
-/**
- * evaluate decides what a rule wants done given the labels on the object.
- *
- * @param rule - the rule to apply
- * @param labels - the labels currently on the issue or pull request
- */
-function requireMatchingLabel_evaluate(rule, labels) {
-    const pattern = new RegExp(rule.regexp);
-    const hasMatch = labels.some(label => pattern.test(label));
-    const hasMissing = labels.some(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
-    if (hasMatch && hasMissing) {
-        return 'remove';
-    }
-    if (!hasMatch && !hasMissing) {
-        return 'add';
-    }
-    return 'none';
-}
-/**
- * requireMatchingLabel is the `issues` / `pull_request` event handler: on
- * `opened`, `reopened`, `labeled` and `unlabeled` it applies every
- * configured `require_matching_label` rule that concerns the object.
- *
- * @param context - the github context of the current action event
- */
-async function requireMatchingLabel(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !triggerActions.has(action)) {
-        core_debug(`require-matching-label: skipping ${action} action`);
-        return;
-    }
-    const changedLabel = action === 'labeled' || action === 'unlabeled'
-        ? context.payload.label?.name
-        : undefined;
-    await enforce(context, changedLabel, graceActions.has(action));
-}
-/**
- * checkRequiredLabels is the `/check-required-labels` comment command: it
- * re-evaluates every applicable rule on an open issue or pull request at once.
- *
- * @param context - the github context of the current action event
- */
-async function checkRequiredLabels(context = github_context) {
-    if (context.payload.issue?.state !== 'open') {
-        core_debug('require-matching-label: the issue is not open, nothing to check');
-        return;
-    }
-    await enforce(context, undefined, false);
-}
-async function enforce(context, changedLabel, withGracePeriod) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const config = await loadProwConfig(octokit, context);
-    if (config.require_matching_label.length === 0) {
-        core_debug('require-matching-label: no rules configured');
-        return;
-    }
-    const { issueNumber, isPullRequest } = subject(context);
-    const rules = applicableRules(config, isPullRequest, changedLabel);
-    if (rules.length === 0) {
-        core_debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
-        return;
-    }
-    const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
-    if (withGracePeriod && graceMs > 0) {
-        core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep(graceMs);
-    }
-    const labels = await getCurrentLabels(octokit, context, issueNumber);
-    const errors = [];
-    for (const rule of rules) {
-        try {
-            await apply(octokit, context, issueNumber, rule, labels);
-        }
-        catch (e) {
-            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : e}`);
-        }
-    }
-    if (errors.length > 0) {
-        throw new Error(`require-matching-label ${errors.join('; ')}`);
-    }
-}
-function subject(context) {
-    const { payload } = context;
-    if (payload.pull_request !== undefined) {
-        return { issueNumber: payload.pull_request.number, isPullRequest: true };
-    }
-    if (payload.issue !== undefined) {
-        return { issueNumber: payload.issue.number, isPullRequest: payload.issue.pull_request !== undefined };
-    }
-    throw new Error(`github context payload missing issue or pull request: ${JSON.stringify(payload)}`);
-}
-async function apply(octokit, context, issueNumber, rule, labels) {
-    const verdict = requireMatchingLabel_evaluate(rule, labels);
-    switch (verdict) {
-        case 'add':
-            await labelIssue(octokit, context, issueNumber, [rule.missing_label]);
-            if (rule.missing_comment !== undefined) {
-                await postMissingComment(octokit, context, issueNumber, rule);
-            }
-            return;
-        case 'remove': {
-            const present = labels.filter(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
-            await removeLabels(octokit, context, issueNumber, present);
-            if (rule.missing_comment !== undefined) {
-                await deleteMissingComments(octokit, context, issueNumber, rule);
-            }
-            return;
-        }
-        default:
-            core_debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
-    }
-}
-// the marker is an invisible HTML comment that lets a later run find and delete the bot's own comment
-function markerFor(rule) {
-    return `<!-- prow-github-actions/require-matching-label: ${rule.missing_label} -->`;
-}
-async function postMissingComment(octokit, context, issueNumber, rule) {
-    const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule);
-    if (existing.length > 0) {
-        core_debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
-        return;
-    }
-    await createComment(octokit, context, issueNumber, `${rule.missing_comment}\n\n${markerFor(rule)}`);
-}
-async function deleteMissingComments(octokit, context, issueNumber, rule) {
-    for (const comment of await botCommentsWithMarker(octokit, context, issueNumber, rule)) {
-        try {
-            await octokit.issues.deleteComment({ ...context.repo, comment_id: comment.id });
-        }
-        catch (e) {
-            throw new Error(`could not delete comment ${comment.id}: ${e}`);
-        }
-    }
-}
-async function botCommentsWithMarker(octokit, context, issueNumber, rule) {
-    const marker = markerFor(rule);
-    let comments;
-    try {
-        comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNumber, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list comments: ${e}`);
-    }
-    return comments.filter(comment => requireMatchingLabel_isBot(comment) && (comment.body ?? '').includes(marker));
-}
-function requireMatchingLabel_isBot(comment) {
-    return comment.user?.type === 'Bot' || comment.user?.login === 'github-actions[bot]';
-}
-function requireMatchingLabel_sameLabel(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/approve.js
-
-
-
-
-
-
-
-
-
-const approvedLabel = 'approved';
-const notifierMarker = '<!-- prow-github-actions/approve -->';
-const commandsDoc = 'https://github.com/cncf/prow-github-actions/blob/main/docs/commands.md';
-const approve_pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled']);
-const approve_reviewActions = new Set(['submitted', 'dismissed']);
-/**
- * approveSettings resolves the `approve` configuration with Prow's defaults:
- * the author approves implicitly, reviews count, `/lgtm` does not.
- *
- * @param config - the merged prow configuration
- */
-function approveSettings(config) {
-    const raw = config.approve;
-    return {
-        require_self_approval: raw.require_self_approval ?? false,
-        ignore_review_state: raw.ignore_review_state ?? false,
-        lgtm_acts_as_approve: raw.lgtm_acts_as_approve ?? false,
-    };
-}
-/**
- * approvalEvents reads the `/approve`, `/approve cancel`, `/lgtm` family of
- * comments and the APPROVED / CHANGES_REQUESTED reviews of humans into events,
- * logins lowercased. Bots, other review states and comments without a command
- * yield nothing; a comment carrying both a command and its cancel is a cancel.
- *
- * @param comments - the issue comments of the pull request
- * @param reviews - the reviews of the pull request
- */
-function approvalEvents(comments, reviews) {
-    const events = [];
-    for (const comment of comments) {
-        const login = humanLogin(comment.user);
-        const body = comment.body ?? '';
-        if (login === undefined || body === '') {
-            continue;
-        }
-        const at = new Date(comment.created_at);
-        const approveKind = commandKind(body, '/approve', '/remove-approve');
-        if (approveKind !== undefined) {
-            events.push({ user: login, kind: approveKind === 'cancel' ? 'cancel' : 'approve', at });
-        }
-        const lgtmKind = commandKind(body, '/lgtm', '/remove-lgtm');
-        if (lgtmKind !== undefined) {
-            events.push({ user: login, kind: lgtmKind === 'cancel' ? 'lgtm-cancel' : 'lgtm', at });
-        }
-    }
-    for (const review of reviews) {
-        const login = humanLogin(review.user);
-        if (login === undefined || review.submitted_at == null) {
-            continue;
-        }
-        const at = new Date(review.submitted_at);
-        if (review.state === 'APPROVED') {
-            events.push({ user: login, kind: 'review-approved', at });
-        }
-        else if (review.state === 'CHANGES_REQUESTED') {
-            events.push({ user: login, kind: 'review-changes', at });
-        }
-    }
-    return events;
-}
-function commandKind(body, command, removeAlias) {
-    if (hasCommand(removeAlias, body)) {
-        return 'cancel';
-    }
-    if (!hasCommand(command, body)) {
-        return undefined;
-    }
-    return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add';
-}
-function humanLogin(user) {
-    if (user?.login === undefined || user.login === '' || user.type === 'Bot' || user.login === 'github-actions[bot]') {
-        return undefined;
-    }
-    return user.login.toLowerCase();
-}
-/**
- * computeApproval decides, like Prow's approve plugin, whether the current
- * approvers collectively cover every changed file. It is recomputed from
- * scratch on every evaluation: the events are the only input and the
- * `approved` label is the only thing persisted, so no hidden state can drift.
- *
- * @param owners - the pull request and the OWNERS covering its files
- * @param events - what users did on the pull request, in any order
- * @param settings - the resolved `approve` configuration
- */
-function computeApproval(owners, events, settings) {
-    const author = owners.author;
-    const approving = new Set();
-    if (!settings.require_self_approval && author !== '') {
-        approving.add(author);
-    }
-    // each user's latest action wins; a cancel or a CHANGES_REQUESTED review after an approval removes it
-    const ordered = [...events].sort((a, b) => a.at.getTime() - b.at.getTime());
-    for (const event of ordered) {
-        const user = event.user.toLowerCase();
-        if (settings.require_self_approval && user === author) {
-            continue;
-        }
-        switch (effectiveKind(event.kind, settings)) {
-            case 'add':
-                approving.add(user);
-                break;
-            case 'remove':
-                approving.delete(user);
-                break;
-            default:
-                break;
-        }
-    }
-    const coveredFiles = new Map();
-    const uncoveredFiles = [];
-    const covering = new Set();
-    for (const file of owners.files) {
-        const set = owners.perFile.get(file);
-        const approvers = set === undefined ? [] : [...approving].filter(login => set.approvers.has(login)).sort();
-        if (approvers.length > 0) {
-            coveredFiles.set(file, approvers);
-            approvers.forEach(login => covering.add(login));
-        }
-        else {
-            uncoveredFiles.push(file);
-        }
-    }
-    for (const login of approving) {
-        if (!covering.has(login)) {
-            core_debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`);
-        }
-    }
-    const excluded = new Set(covering);
-    if (settings.require_self_approval && author !== '') {
-        excluded.add(author);
-    }
-    return {
-        approvers: new Set([...covering].sort()),
-        coveredFiles,
-        uncoveredFiles,
-        suggested: suggestApprovers(owners, uncoveredFiles, excluded),
-        approved: owners.files.length > 0 && uncoveredFiles.length === 0,
-    };
-}
-function effectiveKind(kind, settings) {
-    switch (kind) {
-        case 'approve':
-            return 'add';
-        case 'cancel':
-            return 'remove';
-        case 'review-approved':
-            return settings.ignore_review_state ? 'ignore' : 'add';
-        case 'review-changes':
-            return settings.ignore_review_state ? 'ignore' : 'remove';
-        case 'lgtm':
-            return settings.lgtm_acts_as_approve ? 'add' : 'ignore';
-        case 'lgtm-cancel':
-            return settings.lgtm_acts_as_approve ? 'remove' : 'ignore';
-        default:
-            return 'ignore';
-    }
-}
-// greedy set cover: repeatedly take the approver who covers the most still-uncovered files, ties alphabetically
-function suggestApprovers(owners, uncovered, excluded) {
-    const remaining = new Set(uncovered);
-    const suggested = [];
-    while (remaining.size > 0) {
-        const coverage = new Map();
-        for (const file of remaining) {
-            for (const login of owners.perFile.get(file)?.approvers ?? []) {
-                if (!excluded.has(login)) {
-                    coverage.set(login, (coverage.get(login) ?? 0) + 1);
-                }
-            }
-        }
-        if (coverage.size === 0) {
-            break;
-        }
-        const [best] = [...coverage.entries()].sort(([a, countA], [b, countB]) => countB - countA || a.localeCompare(b))[0];
-        suggested.push(best);
-        excluded.add(best);
-        for (const file of remaining) {
-            if (owners.perFile.get(file)?.approvers.has(best)) {
-                remaining.delete(file);
-            }
-        }
-    }
-    return suggested;
-}
-/**
- * renderNotifier writes Prow's `[APPROVALNOTIFIER]` comment: the verdict,
- * the approvers so far, who to assign next, and every OWNERS file the pull
- * request touches, struck through once an approver covers it.
- *
- * @param state - the computed approval
- * @param owners - the pull request and the OWNERS covering its files
- * @param repo - the repository, for the OWNERS file links
- * @param repo.owner - the repository owner
- * @param repo.repo - the repository name
- */
-function renderNotifier(state, owners, repo) {
-    const approvers = [...state.approvers].map(login => `*${login}*`).join(', ');
-    const lines = [
-        `[APPROVALNOTIFIER] This PR is **${state.approved ? 'APPROVED' : 'NOT APPROVED'}**`,
-        '',
-    ];
-    if (owners.files.length === 0) {
-        lines.push('This pull request changes no files, so there is nothing to approve.', notifierMarker);
-        return lines.join('\n');
-    }
-    lines.push(`This pull-request has been approved by:${approvers === '' ? '' : ` ${approvers}`}`);
-    if (state.approved) {
-        lines.push('', `The full list of commands accepted by this bot can be found [here](${commandsDoc}).`);
-    }
-    else if (state.suggested.length > 0) {
-        lines.push(`To complete the pull request process, please assign ${state.suggested.map(login => `**${login}**`).join(', ')} after the PR has been reviewed.`, `You can assign the PR to them by writing \`/assign ${state.suggested.map(login => `@${login}`).join(' ')}\` in a comment when ready.`);
-    }
-    lines.push('', '<details><summary>Needs approval from an approver in each of these files:</summary>', '');
-    for (const entry of ownersEntries(state, owners)) {
-        if (entry.path === undefined) {
-            lines.push(`- **${entry.file}** (no OWNERS file covers this file)`);
-            continue;
-        }
-        const link = `[${entry.path}](https://github.com/${repo.owner}/${repo.repo}/blob/${owners.baseSha}/${entry.path})`;
-        lines.push(entry.approvers.length > 0 ? `- ~~${link}~~ [${entry.approvers.join(', ')}]` : `- **${link}**`);
-    }
-    lines.push('', 'Approvers can indicate their approval by writing `/approve` in a comment', 'Approvers can cancel approval by writing `/approve cancel` in a comment', '</details>', notifierMarker);
-    return lines.join('\n');
-}
-// one line per deepest OWNERS file: every file it covers shares the same effective approvers
-function ownersEntries(state, owners) {
-    const byPath = new Map();
-    const uncoverable = [];
-    for (const file of owners.files) {
-        const set = owners.perFile.get(file);
-        if (set === undefined) {
-            uncoverable.push({ file, approvers: [] });
-            continue;
-        }
-        const path = set.sources[0];
-        const approvers = state.coveredFiles.get(file) ?? [];
-        const entry = byPath.get(path);
-        if (entry === undefined) {
-            byPath.set(path, { path, file, approvers });
-        }
-        else {
-            entry.approvers = [...new Set([...entry.approvers, ...approvers])].sort();
-        }
-    }
-    return [
-        ...[...byPath.values()].sort((a, b) => a.path.localeCompare(b.path)),
-        ...uncoverable.sort((a, b) => a.file.localeCompare(b.file)),
-    ];
-}
-/**
- * evaluateApproval recomputes the approval of a pull request from its
- * comments and reviews, then makes the `approved` label and the notifier
- * comment match: the label is added or removed only when it changes, the
- * notifier is posted once and edited in place afterwards. A pull request
- * whose base branch has no OWNERS files is left alone.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param pullNumber - the pull request
- */
-async function evaluateApproval(octokit, context, pullNumber) {
-    const owners = await loadPullRequestOwners(octokit, context, pullNumber);
-    if (!owners.tree.hasOwners) {
-        core_debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`);
-        return;
-    }
-    const settings = approveSettings(await loadProwConfig(octokit, context));
-    const comments = await listComments(octokit, context, pullNumber);
-    const reviews = settings.ignore_review_state ? [] : await listReviews(octokit, context, pullNumber);
-    const state = computeApproval(owners, approvalEvents(comments, reviews), settings);
-    info(state.approved
-        ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
-        : `approve: #${pullNumber} is not approved; nobody approves ${state.uncoveredFiles.join(', ') || 'anything'}`);
-    await syncLabel(octokit, context, owners, state.approved);
-    await upsertNotifier(octokit, context, pullNumber, comments, renderNotifier(state, owners, context.repo));
-}
-async function syncLabel(octokit, context, owners, approved) {
-    const present = owners.labels.filter(label => label.toLowerCase() === approvedLabel);
-    if (approved && present.length === 0) {
-        await labelIssue(octokit, context, owners.number, [approvedLabel]);
-    }
-    else if (!approved && present.length > 0) {
-        await removeLabels(octokit, context, owners.number, present);
-    }
-    else {
-        core_debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`);
-    }
-}
-async function upsertNotifier(octokit, context, pullNumber, comments, body) {
-    const existing = comments.find(comment => approve_isBot(comment.user) && (comment.body ?? '').includes(notifierMarker));
-    if (existing === undefined) {
-        await createComment(octokit, context, pullNumber, body);
-        return;
-    }
-    if ((existing.body ?? '').trim() === body.trim()) {
-        core_debug(`approve: the notifier on #${pullNumber} is up to date`);
-        return;
-    }
-    try {
-        await octokit.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
-    }
-    catch (e) {
-        throw new Error(`could not update the approval notifier: ${e}`);
-    }
-}
-function approve_isBot(user) {
-    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
-}
-async function listComments(octokit, context, pullNumber) {
-    try {
-        return await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: pullNumber, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list comments: ${e}`);
-    }
-}
-async function listReviews(octokit, context, pullNumber) {
-    try {
-        return await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: pullNumber, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list reviews: ${e}`);
-    }
-}
-/**
- * approveOnPullRequest is the `pull_request` handler: on `opened`,
- * `reopened` and `synchronize`, and when a human adds or removes the
- * `approved` label, it re-evaluates the approval. Approval is sticky across
- * pushes; a push only matters because the changed files may differ.
- *
- * @param context - the github context of the current action event
- */
-async function approveOnPullRequest(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !approve_pullRequestActions.has(action)) {
-        core_debug(`approve: skipping ${action} action`);
-        return;
-    }
-    if ((action === 'labeled' || action === 'unlabeled') && String(context.payload.label?.name ?? '').toLowerCase() !== approvedLabel) {
-        core_debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
-        return;
-    }
-    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
-}
-/**
- * approveOnReview is the `pull_request_review` handler: a submitted or
- * dismissed review may add (APPROVED) or remove (CHANGES_REQUESTED) an approver.
- *
- * @param context - the github context of the current action event
- */
-async function approveOnReview(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !approve_reviewActions.has(action)) {
-        core_debug(`approve: skipping ${action} review action`);
-        return;
-    }
-    await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
-}
-async function evaluateOnOwnersRepo(context, pullNumber) {
-    if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
-    }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    if (!(await repoHasOwners(octokit, context))) {
-        core_debug('approve: the repository has no OWNERS files');
-        return;
-    }
-    await evaluateApproval(octokit, context, pullNumber);
 }
 
 ;// CONCATENATED MODULE: ./lib/issueComment/approve.js
@@ -45284,7 +45568,7 @@ async function handleIssueComment(context = github_context) {
     }
     if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
         const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody);
-        failures.push(...await sweep(context, alreadyChecked));
+        failures.push(...await handleIssueComment_sweep(context, alreadyChecked));
     }
     if (failures.length > 0) {
         setFailed(failures.join('; '));
@@ -45292,7 +45576,7 @@ async function handleIssueComment(context = github_context) {
 }
 // The bot's own label writes fire no `labeled`/`unlabeled` event, so what those events would
 // trigger runs here, after the commands: the needs-* re-check, then the merge gate.
-async function sweep(context, alreadyChecked) {
+async function handleIssueComment_sweep(context, alreadyChecked) {
     const failures = [];
     const steps = [
         ...(alreadyChecked ? [] : [() => checkRequiredLabels(context)]),
@@ -45414,71 +45698,6 @@ const checkSuiteHandlers = [tideOnCheckSuite];
  */
 async function handleCheckSuite(context = github_context) {
     await runEventHandlers(context.eventName, checkSuiteHandlers, context);
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
-
-
-
-
-
-const ownersLabel_triggerActions = new Set(['opened', 'reopened', 'synchronize']);
-/**
- * ownersLabel is the `pull_request` handler modelled on Prow's owners-label
- * plugin: on `opened`, `reopened` and `synchronize` it adds the `labels:`
- * declared by the OWNERS files covering the changed files. Labels the
- * repository does not have are logged and skipped; nothing is ever removed.
- *
- * @param context - the github context of the current action event
- */
-async function ownersLabel(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !ownersLabel_triggerActions.has(action)) {
-        core_debug(`owners-label: skipping ${action} action`);
-        return;
-    }
-    const pullNumber = context.payload.pull_request?.number;
-    if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
-    }
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber);
-    const declared = new Set();
-    for (const owners of perFile.values()) {
-        owners?.labels.forEach(label => declared.add(label));
-    }
-    if (declared.size === 0) {
-        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
-        return;
-    }
-    const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
-    const missing = [...declared].filter(label => !current.has(lower(label)));
-    if (missing.length === 0) {
-        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
-        return;
-    }
-    let known;
-    try {
-        known = new Set((await repoLabelNames(octokit, context)).map(lower));
-    }
-    catch (e) {
-        throw new Error(`could not list the repository labels: ${e}`);
-    }
-    const toAdd = missing.filter((label) => {
-        if (known.has(lower(label))) {
-            return true;
-        }
-        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
-        return false;
-    });
-    if (toAdd.length === 0) {
-        return;
-    }
-    await labelIssue(octokit, context, pullNumber, toAdd);
-}
-function lower(label) {
-    return label.toLowerCase();
 }
 
 ;// CONCATENATED MODULE: ./lib/pullReq/onPrLgtm.js

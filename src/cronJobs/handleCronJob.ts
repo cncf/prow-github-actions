@@ -6,6 +6,7 @@ import * as github from '@actions/github'
 
 import { labelSync } from './labelSync'
 import { cronLgtm } from './lgtm'
+import { sweep } from './sweep'
 
 /**
  * This Method handles any cron job events.
@@ -36,6 +37,12 @@ export async function handleCronJobs(context: Context = github.context): Promise
         case 'label-sync':
           core.debug('running label-sync job')
           return await labelSync(context).catch(async (e) => {
+            return e
+          })
+
+        case 'sweep':
+          core.debug('running sweep job')
+          return await sweep(context).catch(async (e) => {
             return e
           })
 

@@ -122,3 +122,8 @@ blunderbuss:
 # still carries it (needs statuses: write); this is the default
 lgtm:
   bind_to_commit: true
+
+# the sweep job (pull_request install mode) evaluates the pull requests updated within this
+# window; this is the default
+sweep:
+  lookback: 1h

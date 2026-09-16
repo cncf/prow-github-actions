@@ -406,10 +406,11 @@ describe('mergeProwConfig', () => {
       blunderbuss: { request_count: 3, ignore_authors: ['bot'] },
       approve: { require_self_approval: false, lgtm_acts_as_approve: true },
       lgtm: { bind_to_commit: false },
+      sweep: {},
     })
   })
 
   it('fills every section when both sides are empty', () => {
-    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {}, lgtm: {} })
+    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {}, lgtm: {}, sweep: {} })
   })
 })

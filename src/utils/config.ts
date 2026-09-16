@@ -4,6 +4,8 @@ import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import * as yaml from 'js-yaml'
 
+import { parseDuration } from './duration'
+
 /** one allowed value of a label section, optionally with GitHub label metadata */
 export interface LabelValue {
   name: string
@@ -80,6 +82,11 @@ export interface LgtmConfig {
   bind_to_commit?: boolean
 }
 
+export interface SweepConfig {
+  /** how far back `updated_at` may be for a pull request to be evaluated by the `sweep` job, ex: `1h`; default 1h, capped at 24h */
+  lookback?: string
+}
+
 export interface ProwConfig {
   labels: Record<string, LabelSection>
   require_matching_label: RequireMatchingLabel[]
@@ -88,6 +95,7 @@ export interface ProwConfig {
   blunderbuss: BlunderbussConfig
   approve: ApproveConfig
   lgtm: LgtmConfig
+  sweep: SweepConfig
   /** every file that contributed, lowest precedence first, as `owner/repo:path` or a url */
   sources: string[]
 }
@@ -103,7 +111,10 @@ export const defaultOwnersTideLabels = ['lgtm', 'approved']
 export const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold']
 
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm'] as const
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep'] as const
+
+export const defaultSweepLookback = '1h'
+export const maxSweepLookbackMs = 24 * 3_600_000
 
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 export const orgConfigRepos = ['.project', '.github']
@@ -292,7 +303,7 @@ function isNotFound(error: unknown): boolean {
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
  * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
- * `approve` and `lgtm` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * `approve`, `lgtm` and `sweep` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -340,6 +351,9 @@ export function parseProwConfig(source: string, text: string): Partial<ProwConfi
   }
   if (loaded.lgtm !== undefined) {
     config.lgtm = normalizeLgtm(source, loaded.lgtm)
+  }
+  if (loaded.sweep !== undefined) {
+    config.sweep = normalizeSweep(source, loaded.sweep)
   }
 
   const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !(reservedKeys as readonly string[]).includes(key))
@@ -560,10 +574,44 @@ function normalizeLgtm(source: string, raw: unknown): LgtmConfig {
   return stripUndefined({ bind_to_commit: raw.bind_to_commit as boolean | undefined })
 }
 
+function normalizeSweep(source: string, raw: unknown): SweepConfig {
+  if (!isMapping(raw)) {
+    throw new Error(`${source}: sweep must be a mapping`)
+  }
+
+  if (raw.lookback !== undefined) {
+    if (typeof raw.lookback !== 'string') {
+      throw new TypeError(`${source}: sweep.lookback must be a duration string such as 1h or 30m`)
+    }
+    let ms: number
+    try {
+      ms = parseDuration(raw.lookback, 'sweep.lookback')
+    }
+    catch (e) {
+      throw new Error(`${source}: ${e instanceof Error ? e.message : e}`)
+    }
+    if (ms <= 0) {
+      throw new Error(`${source}: sweep.lookback must be longer than 0`)
+    }
+  }
+
+  return stripUndefined({ lookback: raw.lookback as string | undefined })
+}
+
+/**
+ * resolveSweepLookback returns the sweep window in milliseconds: the
+ * configured `sweep.lookback`, else 1h, never more than 24h.
+ *
+ * @param sweep - the merged sweep section
+ */
+export function resolveSweepLookback(sweep: SweepConfig): number {
+  return Math.min(maxSweepLookbackMs, parseDuration(sweep.lookback ?? defaultSweepLookback, 'sweep.lookback'))
+}
+
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
  * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
- * approve and lgtm shallow-merge.
+ * approve, lgtm and sweep shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -577,6 +625,7 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
     blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
     approve: { ...base.approve, ...over.approve },
     lgtm: { ...base.lgtm, ...over.lgtm },
+    sweep: { ...base.sweep, ...over.sweep },
   }
 }
 

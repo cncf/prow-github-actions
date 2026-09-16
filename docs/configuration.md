@@ -113,6 +113,10 @@ approve:
 # /lgtm records the reviewed commit as a prow/lgtm commit status; this is the default
 lgtm:
   bind_to_commit: true
+
+# the sweep job evaluates the pull requests updated within this window; this is the default
+sweep:
+  lookback: 1h
 ```
 
 ### `labels`
@@ -332,6 +336,12 @@ Field | Default | Meaning
 --- | --- | ---
 `bind_to_commit` | `true` | `/lgtm` (and a hand-applied `lgtm` label under `pull_request`/`pull_request_target`) records the PR's head commit as a `prow/lgtm` commit status, and every merge path merges only while the head still carries it; a stale `lgtm` is removed with a comment. Needs `statuses: write`. `false`: label-only semantics, no status is written or read ([automatic merging](./automatic-merging.md#lgtm-is-bound-to-a-commit))
 
+### `sweep`
+
+Field | Default | Meaning
+--- | --- | ---
+`lookback` | `1h` | how far back a pull request's `updated_at` may be for the [`sweep` job](./cron-jobs.md#sweep) to evaluate it; a Go style duration (`30m`, `2h`), longer than `0`, capped at `24h`
+
 ### `owners-label`
 
 No configuration. Whenever a pull request is `opened`, `reopened` or `synchronize`d the
@@ -364,8 +374,8 @@ Both forms share one parser. The top level `labels` key decides which form a doc
 `labels` is | Form | The `/label` allowlist is
 --- | --- | ---
 a **list** | legacy: every top level key is a label section | the top level `labels` list
-a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm` may sit alongside | `labels.labels`
-absent, and `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve` or `lgtm` is present | new | `labels.labels`
+a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep` may sit alongside | `labels.labels`
+absent, and `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm` or `sweep` is present | new | `labels.labels`
 absent otherwise | legacy | none
 
 ```yaml
@@ -396,7 +406,7 @@ Key | Rule
 --- | ---
 `labels` | per section: a repository section replaces the organization section of the same name; other organization sections survive
 `require_matching_label` | lists concatenate, organization rules first
-`tide`, `hold`, `blunderbuss`, `approve`, `lgtm` | shallow merge; a repository field wins
+`tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep` | shallow merge; a repository field wins
 
 ```yaml
 # <owner>/.project prow.yaml
