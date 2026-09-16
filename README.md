@@ -12,7 +12,9 @@ Check out the _"EXAMPLE"_ issues and pull requests (open and closed) in this rep
 
 One caller workflow installs the whole bot. Copy [`templates/workflow-templates/prow.yml`](./templates/workflow-templates/prow.yml)
 to `.github/workflows/prow.yml`, or install **Prow** from *Actions → New workflow* once your
-organization ships it as a [workflow template](./docs/installing.md#an-organization):
+organization ships it as a [workflow template](./docs/installing.md#an-organization). Policy
+forbids `pull_request_target`? Use [`prow-pull-request.yml`](./templates/workflow-templates/prow-pull-request.yml)
+instead ([without `pull_request_target`](./docs/installing.md#without-pull_request_target)):
 
 ```yaml
 name: Prow

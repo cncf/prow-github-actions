@@ -13,6 +13,7 @@ const reusableWorkflowPath = '.github/workflows/prow.yml'
 const reusableWorkflowRef = 'cncf/prow-github-actions/.github/workflows/prow.yml@v3'
 const templateDir = 'templates/workflow-templates'
 const templatePath = `${templateDir}/prow.yml`
+const pullRequestTemplatePath = `${templateDir}/prow-pull-request.yml`
 const dogfoodPath = '.github/workflows/prow-bot.yml'
 
 /** the events and activity types every feature of the action needs, see docs/events.md */
@@ -155,6 +156,7 @@ function activityTypes(on: Mapping, event: string): string[] {
 
 describe.each([
   [templatePath, 'pull_request_target', false],
+  [pullRequestTemplatePath, 'pull_request', true],
   [dogfoodPath, 'pull_request', true],
 ])('%s calls the reusable workflow', (file, pullRequestEvent, hasSweep) => {
   const caller = loadYaml<Workflow>(file)
@@ -221,8 +223,11 @@ describe.each(['README.md', 'docs/installing.md', 'docs/events.md'])('%s', (file
   })
 })
 
-describe(templatePath, () => {
-  const template = loadYaml<Workflow>(templatePath)
+describe.each([
+  [templatePath, 'prow.properties.json', 'Prow'],
+  [pullRequestTemplatePath, 'prow-pull-request.properties.json', 'Prow (pull_request, no pull_request_target)'],
+])('%s', (file, propertiesFile, name) => {
+  const template = loadYaml<Workflow>(file)
 
   it('calls the reusable workflow at the floating major tag with no with: on the main job', () => {
     for (const job of Object.values(template.jobs)) {
@@ -231,13 +236,30 @@ describe(templatePath, () => {
     expect(template.jobs.prow.with).toBeUndefined()
   })
 
-  it('has starter-workflow metadata and an icon next to it', () => {
-    const properties = JSON.parse(read(`${templateDir}/prow.properties.json`)) as Mapping
-    expect(properties).toMatchObject({ name: 'Prow', iconName: 'prow', categories: ['Automation'] })
+  it('has starter-workflow metadata and the shared icon next to it', () => {
+    const properties = JSON.parse(read(`${templateDir}/${propertiesFile}`)) as Mapping
+    expect(properties).toMatchObject({ name, iconName: 'prow', categories: ['Automation'] })
     expect(typeof properties.description).toBe('string')
     expect(properties).not.toHaveProperty('filePatterns')
     expect(existsSync(path.join(root, templateDir, 'prow.svg'))).toBe(true)
     expect(read(`${templateDir}/prow.svg`)).toMatch(/^<svg\s/)
+  })
+})
+
+describe(pullRequestTemplatePath, () => {
+  const template = loadYaml<Workflow>(pullRequestTemplatePath)
+  const reference = loadYaml<Workflow>(templatePath)
+
+  it('never uses pull_request_target and subscribes to the same activity types under pull_request', () => {
+    expect(template.on).not.toHaveProperty('pull_request_target')
+    expect(activityTypes(template.on, 'pull_request')).toEqual(activityTypes(reference.on, 'pull_request_target'))
+    expect(Object.keys(template.on).sort()).toEqual(Object.keys(reference.on).map(event => (event === 'pull_request_target' ? 'pull_request' : event)).sort())
+  })
+
+  it('schedules the sweep at the shortest interval GitHub runs and grants the same permissions as the default template', () => {
+    expect((template.on.schedule as { cron: string }[]).map(entry => entry.cron)).toEqual(['*/5 * * * *'])
+    expect(template.permissions).toEqual(reference.permissions)
+    expect(read(pullRequestTemplatePath)).toContain('zizmor')
   })
 })
 

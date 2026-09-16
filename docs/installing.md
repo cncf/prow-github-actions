@@ -8,6 +8,7 @@ The caller owns the triggers, the permissions and the concurrency group; the reu
 workflow runs the action at its own commit, so the two never drift.
 
 * [One repository](#one-repository)
+* [Without `pull_request_target`](#without-pull_request_target)
 * [An organization](#an-organization)
 * [Upgrading](#upgrading)
 * [Inputs and secrets](#inputs-and-secrets)
@@ -68,7 +69,7 @@ jobs:
 
 Trigger | Why
 --- | ---
-`pull_request_target` | Fork pull requests get a write token, so they are labeled and merged too. Safe because nothing checks out or runs pull request code: the reusable workflow only checks out `cncf/prow-github-actions` at its own commit ([events](./events.md#pull_request_target-and-the-reusable-workflow)). Use `pull_request` if you prefer; fork PRs then get a read-only token.
+`pull_request_target` | Fork pull requests get a write token, so they are labeled and merged too. Safe because nothing checks out or runs pull request code: the reusable workflow only checks out `cncf/prow-github-actions` at its own commit ([events](./events.md#pull_request_target-and-the-reusable-workflow)). Forbidden by your policy? See [without `pull_request_target`](#without-pull_request_target).
 `schedule` | Backstop for merges the events missed ([jobs](./cron-jobs.md)). Hourly is plenty; drop it if you like.
 `workflow_dispatch`, `push` | The `label-sync` job, on demand and whenever `.github/prow.yaml` changes.
 `concurrency` | One group per comment, and per event and activity type for everything else ([events](./events.md#concurrency)). `cancel-in-progress` stays `false`: a run that is merging must not be cancelled.
@@ -81,12 +82,51 @@ assignees, reviews) and `statuses: write` (the `prow/lgtm` commit status that
 Grant less and GitHub refuses to start the called job, since a called
 workflow may only downgrade, never elevate, the caller's permissions.
 
+## Without `pull_request_target`
+
+Some organizations forbid `pull_request_target` outright (zizmor's `dangerous-triggers` audit
+flags it; a hash-pinning policy often comes with it). The second template,
+[`templates/workflow-templates/prow-pull-request.yml`](../templates/workflow-templates/prow-pull-request.yml)
+(with `prow-pull-request.properties.json`, sharing `prow.svg`), installs the same bot on
+`pull_request`. The diff against the default caller is two lines of triggers and one job:
+
+```diff
+-  pull_request_target:
++  pull_request:
+     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+   schedule:
+-    - cron: '0 * * * *'
++    - cron: '*/5 * * * *'
+ jobs:
+   prow:
+-    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
++    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
++  sweep:
++    if: github.event_name == 'schedule'
++    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
++    with:
++      jobs: sweep lgtm
+```
+
+Pull request | Handled by | Latency
+--- | --- | ---
+from the repository itself | the events, as with the default template | seconds
+from a fork | the [`sweep` job](./cron-jobs.md#sweep): `needs-*` labels, OWNERS labels and reviewers, approval, the merge. The `pull_request`/`pull_request_review` runs [return at once](./events.md#fork-pull-requests-under-pull_request): GitHub gives them a read-only token | the cron interval; `*/5` is GitHub's shortest and slots are delayed under load, so minutes
+any, on a comment (`/lgtm`, `/approve`, ...) | the `issue_comment` run, which has a write token on forks too | seconds
+
+Caveat: an `lgtm` label applied **by hand** on a fork pull request cannot be
+[bound to the commit](./automatic-merging.md#lgtm-is-bound-to-a-commit) by the read-only run,
+so the sweep strips it with a comment; use `/lgtm`. Organizations that hash-pin replace `@v3`
+in the template with the release's commit sha and a `# v3.x.y` comment; Dependabot keeps it
+current.
+
 ## An organization
 
 Put | At | Effect
 --- | --- | ---
 [`prow.yaml`](../templates/prow.yaml) | `<org>/.github` repository, `prow.yaml` | Every repository of the organization inherits it; a repository's own `.github/prow.yaml` layers on top ([tiers](./configuration.md#where-configuration-lives)).
 [`prow.yml`](../templates/workflow-templates/prow.yml), [`prow.properties.json`](../templates/workflow-templates/prow.properties.json), [`prow.svg`](../templates/workflow-templates/prow.svg) | `<org>/.github` repository, `workflow-templates/` | Every repository sees **Prow** under *Actions → New workflow → Workflows created by <org>*; one click installs the caller with `$default-branch` filled in ([GitHub docs](https://docs.github.com/en/actions/sharing-automations/creating-workflow-templates-for-your-organization)).
+[`prow-pull-request.yml`](../templates/workflow-templates/prow-pull-request.yml), [`prow-pull-request.properties.json`](../templates/workflow-templates/prow-pull-request.properties.json) | same place, optional | **Prow (pull_request, no pull_request_target)**, the [`pull_request` install mode](#without-pull_request_target) for organizations whose policy forbids `pull_request_target`.
 
 ### The `.project` tier
 

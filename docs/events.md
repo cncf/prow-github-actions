@@ -19,7 +19,9 @@ Event | Input | Does
 ## Which events each feature needs
 
 With the [reusable workflow](./installing.md) the trigger block lives in the caller; the
-[template](../templates/workflow-templates/prow.yml) subscribes to all of these.
+[template](../templates/workflow-templates/prow.yml) subscribes to all of these, and the
+[`pull_request` template](../templates/workflow-templates/prow-pull-request.yml) to the same
+with `pull_request` in place of `pull_request_target` plus the `sweep` on `schedule`.
 
 Feature | Events
 --- | ---

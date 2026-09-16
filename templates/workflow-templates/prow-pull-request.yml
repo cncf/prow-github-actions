@@ -1,0 +1,77 @@
+# Prow for this repository, without pull_request_target: /commands on issues and pull requests,
+# needs-* labels, reviewers from OWNERS files, automatic merging on lgtm, and labels created from
+# prow.yaml. Docs: https://github.com/cncf/prow-github-actions/blob/main/docs/installing.md#without-pull_request_target
+#
+# Choose this template over prow.yml when your policy forbids pull_request_target (zizmor's
+# dangerous-triggers audit, for instance). Organizations that hash-pin replace `@v3` below with a
+# commit sha and a `# v3.x.y` comment.
+#
+# What changes compared to prow.yml:
+# - pull_request and pull_request_review runs for a fork pull request get a read-only token, so
+#   the action returns at once; the `sweep` job below does their work (needs-* labels, OWNERS
+#   labels and reviewers, approval, the merge) on its schedule, within the cron interval. GitHub
+#   may delay schedule slots under load. Same-repository pull requests stay event-driven.
+# - comments (/lgtm, /approve, ...) stay instant on every pull request: issue_comment has a
+#   write token.
+# - an lgtm label applied by hand on a fork pull request cannot be bound to the commit by the
+#   read-only run and is stripped by the sweep; use /lgtm instead.
+name: Prow
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
+  # the sweep for fork pull requests and the lgtm backstop; */5 is the shortest interval GitHub runs
+  schedule:
+    - cron: '*/5 * * * *'
+  # label-sync: run once after installing, then whenever .github/prow.yaml changes
+  workflow_dispatch:
+  push:
+    branches: [$default-branch]
+    paths: [.github/prow.yaml]
+
+# the reusable workflow can use at most what is granted here
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+# One run per comment (commands are never collapsed); per event+action for everything else,
+# so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
+# Never cancel a run that may be merging.
+concurrency:
+  group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prow:
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    # optional; the defaults enable every built-in command and the lgtm job
+    # with:
+    #   prow-commands: /lgtm /approve /hold /kind /area /priority
+    #   merge-method: squash
+    # optional; only for a token that can read a private <org>/.project or a /meow key
+    # secrets:
+    #   token: ${{ secrets.PROW_TOKEN }}
+    #   cat-api-key: ${{ secrets.CAT_API_KEY }}
+
+  # fork pull requests updated within sweep.lookback (default 1h), plus the lgtm backstop
+  sweep:
+    if: github.event_name == 'schedule'
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    with:
+      jobs: sweep lgtm
+
+  label-sync:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    with:
+      jobs: label-sync

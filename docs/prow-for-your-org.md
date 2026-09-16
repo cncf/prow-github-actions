@@ -77,7 +77,9 @@ Trim what you don't want; the schema and every default are in
 
 Copy the trio `prow.yml`, `prow.properties.json`, `prow.svg` from
 [`templates/workflow-templates/`](../templates/workflow-templates/prow.yml) into
-`workflow-templates/` of `<org>/.github`. Every repository then sees **Prow** under
+`workflow-templates/` of `<org>/.github` (add `prow-pull-request.yml` and its `.properties.json`
+if some repositories may not use `pull_request_target`,
+[installing](./installing.md#without-pull_request_target)). Every repository then sees **Prow** under
 *Actions → New workflow → Workflows created by \<org\>*; one click installs the caller with the
 default branch filled in ([an organization](./installing.md#an-organization)). You can also
 copy the caller into `.github/workflows/prow.yml` by hand. It is:
@@ -224,6 +226,7 @@ lines.
 | A merge made with `GITHUB_TOKEN` fires no `push` workflows | post-merge automation does not run | pass a PAT or GitHub App token via the `token` secret ([installing](./installing.md#inputs-and-secrets)) |
 | `<org>/.project` is private | a consumer's `GITHUB_TOKEN` cannot read it; the org tier silently falls through to `<org>/.github` | keep the org config in `.github`, or pass a `token` that can read `.project` ([installing](./installing.md#the-project-tier)) |
 | Fork PRs | the template uses `pull_request_target`, so forks get labels and merges; safe because nothing checks out PR code ([events](./events.md#pull_request_target-and-the-reusable-workflow)) | nothing |
+| zizmor (`dangerous-triggers`) or a hash-pin org policy rejects `pull_request_target` | `pull_request` gives fork PRs a read-only token | use the [`pull_request` template](./installing.md#without-pull_request_target): fork PRs are handled by the scheduled `sweep` within minutes, comments stay instant |
 | Cron slots are delayed or dropped under GitHub load (observed: two slots dropped, one 16 min late) | merges land on events within seconds; the cron is only the backstop for missed events | keep the events subscribed; shorten the cron only if you accept the gap |
 | You want cron-only merging | — | set `tide.merge_on_events: false` ([automatic merging](./automatic-merging.md#merge_on_events)) |
 
