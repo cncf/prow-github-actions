@@ -29389,7 +29389,7 @@ function utils_toCommandValue(input) {
  * @returns The command properties to send with the actual annotation command
  * See IssueCommandProperties: https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionCommandManager.cs#L646
  */
-function utils_toCommandProperties(annotationProperties) {
+function toCommandProperties(annotationProperties) {
     if (!Object.keys(annotationProperties).length) {
         return {};
     }
@@ -32200,7 +32200,7 @@ function core_debug(message) {
  * @param properties optional properties to add to the annotation.
  */
 function error(message, properties = {}) {
-    command_issueCommand('error', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a warning issue
@@ -32208,7 +32208,7 @@ function error(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function warning(message, properties = {}) {
-    command_issueCommand('warning', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a notice issue
@@ -32216,7 +32216,7 @@ function warning(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function notice(message, properties = {}) {
-    issueCommand('notice', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('notice', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Writes info to log with console.log.
@@ -45332,6 +45332,28 @@ function normalizeError(error) {
 
 ;// CONCATENATED MODULE: ./lib/utils/events.js
 
+const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review']);
+/**
+ * skipReadOnlyForkRun reports, with a notice, whether this run cannot write:
+ * GitHub gives `pull_request` and `pull_request_review` runs for a pull
+ * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
+ * same-repository pull requests get a write token). The `sweep` job covers
+ * those pull requests instead.
+ *
+ * @param context - the github context of the current action event
+ */
+function skipReadOnlyForkRun(context) {
+    if (!readOnlyForkEvents.has(context.eventName)) {
+        return false;
+    }
+    const head = context.payload.pull_request?.head?.repo?.full_name;
+    const base = context.payload.repository?.full_name;
+    if (typeof head !== 'string' || typeof base !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+        return false;
+    }
+    notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`);
+    return true;
+}
 /**
  * Runs every registered handler for an event, one after the other in
  * registration order, and fails the run once with the collected rejections.
@@ -45506,10 +45528,15 @@ const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgt
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
  * `synchronize` (new commits); every other activity type is logged and skipped.
  * An empty `jobs` input is only an error when no handler is registered either.
+ * A `pull_request` run for a fork pull request has a read-only token and
+ * returns before any handler; the `sweep` job covers it.
  *
  * @param context - the github context of the current action event
  */
 async function handlePullReq(context = github_context) {
+    if (skipReadOnlyForkRun(context)) {
+        return;
+    }
     const action = context.payload.action;
     const runConfig = getInput('jobs', { required: false })
         .split(/\s+/)
@@ -45558,11 +45585,16 @@ async function handlePullReq(context = github_context) {
 /** handlers that run on every `pull_request_review` event, in this order: approve first so tide sees the label */
 const pullRequestReviewHandlers = [approveOnReview, tideOnReview];
 /**
- * Dispatches a `pull_request_review` event to the registered handlers.
+ * Dispatches a `pull_request_review` event to the registered handlers. A
+ * review on a fork pull request comes with a read-only token and returns
+ * before any handler; the `sweep` job covers it.
  *
  * @param context - the github context of the current action event
  */
 async function handlePullReqReview(context = github_context) {
+    if (skipReadOnlyForkRun(context)) {
+        return;
+    }
     await runEventHandlers('pull_request_review', pullRequestReviewHandlers, context);
 }
 

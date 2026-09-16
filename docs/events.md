@@ -12,7 +12,7 @@ Event | Input | Does
 `issues` | — | `opened`, `reopened`, `labeled`, `unlabeled`: applies the [`require_matching_label`](./configuration.md#require_matching_label) rules. Other activity types are logged and skipped.
 `pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`lgtm`](./automatic-merging.md#lgtm-is-bound-to-a-commit) binds a `labeled` `lgtm` by a human to the head; [`approve`](./commands.md#approve) on `opened`, `reopened`, `synchronize` and on `labeled`/`unlabeled` of `approved`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
-`pull_request_review` | — | `submitted`, `dismissed`: [`approve`](./commands.md#approve) re-evaluates the approval (an `APPROVED` review adds an approver, `CHANGES_REQUESTED` removes one) on repositories with OWNERS files, then [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can also satisfy branch protection; it is not `lgtm`).
+`pull_request_review` | — | `submitted`, `dismissed`: [`approve`](./commands.md#approve) re-evaluates the approval (an `APPROVED` review adds an approver, `CHANGES_REQUESTED` removes one) on repositories with OWNERS files, then [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can also satisfy branch protection; it is not `lgtm`). On a fork PR the token is read-only ([below](#fork-pull-requests-under-pull_request)).
 `check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
 `schedule`, `workflow_dispatch`, `push` | `jobs` | Runs the [jobs](./cron-jobs.md) (`lgtm` merger, `label-sync`).
 
@@ -68,10 +68,33 @@ jobs:
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
-Use `pull_request_target` instead of `pull_request` when fork PRs must be labeled or merged;
-`pull_request` gets a read-only token on forks ([safety rule](./pr-jobs.md#pull_request_target)).
-Repositories that only want the cron to merge leave `pull_request_review` and `check_suite` out
-or set [`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
+Use `pull_request_target` instead of `pull_request` when fork PRs must be labeled or merged on
+the event; `pull_request` gets a read-only token on forks ([below](#fork-pull-requests-under-pull_request),
+[safety rule](./pr-jobs.md#pull_request_target)). Repositories that only want the cron to merge
+leave `pull_request_review` and `check_suite` out or set
+[`tide.merge_on_events: false`](./automatic-merging.md#merge_on_events).
+
+## Fork pull requests under `pull_request`
+
+GitHub's rule: "The `GITHUB_TOKEN` has read-only permissions in pull requests from forked
+repositories" ([events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)).
+That covers the `pull_request` **and** `pull_request_review` runs of a fork PR, whatever the
+`permissions` block says; `pull_request_target` runs, same-repository PRs and every
+`issue_comment` run keep the write token.
+
+Rather than fail on the first label write, the action recognises the situation and stops:
+
+Event | `head.repo` | Token | Does
+--- | --- | --- | ---
+`pull_request`, `pull_request_review` | another repository (a fork) | read-only | `core.notice`: `fork pull request under <event>: the token is read-only; the sweep job handles it`; no handler runs, no API call is made
+`pull_request`, `pull_request_review` | the repository itself | write | every handler, as usual
+`pull_request_target` | anything | write | every handler, as usual
+
+What those handlers would have done for the fork PR (`needs-*` labels, OWNERS labels and
+reviewers, approval, the merge, a stale `lgtm`) is done by the [`sweep` job](./cron-jobs.md#sweep)
+on its schedule; see [installing](./installing.md#without-pull_request_target) for that layout.
+Comments (`/lgtm`, `/approve`, ...) on the fork PR still act instantly: `issue_comment` has a
+write token.
 
 ## The bot's writes fire no events
 

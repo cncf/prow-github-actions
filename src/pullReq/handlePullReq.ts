@@ -10,7 +10,7 @@ import { lgtmOnPullRequest } from '../plugins/lgtmBinding'
 import { ownersLabel } from '../plugins/ownersLabel'
 import { requireMatchingLabel } from '../plugins/requireMatchingLabel'
 import { tideOnPullRequest } from '../plugins/tide'
-import { runEventHandlers } from '../utils/events'
+import { runEventHandlers, skipReadOnlyForkRun } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
 /** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them */
@@ -21,10 +21,16 @@ export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel, owners
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
  * `synchronize` (new commits); every other activity type is logged and skipped.
  * An empty `jobs` input is only an error when no handler is registered either.
+ * A `pull_request` run for a fork pull request has a read-only token and
+ * returns before any handler; the `sweep` job covers it.
  *
  * @param context - the github context of the current action event
  */
 export async function handlePullReq(context: Context = github.context): Promise<void> {
+  if (skipReadOnlyForkRun(context)) {
+    return
+  }
+
   const action: string | undefined = context.payload.action
   const runConfig = core
     .getInput('jobs', { required: false })

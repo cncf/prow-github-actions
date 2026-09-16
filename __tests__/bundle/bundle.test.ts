@@ -158,6 +158,20 @@ describe('dist/index.js', () => {
     expect(gh.requests).toEqual([])
   })
 
+  it.each([
+    ['pull_request', { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }],
+    ['pull_request_review', pullReqReviewSubmittedEvent],
+  ])('%s for a fork pull request exits 0 with a notice and no api call: the token is read-only', async (eventName, payload) => {
+    const fork = { ...payload, pull_request: { ...payload.pull_request, head: { ...payload.pull_request.head, repo: { full_name: 'octocat/Hello-World' } } } }
+
+    const result = await runBundle({ eventName, payload: fork, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain(`::notice::fork pull request under ${eventName}: the token is read-only; the sweep job handles it`)
+    expect(gh.requests).toEqual([])
+  })
+
   it('issues labeled with no require_matching_label configured only reads the configuration', async () => {
     const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
 
