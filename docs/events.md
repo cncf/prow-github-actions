@@ -10,7 +10,7 @@ Event | Input | Does
 --- | --- | ---
 `issue_comment` | `prow-commands` | Runs the [`/commands`](./commands.md) found in the comment; when one that writes labels ran, re-applies the [`require_matching_label`](./configuration.md#require_matching_label) rules and, on an open PR, runs [`tide`](./automatic-merging.md#event-driven-merging) ([why](#the-bots-writes-fire-no-events)).
 `issues` | — | `opened`, `reopened`, `labeled`, `unlabeled`: applies the [`require_matching_label`](./configuration.md#require_matching_label) rules. Other activity types are logged and skipped.
-`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`approve`](./commands.md#approve) on `opened`, `reopened`, `synchronize` and on `labeled`/`unlabeled` of `approved`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
+`pull_request` | `jobs` | Same `require_matching_label` handling on the PR's labels; [`owners-label`](./labeling.md#labels-from-owners-files) on `opened`, `reopened`, `synchronize`; [`blunderbuss`](./configuration.md#blunderbuss) on `opened` and `ready_for_review`; [`lgtm`](./automatic-merging.md#lgtm-is-bound-to-a-commit) binds a `labeled` `lgtm` by a human to the head; [`approve`](./commands.md#approve) on `opened`, `reopened`, `synchronize` and on `labeled`/`unlabeled` of `approved`; [`tide`](./automatic-merging.md#event-driven-merging) on `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; then the [PR jobs](./pr-jobs.md); `lgtm` acts on `synchronize` only. `jobs` may be empty.
 `pull_request_target` | `jobs` | Same as `pull_request` with a write token on fork PRs. Read the [safety rule](./pr-jobs.md#pull_request_target) first.
 `pull_request_review` | — | `submitted`, `dismissed`: [`approve`](./commands.md#approve) re-evaluates the approval (an `APPROVED` review adds an approver, `CHANGES_REQUESTED` removes one) on repositories with OWNERS files, then [`tide`](./automatic-merging.md#event-driven-merging) evaluates the reviewed PR (a review can also satisfy branch protection; it is not `lgtm`).
 `check_suite`, `status` | — | `completed` / `success`: [`tide`](./automatic-merging.md#event-driven-merging) evaluates every open PR whose head is the commit. `status` is the legacy commit status API.
@@ -55,6 +55,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 jobs:
   execute:
@@ -83,7 +84,7 @@ does itself what those events would have done, in this order:
 Step | Does | Cost
 --- | --- | ---
 [`require_matching_label`](./configuration.md#require_matching_label) | every rule that applies, no grace period; removes a stale `needs-*`, adds one the command broke (`/remove-kind`) | nothing without rules; one labels read with rules
-[`tide`](./automatic-merging.md#event-driven-merging) | the merge gate on an open PR: `/lgtm`, `/approve`, `/unhold`, `/remove-*` merge in the same run | one PR read; nothing on an issue or a closed PR; off with [`merge_on_events: false`](./automatic-merging.md#merge_on_events)
+[`tide`](./automatic-merging.md#event-driven-merging) | the merge gate on an open PR: `/lgtm`, `/approve`, `/unhold`, `/remove-*` merge in the same run | one PR read, plus one status read when the PR carries `lgtm` ([binding](./automatic-merging.md#lgtm-is-bound-to-a-commit)); nothing on an issue or a closed PR; off with [`merge_on_events: false`](./automatic-merging.md#merge_on_events)
 
 Commands that cannot write a label (`/assign`, `/cc`, `/close`, `/milestone`, `/check-required-labels`
 on its own, ...) and comments without a configured command make no extra call at all. A
@@ -138,7 +139,7 @@ Activity type | Handlers
 `reopened` | `require_matching_label`, `owners-label`, `approve`, `tide`
 `synchronize` | `owners-label`, `approve` (the changed files may differ; approvals stay), the `lgtm` job (`tide` waits for the next check suite: a push must not merge)
 `ready_for_review` | `blunderbuss` (drafts wait for it by default), `tide`
-`labeled`, `unlabeled` | `require_matching_label`, `approve` (only for the `approved` label: a human's change is re-evaluated), `tide`
+`labeled`, `unlabeled` | `require_matching_label`, `lgtm` (`labeled` `lgtm` by a human: bound to the head), `approve` (only for the `approved` label: a human's change is re-evaluated), `tide`
 `edited` | `tide` (a base branch change alters mergeability)
 
 The handlers of one event run one after the other in the order listed, `tide` last, and `tide`

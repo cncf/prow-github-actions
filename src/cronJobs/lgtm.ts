@@ -1,10 +1,13 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
+import type { LgtmSettings } from '../plugins/lgtmBinding'
 import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { loadTide, mergeOnce } from '../plugins/tide'
+import { lgtmSettings } from '../plugins/lgtmBinding'
+import { evaluateMerge, loadTide } from '../plugins/tide'
+import { loadProwConfig } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
 
@@ -25,13 +28,18 @@ interface LgtmProgress {
   failures: MergeFailure[]
 }
 
+interface MergePolicy {
+  tide: ResolvedTide
+  lgtm: LgtmSettings
+}
+
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`). It is the backstop
- * of the event-driven tide handlers: it does not read each PR's
- * mergeable_state and lets GitHub refuse a merge instead.
+ * and evaluate every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
+ * through the shared merge path: the lgtm binding, GitHub's mergeability,
+ * then the merge. It is the backstop of the event-driven tide handlers.
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -49,7 +57,10 @@ export async function cronLgtm(
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
 
-  const tide = await loadTide(octokit, context)
+  const policy: MergePolicy = {
+    tide: await loadTide(octokit, context),
+    lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
+  }
 
   // Get next batch
   let prs: PullsListResponseDataType
@@ -81,7 +92,7 @@ export async function cronLgtm(
       }
 
       try {
-        if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
+        if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
           progress.jobsDone++
         }
       }
@@ -127,14 +138,15 @@ async function getOpenPrs(
 }
 
 /**
- * Attempts to merge a PR that passes the tide merge gate; a PR that does
- * not is skipped with the reason logged. A refused merge is logged as an
- * error annotation and recorded in failures instead of aborting the run.
+ * Evaluates a PR that passes the tide merge gate on its listed labels
+ * through the shared merge path; a PR that does not is skipped with the
+ * reason logged and costs no further call. A refused merge is recorded in
+ * failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
- * @param tide - the resolved tide configuration
+ * @param policy - the resolved tide and lgtm configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
@@ -142,21 +154,18 @@ async function tryMergePr(
   pr: PullsListResponseItem,
   octokit: Octokit,
   context: Context = github.context,
-  tide: ResolvedTide,
+  policy: MergePolicy,
   failures: MergeFailure[],
 ): Promise<boolean> {
-  const gate = meetsMergeGate(pr.labels.map(e => e.name), tide)
+  const gate = meetsMergeGate(pr.labels.map(e => e.name), policy.tide)
   if (!gate.ok) {
     core.info(`skipping pr #${pr.number}: ${gate.reason}`)
     return false
   }
 
-  const outcome = await mergeOnce(octokit, context, pr.number, tide)
-  if (outcome.result === 'merged') {
-    return true
+  const verdict = await evaluateMerge(octokit, context, pr.number, policy.tide, policy.lgtm)
+  if (verdict.result === 'failed') {
+    failures.push({ number: pr.number, message: verdict.message })
   }
-
-  core.error(`could not merge pr #${pr.number}: ${outcome.message}`)
-  failures.push({ number: pr.number, message: outcome.message })
-  return false
+  return verdict.result === 'merged'
 }

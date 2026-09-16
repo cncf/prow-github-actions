@@ -48,6 +48,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 concurrency:
   group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
@@ -75,7 +76,9 @@ Trigger | Why
 The `permissions` block is the ceiling: a reusable workflow's job can use at most what the
 caller grants. The reusable job asks for exactly `contents: write` (merges, reading OWNERS
 and configuration files), `issues: write` and `pull-requests: write` (labels, comments,
-assignees, reviews). Grant less and GitHub refuses to start the called job, since a called
+assignees, reviews) and `statuses: write` (the `prow/lgtm` commit status that
+[binds `lgtm` to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)).
+Grant less and GitHub refuses to start the called job, since a called
 workflow may only downgrade, never elevate, the caller's permissions.
 
 ## An organization
@@ -120,6 +123,13 @@ updates the `uses:` of reusable workflows like any action.
 The reusable workflow needs github.com: it reads the `job.workflow_sha` context, which is not
 available on GitHub Enterprise Server. There, [use the action directly](#using-the-action-directly).
 
+Since `lgtm` is [bound to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)
+the caller must grant `statuses: write` (the templates and the snippets on this page do), unless
+`prow.yaml` sets `lgtm.bind_to_commit: false`. Without it `/lgtm` fails with
+`cannot bind lgtm to the commit: grant statuses: write ...` and applies no label. Pull requests
+already carrying `lgtm` when you upgrade are unbound: their next evaluation strips the label
+once, with a comment saying why; re-apply with `/lgtm`.
+
 ## Inputs and secrets
 
 Every input is optional. Each maps to the `action.yml` input of the same name.
@@ -159,7 +169,7 @@ Feature | Docs
 --- | ---
 Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, and the label commands once their labels exist | [commands](./commands.md)
 Reviewers requested and labels applied from OWNERS files | [labeling](./labeling.md#labels-from-owners-files), [blunderbuss](./configuration.md#blunderbuss)
-Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly | [automatic merging](./automatic-merging.md)
+Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly; `lgtm` counts only for the commit it reviewed | [automatic merging](./automatic-merging.md)
 `lgtm` removed when new commits are pushed | [PR jobs](./pr-jobs.md)
 `label-sync` creating `lgtm`, `approved`, `do-not-merge/hold`, `hold`, `help wanted`, `good first issue` and the `lifecycle/*`, `stage/*`, `status/*` labels | [jobs](./cron-jobs.md#label-sync)
 

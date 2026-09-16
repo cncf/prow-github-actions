@@ -582,14 +582,17 @@ describe('after a command ran', () => {
       utils.repoHasLabels(['lgtm']),
       ok('post', '/issues/1/labels', []),
       ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+      http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {})),
+      utils.lgtmStatus('headsha'),
       ok('put', '/pulls/1/merge', { merged: true }),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
 
+    // the binding status goes first so that no unbound label is ever left behind
     const writes = calls.filter(call => !call.startsWith('GET'))
-    expect(writes).toEqual([`POST /repos/Codertocat/Hello-World/issues/1/labels`, `PUT /repos/Codertocat/Hello-World/pulls/1/merge`])
+    expect(writes).toEqual([`POST /repos/Codertocat/Hello-World/statuses/headsha`, `POST /repos/Codertocat/Hello-World/issues/1/labels`, `PUT /repos/Codertocat/Hello-World/pulls/1/merge`])
     expect(calls.lastIndexOf('GET /repos/Codertocat/Hello-World/pulls/1')).toBeGreaterThan(calls.indexOf('POST /repos/Codertocat/Hello-World/issues/1/labels'))
     expect(setFailed).not.toHaveBeenCalled()
   })
@@ -597,7 +600,7 @@ describe('after a command ran', () => {
   it('merge_on_events: false leaves the merge to the cron', async () => {
     utils.setupActionsEnv('/lgtm')
     serveConfig('tide:\n  merge_on_events: false\n')
-    server.use(...reviewerHandlers(), utils.repoHasLabels(['lgtm']), ok('post', '/issues/1/labels', []), ...prHandlers({}, ['src/file1.txt']))
+    server.use(...reviewerHandlers(), utils.repoHasLabels(['lgtm']), ok('post', '/issues/1/labels', []), ...prHandlers({}, ['src/file1.txt']), http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {})))
 
     await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
 
@@ -726,7 +729,7 @@ describe('after a command ran', () => {
 
     const event = prCommentEvent('/lgtm')
     event.issue.state = 'closed'
-    server.use(...prHandlers({}, ['src/file1.txt'], { state: 'closed' }))
+    server.use(...prHandlers({}, ['src/file1.txt'], { state: 'closed' }), http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {})))
     await handleIssueComment(new utils.MockContext(event))
 
     expect(calls).toContain('POST /repos/Codertocat/Hello-World/issues/1/labels')
@@ -742,6 +745,8 @@ describe('after a command ran', () => {
       utils.repoHasLabels(['lgtm']),
       ok('post', '/issues/1/labels', []),
       ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+      http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {})),
+      utils.lgtmStatus('headsha'),
       http.put(`${repo}/pulls/1/merge`, utils.mockResponse(405, { message: 'Pull Request is not mergeable' })),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})

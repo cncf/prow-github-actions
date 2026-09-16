@@ -38,6 +38,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 concurrency:
   group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
@@ -56,8 +57,10 @@ jobs:
 ```
 
 With no configuration at all this gives you every built-in `/command`, reviewers from OWNERS
-files, automatic merging on `lgtm` (plus `approved` when the repository has
-[OWNERS files](./docs/commands.md#owners)), and the `label-sync` job (run it once from
+files, fork-safe automatic merging on `lgtm` (plus `approved` when the repository has
+[OWNERS files](./docs/commands.md#owners)) where `lgtm` is
+[bound to the reviewed commit](./docs/automatic-merging.md#lgtm-is-bound-to-a-commit) and never
+merges commits pushed after it, and the `label-sync` job (run it once from
 *Actions → Prow → Run workflow* so the labels exist). Add a `prow.yaml` to the repository or to
 your organization's `.github` repository for label families and `needs-*` rules
 ([starter](./templates/prow.yaml), [configuration](./docs/configuration.md)). The
@@ -82,6 +85,7 @@ on:
 permissions:
   issues: write
   pull-requests: write
+  statuses: write
   contents: read
 
 jobs:

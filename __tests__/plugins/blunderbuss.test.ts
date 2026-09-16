@@ -39,6 +39,7 @@ interface PullOverrides {
 function pullHandler({ author = 'some-author', draft = false, requested = [], assignees = [] }: PullOverrides = {}): HttpHandler {
   return http.get(`${repo}/pulls/1`, utils.mockResponse(200, {
     base: { sha: baseSha },
+    head: { sha: 'headsha' },
     user: { login: author },
     draft,
     requested_reviewers: requested.map(login => ({ login })),
@@ -310,7 +311,7 @@ describe('blunderbuss handler', () => {
   })
 
   it('is registered on the pull_request event after owners-label and shares its OWNERS fetch', async () => {
-    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'approveOnPullRequest', 'tideOnPullRequest'])
+    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'lgtmOnPullRequest', 'approveOnPullRequest', 'tideOnPullRequest'])
 
     utils.setupJobsEnv('')
     serveConfig()
@@ -318,7 +319,7 @@ describe('blunderbuss handler', () => {
     server.use(
       http.get(`${repo}/pulls/1`, () => {
         pulls++
-        return new Response(JSON.stringify({ base: { sha: baseSha }, user: { login: 'some-author' }, draft: false, requested_reviewers: [], assignees: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        return new Response(JSON.stringify({ base: { sha: baseSha }, head: { sha: 'headsha' }, user: { login: 'some-author' }, draft: false, requested_reviewers: [], assignees: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }),
       filesHandler(changedFiles('sdk/x.go')),
       ...treeHandlers({ 'sdk/OWNERS': `${sdkOwners}labels:\n- area/sdk\n` }),

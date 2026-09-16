@@ -158,6 +158,7 @@ describe('loadProwConfig', () => {
         hold: {},
         blunderbuss: {},
         approve: {},
+        lgtm: {},
         sources: [],
       })
     })

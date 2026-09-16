@@ -41,8 +41,8 @@ Label Commands | Policy | Description
 `/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | adds the `lgtm` label and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after: a `clean` PR merges in the same run. Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
-`/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label
+`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | on a PR, records the head commit as a `prow/lgtm` commit status, then adds the `lgtm` label and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after: a `clean` PR merges in the same run. The label only merges while it is [bound to the head](./automatic-merging.md#lgtm-is-bound-to-a-commit); needs `statuses: write`. Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label and sets the head's `prow/lgtm` status to `pending`
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
 `/hold` | anyone | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present, and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after
@@ -76,6 +76,18 @@ Failure behaviour differs per command:
 - `/close`, `/reopen` and `/retitle` silently do nothing.
 - `/lock`, `/remove` and `/milestone` fail the run.
 - `/lgtm` and `/approve` reply with a comment and fail the run.
+
+## `/lgtm` and the reviewed commit
+
+On a pull request `/lgtm` reads the head commit, writes the `prow/lgtm` commit status on it
+(`success`, "lgtm by \<login\> at \<sha7\>", linked to the comment) and only then applies the
+label; a status the token cannot write (403) fails the command with
+`cannot bind lgtm to the commit: grant statuses: write to the workflow (or set lgtm.bind_to_commit: false)`
+and applies no label. Every merge path then requires the head to still carry that status; a
+head pushed after the `/lgtm` has none, so the label is stripped with one explanatory comment
+instead of merging. `/lgtm cancel` sets the status to `pending`. On an issue `/lgtm` only
+labels. Details, the configuration flag and the upgrade note:
+[automatic merging](./automatic-merging.md#lgtm-is-bound-to-a-commit).
 
 ## Enabling `/meow`
 

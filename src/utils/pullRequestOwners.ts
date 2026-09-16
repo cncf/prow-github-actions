@@ -8,6 +8,7 @@ import { effectiveOwners, loadOwnersTree } from './owners'
 export interface PullRequestOwners {
   number: number
   baseSha: string
+  headSha: string
   author: string
   draft: boolean
   requestedReviewers: string[]
@@ -73,6 +74,7 @@ async function load(
   return {
     number: pullNumber,
     baseSha: pull.base.sha,
+    headSha: pull.head.sha,
     author: (pull.user?.login ?? '').toLowerCase(),
     draft: pull.draft === true,
     requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),

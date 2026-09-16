@@ -317,6 +317,20 @@ describe('parseProwConfig', () => {
     })
   })
 
+  describe('lgtm', () => {
+    it('accepts bind_to_commit and marks the document as the new form on its own', () => {
+      expect(parseProwConfig('x', 'lgtm:\n  bind_to_commit: false\n')).toEqual({ lgtm: { bind_to_commit: false } })
+      expect(parseProwConfig('x', 'lgtm: {}\n')).toEqual({ lgtm: {} })
+    })
+
+    it.each([
+      ['a non-mapping', 'lgtm: true\n', 'x: lgtm must be a mapping'],
+      ['a non-boolean bind_to_commit', 'lgtm:\n  bind_to_commit: yes please\n', 'x: lgtm.bind_to_commit must be a boolean'],
+    ])('rejects %s', (_, text, error) => {
+      expect(() => parseProwConfig('x', text)).toThrow(error)
+    })
+  })
+
   it('tolerates unknown top level keys in the new form and logs them once', () => {
     const debug = vi.spyOn(core, 'debug')
 
@@ -344,7 +358,7 @@ describe('parseProwConfig', () => {
 })
 
 describe('mergeProwConfig', () => {
-  it('replaces label sections per key, concatenates rules and shallow-merges tide, hold, blunderbuss and approve', () => {
+  it('replaces label sections per key, concatenates rules and shallow-merges tide, hold, blunderbuss, approve and lgtm', () => {
     const org = parseProwConfig('org', [
       'labels:',
       '  kind: [bug, cleanup]',
@@ -374,6 +388,8 @@ describe('mergeProwConfig', () => {
       '  request_count: 3',
       'approve:',
       '  require_self_approval: false',
+      'lgtm:',
+      '  bind_to_commit: false',
     ].join('\n'))
 
     expect(mergeProwConfig(org, repo)).toEqual({
@@ -389,10 +405,11 @@ describe('mergeProwConfig', () => {
       hold: { label: 'hold' },
       blunderbuss: { request_count: 3, ignore_authors: ['bot'] },
       approve: { require_self_approval: false, lgtm_acts_as_approve: true },
+      lgtm: { bind_to_commit: false },
     })
   })
 
   it('fills every section when both sides are empty', () => {
-    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {} })
+    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {}, lgtm: {} })
   })
 })

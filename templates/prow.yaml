@@ -117,3 +117,8 @@ blunderbuss:
   request_count: 2
   ignore_drafts: true
   ignore_authors: ['dependabot[bot]']
+
+# /lgtm records the reviewed commit as a prow/lgtm commit status and merges only while the head
+# still carries it (needs statuses: write); this is the default
+lgtm:
+  bind_to_commit: true

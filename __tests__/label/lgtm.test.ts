@@ -11,6 +11,7 @@ import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers } from '../utils/ownersFixtures'
 
@@ -684,6 +685,8 @@ reviewers:
         { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- ryan\n' },
         ['sdk/x.go', 'docs/y.md'],
       ),
+      http.post(`${utils.api}/repos/Codertocat/Hello-World/statuses/headsha`, utils.mockResponse(201, {})),
+      utils.lgtmStatus('headsha'),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
@@ -691,6 +694,193 @@ reviewers:
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({ labels: ['lgtm'] })
     expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  describe('bound to the head commit', () => {
+    const repo = `${utils.api}/repos/Codertocat/Hello-World`
+    let calls: string[]
+
+    beforeEach(() => {
+      calls = []
+      server.events.on('request:start', ({ request }) => {
+        calls.push(`${request.method} ${new URL(request.url).pathname}`)
+      })
+      server.use(
+        http.get(`${utils.api}/orgs/Codertocat/members/Codertocat`, utils.mockResponse(204)),
+        http.get(`${repo}/collaborators/Codertocat`, utils.mockResponse(404)),
+        utils.repoHasLabels(['lgtm']),
+        utils.lgtmStatus('headsha'),
+      )
+    })
+
+    it('/lgtm on a pull request reads it, records the prow/lgtm status on its head, then labels', async () => {
+      const status = new utils.ObserveRequest()
+      const label = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {}, status)),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+        http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true })),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+      await expect(status.called()).resolves.toBe('called')
+      await expect(label.called()).resolves.toBe('called')
+      expect(await status.body()).toEqual({
+        state: 'success',
+        context: 'prow/lgtm',
+        description: 'lgtm by Codertocat at headsha',
+        target_url: 'https://github.com/Codertocat/Hello-World/issues/1#issuecomment-492700400',
+      })
+      const pull = calls.indexOf('GET /repos/Codertocat/Hello-World/pulls/1')
+      const bind = calls.indexOf('POST /repos/Codertocat/Hello-World/statuses/headsha')
+      const add = calls.indexOf('POST /repos/Codertocat/Hello-World/issues/1/labels')
+      expect(pull).toBeGreaterThanOrEqual(0)
+      expect(bind).toBeGreaterThan(pull)
+      expect(add).toBeGreaterThan(bind)
+      // the pull request read is the one the authorization already made; binding costs one status post
+      expect(calls.filter(call => call === 'GET /repos/Codertocat/Hello-World/pulls/1').length).toBeLessThanOrEqual(2)
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('a 403 on the status fails the command with the permission to grant and applies no label', async () => {
+      const label = new utils.ObserveRequest()
+      const reply = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+      const wantErr = 'cannot bind lgtm to the commit: grant `statuses: write` to the workflow (or set `lgtm.bind_to_commit: false`)'
+      await expect(reply.called()).resolves.toBe('called')
+      expect(await reply.body().then(body => body.body)).toBe(wantErr)
+      await expect(label.notCalled()).resolves.toBe('not called')
+      expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
+    })
+
+    it('any other status failure fails the command and applies no label', async () => {
+      const label = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(500, { message: 'boom' })),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {})),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+      await expect(label.notCalled()).resolves.toBe('not called')
+      expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not bind lgtm to headsha'))
+    })
+
+    it('lgtm.bind_to_commit: false applies the label with no status call at all', async () => {
+      const file = structuredClone(labelFileContents)
+      file.content = Buffer.from('lgtm:\n  bind_to_commit: false\n').toString('base64')
+      const status = new utils.ObserveRequest()
+      const label = new utils.ObserveRequest()
+      server.use(
+        http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file)),
+        ...prHandlers({}, ['src/file1.txt'], { labels: [{ name: 'lgtm' }] }),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {}, status)),
+        http.get(`${repo}/commits/headsha/status`, utils.mockResponse(200, { state: 'pending', statuses: [] }, status)),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+        http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true })),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+      await expect(label.called()).resolves.toBe('called')
+      await expect(status.notCalled()).resolves.toBe('not called')
+      expect(calls.some(call => call.includes('/statuses/') || call.endsWith('/status'))).toBe(false)
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('/lgtm cancel on a pull request removes the label and sets the head status to pending', async () => {
+      const remove = new utils.ObserveRequest()
+      const status = new utils.ObserveRequest()
+      // the pull request read is the one made after the removal
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }] })),
+        http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [], remove)),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {}, status)),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm cancel')))
+
+      await expect(remove.called()).resolves.toBe('called')
+      await expect(status.called()).resolves.toBe('called')
+      expect(await status.body()).toEqual({ state: 'pending', context: 'prow/lgtm', description: 'lgtm cancelled by Codertocat' })
+      expect(calls.indexOf('POST /repos/Codertocat/Hello-World/statuses/headsha')).toBeGreaterThan(calls.indexOf('DELETE /repos/Codertocat/Hello-World/issues/1/labels/lgtm'))
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('/remove-lgtm by the author needs no reviewer check and still voids the binding', async () => {
+      const status = new utils.ObserveRequest()
+      const membership = new utils.ObserveRequest()
+      server.use(
+        http.get(`${utils.api}/orgs/Codertocat/members/Codertocat`, utils.mockResponse(204, null, membership)),
+        ...prHandlers({}, ['src/file1.txt']),
+        http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }] })),
+        http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [])),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {}, status)),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/remove-lgtm', 'Codertocat', 'Codertocat')))
+
+      await expect(status.called()).resolves.toBe('called')
+      await expect(membership.notCalled()).resolves.toBe('not called')
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('a 403 on the cancel status still removes the label and only warns', async () => {
+      const remove = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }] })),
+        http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [], remove)),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm cancel')))
+
+      await expect(remove.called()).resolves.toBe('called')
+      expect(warning).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('could not set the prow/lgtm status of headsha to pending'))
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('/lgtm cancel with no lgtm on the pull request touches neither label nor status', async () => {
+      const status = new utils.ObserveRequest()
+      const remove = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),
+        http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [], remove)),
+        http.post(`${repo}/statuses/headsha`, utils.mockResponse(201, {}, status)),
+      )
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm cancel')))
+
+      await expect(remove.notCalled()).resolves.toBe('not called')
+      await expect(status.notCalled()).resolves.toBe('not called')
+      expect(setFailed).not.toHaveBeenCalled()
+    })
   })
 
   it('fails on a PR when the commenter reviews none of the changed files', async () => {

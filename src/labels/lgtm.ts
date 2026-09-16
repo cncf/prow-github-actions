@@ -4,15 +4,21 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
+import { bindLgtm, lgtmLabel, lgtmSettings, unbindLgtm } from '../plugins/lgtmBinding'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
-import { cancelLabel, labelIssue } from '../utils/labeling'
+import { loadProwConfig } from '../utils/config'
+import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
+import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 /**
- * /lgtm will add the lgtm label.
- * /lgtm cancel and /remove-lgtm remove it.
+ * /lgtm will add the lgtm label. On a pull request the label is first bound
+ * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
+ * the label is applied only once the status is recorded, so no unbound
+ * label is ever left behind.
+ * /lgtm cancel and /remove-lgtm remove it and void the binding.
  * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
@@ -27,6 +33,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
   const commentBody: string = context.payload.comment?.body
   const commenterId: string = context.payload.comment?.user?.login
   const isAuthor = commenterId === context.payload.issue?.user?.login
+  const isPullRequest = context.payload.issue?.pull_request !== undefined
 
   if (issueNumber === undefined) {
     throw new Error(
@@ -42,12 +49,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
       await assertReviewer(octokit, context, issueNumber, commenterId)
     }
 
-    try {
-      await cancelLabel(octokit, context, issueNumber, 'lgtm')
-    }
-    catch (e) {
-      throw new Error(`could not remove latest review: ${e}`)
-    }
+    await cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequest)
     return
   }
 
@@ -57,7 +59,54 @@ export async function lgtm(context: Context = github.context): Promise<void> {
 
   await assertReviewer(octokit, context, issueNumber, commenterId)
 
-  await labelIssue(octokit, context, issueNumber, ['lgtm'])
+  if (isPullRequest && (await bindsToCommit(octokit, context))) {
+    const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber)
+    try {
+      await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url)
+    }
+    catch (e) {
+      await refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e)
+    }
+  }
+
+  await labelIssue(octokit, context, issueNumber, [lgtmLabel])
+}
+
+async function bindsToCommit(octokit: Octokit, context: Context): Promise<boolean> {
+  return lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit
+}
+
+async function cancelLgtm(
+  octokit: Octokit,
+  context: Context,
+  issueNumber: number,
+  commenterId: string,
+  isPullRequest: boolean,
+): Promise<void> {
+  let currentLabels: string[]
+  try {
+    currentLabels = await getCurrentLabels(octokit, context, issueNumber)
+  }
+  catch (e) {
+    throw new Error(`could not remove latest review: could not get labels from issue: ${e}`)
+  }
+
+  if (!currentLabels.includes(lgtmLabel)) {
+    core.debug(`could not find ${lgtmLabel} to remove`)
+    return
+  }
+
+  try {
+    await removeLabels(octokit, context, issueNumber, [lgtmLabel])
+  }
+  catch (e) {
+    throw new Error(`could not remove latest review: ${e}`)
+  }
+
+  if (isPullRequest && (await bindsToCommit(octokit, context))) {
+    const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber)
+    await unbindLgtm(octokit, context, headSha, `lgtm cancelled by ${commenterId}`)
+  }
 }
 
 async function assertReviewer(

@@ -307,6 +307,7 @@ describe('approveOnPullRequest', () => {
     const merge = new utils.ObserveRequest()
     const order: string[] = []
     server.use(
+      utils.lgtmStatus('headsha'),
       http.post(`${repo}/issues/1/labels`, async (info) => {
         order.push('label')
         return utils.mockResponse(200, [], writes.addLabels)(info)
@@ -405,7 +406,7 @@ describe('approveOnReview', () => {
   it('runs through handlePullReqReview before tide', async () => {
     const writes = serve({ author: 'carol', labels: ['lgtm'], reviews: [{ state: 'APPROVED', user: { login: 'bob' } }] })
     const merge = new utils.ObserveRequest()
-    server.use(http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, merge)))
+    server.use(utils.lgtmStatus('headsha'), http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, merge)))
     let pulls = 0
     server.use(http.get(`${repo}/pulls/1`, () => {
       pulls++

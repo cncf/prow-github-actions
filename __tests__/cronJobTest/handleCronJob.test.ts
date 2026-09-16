@@ -19,18 +19,20 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 function serveMergeablePr() {
+  const payload = structuredClone(listPullReqs)
+  payload[0].labels[0].name = 'lgtm'
   server.use(
     ...utils.noOrgOrRepoConfigExcept(),
     utils.defaultBranchTree(),
+    utils.lgtmStatus(),
     http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
       const page = new URL(request.url).searchParams.get('page')
-      const payload = structuredClone(listPullReqs)
-      payload[0].labels[0].name = 'lgtm'
       return new Response(JSON.stringify(page === '1' ? payload : []), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
     }),
+    http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/2`, utils.mockResponse(200, { ...payload[0], mergeable: true, mergeable_state: 'clean' })),
   )
   const mergeReq = new utils.ObserveRequest()
   server.use(

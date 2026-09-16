@@ -16,8 +16,8 @@ code on `main` does today.
 | prow.k8s.io | Here | Notes |
 | --- | --- | --- |
 | `approve` plugin: `/approve`, `/approve cancel`, `/approve no-issue` | ✓ | With OWNERS files: aggregated coverage approval, `approved` label, `[APPROVALNOTIFIER]` comment, no bot review. Without: membership check plus a bot `Approve` review. [commands](./commands.md#approve) |
-| `lgtm` plugin: `/lgtm`, `/lgtm cancel`, `/remove-lgtm` | ✓ | Refused for the PR author; removed on push; never set by a GitHub review. [commands](./commands.md) |
-| `tide`: merge when the gate passes | ✓ | Event-driven plus a cron backstop; `mergeable_state` gate on the event path; `merge`, `squash` or `rebase`. [automatic merging](./automatic-merging.md) |
+| `lgtm` plugin: `/lgtm`, `/lgtm cancel`, `/remove-lgtm` | ✓ | Refused for the PR author; bound to the reviewed commit with a `prow/lgtm` status and removed on push; never set by a GitHub review. [commands](./commands.md) |
+| `tide`: merge when the gate passes | ✓ | Event-driven plus a cron backstop; one merge path checks the gate, the `lgtm` binding (a stale `lgtm` never merges) and `mergeable_state`; `merge`, `squash` or `rebase`. [automatic merging](./automatic-merging.md) |
 | `blunderbuss`: reviewers requested on open | ✓ | `/auto-cc` reruns it on demand; drafts wait for `ready_for_review` by default. [configuration](./configuration.md#blunderbuss) |
 | `owners-label`: labels from OWNERS files | ✓ | Applies the **union** of `labels:` along the OWNERS walk (Prow: deepest file only). [labeling](./labeling.md#labels-from-owners-files) |
 | `require-matching-label`: `needs-*` labels | ✓ | `/check-required-labels` re-evaluates every rule; a human removing `needs-*` gets it re-added. [configuration](./configuration.md#require_matching_label) |
@@ -112,6 +112,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 # One run per comment (commands are never collapsed); per event+action for everything else,
 # so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
@@ -196,7 +197,8 @@ What changes the moment the default branch carries any OWNERS file:
 | — | reviewers are auto-requested from OWNERS when a PR opens (blunderbuss) |
 | — | OWNERS `labels:` are applied to PRs touching that tree (owners-label) |
 
-`approved` is sticky across pushes; `lgtm` is removed on every push and must be re-earned.
+`approved` is sticky across pushes; `lgtm` is bound to the commit it reviewed, is removed on
+every push and must be re-earned.
 [commands](./commands.md#approve) and [automatic merging](./automatic-merging.md#the-merge-gate)
 have the details.
 
@@ -210,7 +212,8 @@ lines.
 | --- | --- |
 | `/kind cleanup` | `kind/cleanup` applied, `needs-kind` removed **in the same run** |
 | `/lgtm` as the PR author | refused with the comment "you cannot LGTM your own PR."; the run is marked failed |
-| `/approve` and `/lgtm` on **two lines** of one comment from a second account that is an OWNERS reviewer/approver | `lgtm` applied, `approved` once coverage is complete, merged seconds later (we observed 3 s) |
+| `/approve` and `/lgtm` on **two lines** of one comment from a second account that is an OWNERS reviewer/approver | a green `prow/lgtm` check on the head, `lgtm` applied, `approved` once coverage is complete, merged seconds later (we observed 3 s) |
+| push a commit to the PR, then re-run *Actions → Prow* on `schedule` or wait for the next check suite | `lgtm` removed with the comment "`lgtm` is not bound to the current head commit"; nothing merges until a new `/lgtm` |
 | `/approve /lgtm` on **one line** | nothing beyond `/approve` with the argument `/lgtm`, which is ignored: a command must start a line ([commands](./commands.md#command-syntax)) |
 
 ## Rulesets, tokens and other day-one surprises
@@ -231,7 +234,8 @@ The deliberate divergences, each documented where it lives:
 - a human removing a `needs-*` label gets it re-added (Prow only reacts to labels matching the rule's regexp) — [configuration](./configuration.md#require_matching_label)
 - owners-label applies the **union** of `labels:` along the OWNERS walk, not just the deepest file's — [labeling](./labeling.md#labels-from-owners-files)
 - `/hold` applies `do-not-merge/hold`; the legacy `hold` label still blocks and is removed by cancel — [automatic merging](./automatic-merging.md#upgrading-from-the-hold-label)
-- the event path merges only on `mergeable_state` `clean`/`has_hooks`; the cron merges blindly and reports GitHub's refusals — [automatic merging](./automatic-merging.md)
+- every merge path, the cron included, merges only on `mergeable_state` `clean`/`has_hooks` — [automatic merging](./automatic-merging.md)
+- `lgtm` is bound to the head commit with a `prow/lgtm` commit status and a stale `lgtm` is stripped by whichever path evaluates the PR next; Prow relies on the `synchronize` event alone — [automatic merging](./automatic-merging.md#lgtm-is-bound-to-a-commit)
 - on OWNERS repositories `/approve` submits no bot review — [commands](./commands.md#approve)
 - comment commands that write a label evaluate `needs-*` and the merge gate in the same run, because the bot's own label writes fire no events; Prow's tide re-syncs on a loop instead — [events](./events.md#the-bots-writes-fire-no-events)
 

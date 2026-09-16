@@ -40803,7 +40803,7 @@ const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm'];
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40952,8 +40952,8 @@ function isNotFound(error) {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide`, `hold`,
- * `blunderbuss` and `approve` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
+ * `approve` and `lgtm` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40992,6 +40992,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.approve !== undefined) {
         config.approve = normalizeApprove(source, loaded.approve);
+    }
+    if (loaded.lgtm !== undefined) {
+        config.lgtm = normalizeLgtm(source, loaded.lgtm);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41157,10 +41160,19 @@ function normalizeApprove(source, raw) {
     }
     return stripUndefined(Object.fromEntries(approveFlags.map(field => [field, raw[field]])));
 }
+function normalizeLgtm(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: lgtm must be a mapping`);
+    }
+    if (raw.bind_to_commit !== undefined && typeof raw.bind_to_commit !== 'boolean') {
+        throw new Error(`${source}: lgtm.bind_to_commit must be a boolean`);
+    }
+    return stripUndefined({ bind_to_commit: raw.bind_to_commit });
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide, hold, blunderbuss and
- * approve shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
+ * approve and lgtm shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41173,6 +41185,7 @@ function mergeProwConfig(base, over) {
         hold: { ...base.hold, ...over.hold },
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
         approve: { ...base.approve, ...over.approve },
+        lgtm: { ...base.lgtm, ...over.lgtm },
     };
 }
 /**
@@ -41543,35 +41556,6 @@ function addPrefix(prefix, args) {
         toReturn.push(`${prefix}/${arg}`);
     }
     return toReturn;
-}
-/**
- * cancelLabel will remove an associated label
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param labels - the label to remove from the issue
- */
-async function cancelLabel(octokit, context, issueNum, label) {
-    let currentLabels = [];
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNum);
-        core_debug(`remove: found labels for issue ${currentLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    if (currentLabels.includes(label)) {
-        try {
-            await removeLabels(octokit, context, issueNum, [label]);
-        }
-        catch (e) {
-            throw new Error(`could not remove ${label} label: ${e}`);
-        }
-    }
-    else {
-        core_debug(`could not find ${label} to remove`);
-    }
 }
 // isNotFound reports whether an octokit error is a 404
 function labeling_isNotFound(error) {
@@ -42065,6 +42049,199 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/comments.js
+/**
+ * createComment comments on the specified issue or pull request
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue associated with this runtime
+ * @param message - the comment message body
+ */
+async function createComment(octokit, context, issueNum, message) {
+    try {
+        await octokit.issues.createComment({
+            ...context.repo,
+            issue_number: issueNum,
+            body: message,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not add comment: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
+
+
+
+
+
+
+const lgtmLabel = 'lgtm';
+/** the commit status context that records which head commit `/lgtm` reviewed */
+const lgtmStatusContext = 'prow/lgtm';
+const defaultLgtmSettings = { bind_to_commit: true };
+const permissionHint = 'grant `statuses: write` to the workflow (or set `lgtm.bind_to_commit: false`)';
+/**
+ * lgtmSettings resolves the `lgtm` configuration: binding on by default.
+ *
+ * @param config - the merged prow configuration
+ */
+function lgtmSettings(config) {
+    return { bind_to_commit: config.lgtm.bind_to_commit ?? true };
+}
+function shortSha(sha) {
+    return sha.slice(0, 7);
+}
+function hasLgtmLabel(labels) {
+    return labels.some(label => label.toLowerCase() === lgtmLabel);
+}
+function staleMarker(sha) {
+    return `<!-- prow-github-actions/lgtm-stale: ${shortSha(sha)} -->`;
+}
+/**
+ * bindLgtm records `sha` as the commit the lgtm reviewed: a `prow/lgtm`
+ * commit status in state `success`. A status is the binding of choice
+ * because only a write-token holder can set one (a pull request author
+ * cannot forge it) and because it is per commit by construction: a new head
+ * simply has none. A 403 is reported with the permission to grant.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ * @param by - the login who said lgtm
+ * @param targetUrl - the comment or pull request to link the status to
+ */
+async function bindLgtm(octokit, context, sha, by, targetUrl) {
+    try {
+        await octokit.repos.createCommitStatus({
+            ...context.repo,
+            sha,
+            context: lgtmStatusContext,
+            state: 'success',
+            description: `lgtm by ${by} at ${shortSha(sha)}`.slice(0, 140),
+            ...(targetUrl === undefined ? {} : { target_url: targetUrl }),
+        });
+    }
+    catch (e) {
+        if (isForbidden(e)) {
+            throw new Error(`cannot bind lgtm to the commit: ${permissionHint}`);
+        }
+        throw new Error(`could not bind lgtm to ${shortSha(sha)}: ${e}`);
+    }
+}
+/**
+ * unbindLgtm sets the head's `prow/lgtm` status to `pending` so the checks
+ * UI stops showing a green "lgtm by ..." once the label is gone. A refused
+ * write is a warning: the label, not the status, is the gate.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ * @param description - why the binding is void, ex: `lgtm cancelled by alice`
+ */
+async function unbindLgtm(octokit, context, sha, description) {
+    try {
+        await octokit.repos.createCommitStatus({
+            ...context.repo,
+            sha,
+            context: lgtmStatusContext,
+            state: 'pending',
+            description: description.slice(0, 140),
+        });
+    }
+    catch (e) {
+        warning(`could not set the ${lgtmStatusContext} status of ${shortSha(sha)} to pending: ${e}`);
+    }
+}
+/**
+ * isLgtmBound reports whether `sha` carries a `prow/lgtm` status in state
+ * `success`. The combined status answers with the latest status per context,
+ * so a later `pending` (cancel, stale) wins over an earlier `success`.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ */
+async function isLgtmBound(octokit, context, sha) {
+    let statuses;
+    try {
+        statuses = (await octokit.repos.getCombinedStatusForRef({ ...context.repo, ref: sha, per_page: 100 })).data.statuses;
+    }
+    catch (e) {
+        const hint = isForbidden(e) ? `${permissionHint}: ` : '';
+        throw new Error(`could not read the ${lgtmStatusContext} status of ${shortSha(sha)}: ${hint}${e}`);
+    }
+    return statuses.find(status => status.context === lgtmStatusContext)?.state === 'success';
+}
+/**
+ * stripStaleLgtm removes an `lgtm` label that is not bound to the pull
+ * request's head: the label goes (a refused removal throws), the head's
+ * status is set to `pending`, and one comment per head explains why.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param number - the pull request number
+ * @param sha - the head commit the label is not bound to
+ */
+async function stripStaleLgtm(octokit, context, number, sha) {
+    const short = shortSha(sha);
+    await removeLabels(octokit, context, number, [lgtmLabel]);
+    await unbindLgtm(octokit, context, sha, `lgtm removed: not bound to ${short}`);
+    const marker = staleMarker(sha);
+    try {
+        const comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: number, per_page: 100 });
+        if (comments.some(comment => isBot(comment.user) && (comment.body ?? '').includes(marker))) {
+            core_debug(`lgtm: #${number} was already told about ${short}`);
+            return;
+        }
+        await createComment(octokit, context, number, [
+            `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`,
+            '',
+            marker,
+        ].join('\n'));
+    }
+    catch (e) {
+        warning(`could not comment on pr #${number} about the stale lgtm: ${e}`);
+    }
+}
+/**
+ * lgtmOnPullRequest is the `pull_request` / `pull_request_target` handler
+ * for a hand-applied `lgtm`: on `labeled` by a human it binds the label to
+ * the payload's head commit. The bot's own label writes fire no event, and
+ * `unlabeled` needs nothing: the label is the gate, the status the binding.
+ *
+ * @param context - the github context of the current action event
+ */
+async function lgtmOnPullRequest(context = github_context) {
+    if (context.payload.action !== 'labeled' || String(context.payload.label?.name ?? '').toLowerCase() !== lgtmLabel) {
+        return;
+    }
+    const sender = context.payload.sender;
+    if (isBot(sender)) {
+        core_debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`);
+        return;
+    }
+    const sha = context.payload.pull_request?.head?.sha;
+    if (typeof sha !== 'string') {
+        throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    if (!lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit) {
+        core_debug('lgtm: bind_to_commit is false');
+        return;
+    }
+    await bindLgtm(octokit, context, sha, String(sender?.login ?? 'unknown'), context.payload.pull_request?.html_url);
+    info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`);
+}
+function isBot(user) {
+    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
+}
+function isForbidden(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 403;
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
 /**
  * matchesLabelPattern reports whether a label name matches a tide label
@@ -42432,6 +42609,7 @@ function sleep(ms) {
 
 
 
+
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
 // `unknown`, so poll with backoff (7 s in total) before giving up on this event
 const unknownRetryDelaysMs = [1000, 2000, 4000];
@@ -42454,7 +42632,7 @@ const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'actio
  */
 async function fetchMergeability(octokit, context, number, options = {}) {
     const retryIf = options.retryIf ?? (() => true);
-    let pr = await getPull(octokit, context, number);
+    let pr = options.initial ?? await getPull(octokit, context, number);
     for (const delay of unknownRetryDelaysMs) {
         if (!isUnknown(pr) || !retryIf(pr)) {
             return pr;
@@ -42470,59 +42648,100 @@ async function fetchMergeability(octokit, context, number, options = {}) {
 }
 /**
  * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
- * cron and the event handlers. A refused merge is returned, not thrown.
+ * cron and the event handlers. The merge is pinned to `sha`, the head the
+ * caller verified: GitHub refuses with 409 when the head moved since. A
+ * refused merge is returned, not thrown.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param sha - the head commit the merge must apply to
  */
-async function mergeOnce(octokit, context, number, tide) {
+async function mergeOnce(octokit, context, number, tide, sha) {
     try {
         await octokit.pulls.merge({
             ...context.repo,
             pull_number: number,
             merge_method: tide.merge_method,
+            sha,
         });
         return { result: 'merged' };
     }
     catch (e) {
-        return { result: 'failed', message: e instanceof Error ? e.message : String(e) };
+        const status = typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' ? e.status : undefined;
+        return { result: 'failed', message: e instanceof Error ? e.message : String(e), status };
     }
 }
 /**
- * tryMergePullRequest evaluates one pull request against the tide gate and
- * GitHub's own mergeability and merges it when both pass. Unlike the cron,
- * it only merges a `clean` (or `has_hooks`) pull request; every other state
- * is skipped with the state as the reason. A refused merge is logged as an
- * error and reported as `failed`; the caller decides whether that fails the run.
+ * evaluateMerge evaluates one pull request in three steps, in this order:
+ * the tide label gate, the lgtm binding (an `lgtm` label counts only while
+ * the head commit carries the `prow/lgtm` status; a stale one is stripped
+ * with an explanatory comment) and GitHub's own mergeability, of which only
+ * `clean` and `has_hooks` merge. The merge is pinned to the head that was
+ * verified: a head that moved in between is skipped, not merged. Every path
+ * to a merge (events, the comment sweep, the cron jobs) goes through here.
+ * A refused merge is logged as an error and reported as `failed` with
+ * GitHub's message; the caller decides whether that fails the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
  */
-async function tryMergePullRequest(octokit, context, number, tide) {
+async function evaluateMerge(octokit, context, number, tide, lgtm = defaultLgtmSettings) {
+    const first = await getPull(octokit, context, number);
+    let reason = blockedReason(first, tide);
+    if (reason === undefined && lgtm.bind_to_commit && hasLgtmLabel(first.labels) && !(await isLgtmBound(octokit, context, first.sha))) {
+        await stripStaleLgtm(octokit, context, number, first.sha);
+        reason = `lgtm not bound to ${shortSha(first.sha)}`;
+    }
+    if (reason !== undefined) {
+        return skip(number, reason);
+    }
     const pr = await fetchMergeability(octokit, context, number, {
         retryIf: candidate => blockedReason(candidate, tide) === undefined,
+        initial: first,
     });
-    const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
+    reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
     if (reason !== undefined) {
-        info(`skipping pr #${number}: ${reason}`);
-        return 'skipped';
+        return skip(number, reason);
     }
-    const outcome = await mergeOnce(octokit, context, number, tide);
+    if (pr.sha !== first.sha) {
+        return skip(number, 'head moved during evaluation');
+    }
+    const outcome = await mergeOnce(octokit, context, number, tide, first.sha);
     if (outcome.result === 'merged') {
         info(`merged pr #${number}`);
-        return 'merged';
+        return outcome;
     }
     // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
     if (await isMerged(octokit, context, number)) {
-        info(`pr #${number} was merged concurrently`);
-        return 'skipped';
+        return skip(number, 'merged concurrently');
+    }
+    // 409: the head (or the base) moved between the verification and the merge; the next event re-evaluates
+    if (outcome.status === 409) {
+        return skip(number, /base branch/i.test(outcome.message) ? 'base branch moved' : 'head moved');
     }
     error(`could not merge pr #${number}: ${outcome.message}`);
-    return 'failed';
+    return outcome;
+}
+/**
+ * tryMergePullRequest is evaluateMerge without the reason or message.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
+ */
+async function tryMergePullRequest(octokit, context, number, tide, lgtm = defaultLgtmSettings) {
+    return (await evaluateMerge(octokit, context, number, tide, lgtm)).result;
+}
+function skip(number, reason) {
+    info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`);
+    return { result: 'skipped', reason };
 }
 function blockedReason(pr, tide) {
     if (pr.merged) {
@@ -42661,12 +42880,13 @@ async function evaluate(context, numbers, lookup) {
         return;
     }
     const tide = await loadTide(octokit, context);
+    const lgtm = lgtmSettings(config);
     const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
     if (candidates.length === 0) {
         core_debug('tide: no open pull request to evaluate');
         return;
     }
-    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide)));
+    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
     const failed = candidates.filter((_, i) => results[i] === 'failed');
     if (failed.length > 0) {
         throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`);
@@ -42686,13 +42906,15 @@ function pullNumber(context) {
 
 
 
+
+
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`). It is the backstop
- * of the event-driven tide handlers: it does not read each PR's
- * mergeable_state and lets GitHub refuse a merge instead.
+ * and evaluate every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
+ * through the shared merge path: the lgtm binding, GitHub's mergeability,
+ * then the merge. It is the backstop of the event-driven tide handlers.
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -42704,7 +42926,10 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     info(`starting lgtm merger page: ${currentPage}`);
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const tide = await loadTide(octokit, context);
+    const policy = {
+        tide: await loadTide(octokit, context),
+        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
+    };
     // Get next batch
     let prs;
     try {
@@ -42730,7 +42955,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
             return;
         }
         try {
-            if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
+            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
                 progress.jobsDone++;
             }
         }
@@ -42764,30 +42989,29 @@ async function getOpenPrs(octokit, context = github_context, page) {
     return prResults.data;
 }
 /**
- * Attempts to merge a PR that passes the tide merge gate; a PR that does
- * not is skipped with the reason logged. A refused merge is logged as an
- * error annotation and recorded in failures instead of aborting the run.
+ * Evaluates a PR that passes the tide merge gate on its listed labels
+ * through the shared merge path; a PR that does not is skipped with the
+ * reason logged and costs no further call. A refused merge is recorded in
+ * failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
- * @param tide - the resolved tide configuration
+ * @param policy - the resolved tide and lgtm configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
-async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
-    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+async function tryMergePr(pr, octokit, context = github_context, policy, failures) {
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), policy.tide);
     if (!gate.ok) {
         info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
-    const outcome = await mergeOnce(octokit, context, pr.number, tide);
-    if (outcome.result === 'merged') {
-        return true;
+    const verdict = await evaluateMerge(octokit, context, pr.number, policy.tide, policy.lgtm);
+    if (verdict.result === 'failed') {
+        failures.push({ number: pr.number, message: verdict.message });
     }
-    error(`could not merge pr #${pr.number}: ${outcome.message}`);
-    failures.push({ number: pr.number, message: outcome.message });
-    return false;
+    return verdict.result === 'merged';
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
@@ -42936,6 +43160,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
     return {
         number: pullNumber,
         baseSha: pull.base.sha,
+        headSha: pull.head.sha,
         author: (pull.user?.login ?? '').toLowerCase(),
         draft: pull.draft === true,
         requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
@@ -43206,28 +43431,6 @@ async function retrieveOwnersFile(octokit, context) {
     return decoded;
 }
 
-;// CONCATENATED MODULE: ./lib/utils/comments.js
-/**
- * createComment comments on the specified issue or pull request
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param message - the comment message body
- */
-async function createComment(octokit, context, issueNum, message) {
-    try {
-        await octokit.issues.createComment({
-            ...context.repo,
-            issue_number: issueNum,
-            body: message,
-        });
-    }
-    catch (e) {
-        throw new Error(`could not add comment: ${e}`);
-    }
-}
-
 ;// CONCATENATED MODULE: ./lib/labels/lgtm.js
 
 
@@ -43236,9 +43439,15 @@ async function createComment(octokit, context, issueNum, message) {
 
 
 
+
+
+
 /**
- * /lgtm will add the lgtm label.
- * /lgtm cancel and /remove-lgtm remove it.
+ * /lgtm will add the lgtm label. On a pull request the label is first bound
+ * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
+ * the label is applied only once the status is recorded, so no unbound
+ * label is ever left behind.
+ * /lgtm cancel and /remove-lgtm remove it and void the binding.
  * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
  * Note - this label is used to indicate automatic merging
  * if the user has configured a cron job to perform automatic merging
@@ -43252,6 +43461,7 @@ async function lgtm(context = github_context) {
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     const isAuthor = commenterId === context.payload.issue?.user?.login;
+    const isPullRequest = context.payload.issue?.pull_request !== undefined;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${context.payload}`);
     }
@@ -43261,19 +43471,49 @@ async function lgtm(context = github_context) {
         if (!isAuthor) {
             await assertReviewer(octokit, context, issueNumber, commenterId);
         }
-        try {
-            await cancelLabel(octokit, context, issueNumber, 'lgtm');
-        }
-        catch (e) {
-            throw new Error(`could not remove latest review: ${e}`);
-        }
+        await cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequest);
         return;
     }
     if (isAuthor) {
         await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
     }
     await assertReviewer(octokit, context, issueNumber, commenterId);
-    await labelIssue(octokit, context, issueNumber, ['lgtm']);
+    if (isPullRequest && (await bindsToCommit(octokit, context))) {
+        const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
+        try {
+            await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url);
+        }
+        catch (e) {
+            await refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e);
+        }
+    }
+    await labelIssue(octokit, context, issueNumber, [lgtmLabel]);
+}
+async function bindsToCommit(octokit, context) {
+    return lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit;
+}
+async function cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequest) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not remove latest review: could not get labels from issue: ${e}`);
+    }
+    if (!currentLabels.includes(lgtmLabel)) {
+        core_debug(`could not find ${lgtmLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, [lgtmLabel]);
+    }
+    catch (e) {
+        throw new Error(`could not remove latest review: ${e}`);
+    }
+    if (isPullRequest && (await bindsToCommit(octokit, context))) {
+        const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
+        await unbindLgtm(octokit, context, headSha, `lgtm cancelled by ${commenterId}`);
+    }
 }
 async function assertReviewer(octokit, context, issueNumber, commenterId) {
     try {
@@ -43696,9 +43936,9 @@ async function botCommentsWithMarker(octokit, context, issueNumber, rule) {
     catch (e) {
         throw new Error(`could not list comments: ${e}`);
     }
-    return comments.filter(comment => isBot(comment) && (comment.body ?? '').includes(marker));
+    return comments.filter(comment => requireMatchingLabel_isBot(comment) && (comment.body ?? '').includes(marker));
 }
-function isBot(comment) {
+function requireMatchingLabel_isBot(comment) {
     return comment.user?.type === 'Bot' || comment.user?.login === 'github-actions[bot]';
 }
 function requireMatchingLabel_sameLabel(a, b) {
@@ -45258,8 +45498,9 @@ async function onPrLgtm(context) {
 
 
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; approve before tide so the label it applies is seen */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, approveOnPullRequest, tideOnPullRequest];
+
+/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them */
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, tideOnPullRequest];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on

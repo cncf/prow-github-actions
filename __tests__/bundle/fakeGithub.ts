@@ -27,6 +27,8 @@ export interface FakeGithub {
   route: (method: string, pattern: string | RegExp, response: Handler | FakeResponse) => void
   /** answers with one response per call in order, repeating the last one */
   routeSequence: (method: string, pattern: string | RegExp, responses: FakeResponse[]) => void
+  /** serves the combined commit status of `sha` under `repo` (`/repos/o/r`) and accepts status posts to it */
+  commitStatuses: (repo: string, sha: string, statuses: { context: string, state: string }[]) => void
   requestsMatching: (method: string, pathRegex: RegExp) => RecordedRequest[]
   reset: () => void
   close: () => Promise<void>
@@ -99,6 +101,10 @@ export async function start(): Promise<FakeGithub> {
     routeSequence(method, pattern, responses) {
       let calls = 0
       routes.push({ method: method.toUpperCase(), pattern, handler: () => responses[Math.min(calls++, responses.length - 1)] })
+    },
+    commitStatuses(repo, sha, statuses) {
+      routes.push({ method: 'GET', pattern: `${repo}/commits/${sha}/status`, handler: () => ({ status: 200, body: { state: statuses.some(s => s.state !== 'success') ? 'pending' : 'success', statuses } }) })
+      routes.push({ method: 'POST', pattern: `${repo}/statuses/${sha}`, handler: () => ({ status: 201, body: {} }) })
     },
     requestsMatching(method, pathRegex) {
       return requests.filter(r => r.method === method.toUpperCase() && pathRegex.test(r.path))
