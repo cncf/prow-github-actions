@@ -279,7 +279,7 @@ describe('templates/prow.yaml', () => {
   it('parses as the new form with the sections the guide promises', () => {
     expect(Object.keys(parsed.labels ?? {})).toEqual(expect.arrayContaining(['kind', 'priority', 'lifecycle', 'do-not-merge']))
     expect(parsed.require_matching_label?.map(rule => rule.missing_label)).toEqual(expect.arrayContaining(['needs-kind']))
-    expect(parsed.tide).toEqual({ labels: ['lgtm'], missing_labels: ['do-not-merge/*', 'needs-rebase', 'hold'], merge_method: 'merge', merge_on_events: true })
+    expect(parsed.tide).toEqual({ labels: ['lgtm'], missing_labels: ['do-not-merge/*', 'needs-rebase', 'hold'], merge_method: 'merge', merge_on_events: true, merge_queue: 'auto' })
     expect(parsed.hold).toEqual({ label: 'do-not-merge/hold' })
   })
 

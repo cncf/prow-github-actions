@@ -64,7 +64,8 @@ the pull request's GitHub Actions runs, `/ok-to-test` approves a first-time cont
 files, fork-safe automatic merging on `lgtm` (plus `approved` when the repository has
 [OWNERS files](./docs/commands.md#owners)) where `lgtm` is
 [bound to the reviewed commit](./docs/automatic-merging.md#lgtm-is-bound-to-a-commit) and never
-merges commits pushed after it, and the `label-sync` job (run it once from
+merges commits pushed after it (on a branch that requires a
+[merge queue](./docs/automatic-merging.md#merge-queues) it enqueues and GitHub merges), and the `label-sync` job (run it once from
 *Actions → Prow → Run workflow* so the labels exist). Add a `prow.yaml` to the repository or to
 your organization's `.github` repository for label families and `needs-*` rules
 ([starter](./templates/prow.yaml), [configuration](./docs/configuration.md)). The

@@ -457,6 +457,8 @@ describe('tryMergePullRequest binds lgtm to the head commit', () => {
   it('a refused pending status or comment is a warning; the label removal is what matters', async () => {
     servePull(pull(['lgtm'], { head: { sha } }))
     server.use(
+      // the stale strip breaks the gate on an event, so tide asks the queue whether it holds the pr
+      http.post(`${utils.api}/graphql`, utils.mockResponse(200, { data: { repository: { pullRequest: { id: 'PR_1', headRefOid: sha, isMergeQueueEnabled: false, isInMergeQueue: false, mergeQueueEntry: null } } } })),
       http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] })),
       http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [])),
       http.post(`${repo}/statuses/${sha}`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),

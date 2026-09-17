@@ -2,8 +2,10 @@ import type { Context } from '../src/utils/context'
 import * as github from '@actions/github'
 import { http } from 'msw'
 
+import { resetTideWarnings } from '../src/plugins/tide'
 import { resetProwConfigCache } from '../src/utils/config'
 import { resetLabelCache } from '../src/utils/labeling'
+import { resetMergeQueueWarnings } from '../src/utils/mergeQueue'
 import { resetRepoHasOwnersCache } from '../src/utils/owners'
 import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
 
@@ -111,6 +113,8 @@ function clearActionEnv() {
   resetLabelCache()
   resetPullRequestOwnersCache()
   resetRepoHasOwnersCache()
+  resetMergeQueueWarnings()
+  resetTideWarnings()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]
@@ -220,4 +224,72 @@ export function mockResponse(
       return new Response(null, { status: replyCode })
     }
   }
+}
+
+export interface GraphqlCall {
+  query: string
+  variables: Record<string, unknown>
+}
+
+export interface MergeQueueFixture {
+  /** the base branch requires a merge queue; default true */
+  enabled?: boolean
+  inQueue?: boolean
+  entry?: { state: string, position: number, enqueuer?: string }
+  headOid?: string
+  pullRequestId?: string
+  /** GraphQL error message for the enqueue mutation */
+  enqueueError?: string
+  /** GraphQL error message for the state query */
+  queryError?: string
+  dequeueError?: string
+}
+
+/**
+ * mergeQueueGraphql serves `POST /graphql`, dispatching on the operation
+ * named in the query text: the merge queue state query, the enqueue and the
+ * dequeue mutations. Every call is pushed to the returned array.
+ *
+ * @param queue - what the state query answers, and which operations fail
+ * @param calls - collects the calls, newest last
+ */
+export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlCall[] = []) {
+  const handler = http.post(`${api}/graphql`, async ({ request }) => {
+    const body = await request.json() as GraphqlCall
+    calls.push(body)
+    const respond = (data: unknown, error?: string) =>
+      new Response(JSON.stringify(error === undefined ? { data } : { data: null, errors: [{ message: error }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+
+    if (body.query.includes('enqueuePullRequest')) {
+      return queue.enqueueError === undefined
+        ? respond({ enqueuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 3 } } })
+        : respond(null, queue.enqueueError)
+    }
+    if (body.query.includes('dequeuePullRequest')) {
+      return queue.dequeueError === undefined
+        ? respond({ dequeuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } })
+        : respond(null, queue.dequeueError)
+    }
+    if (queue.queryError !== undefined) {
+      return respond(null, queue.queryError)
+    }
+    const inQueue = queue.inQueue ?? false
+    const entry = queue.entry ?? (inQueue ? { state: 'QUEUED', position: 2, enqueuer: 'github-actions' } : undefined)
+    return respond({
+      repository: {
+        pullRequest: {
+          id: queue.pullRequestId ?? 'PR_kwDOtest',
+          headRefOid: queue.headOid ?? 'headsha',
+          isMergeQueueEnabled: queue.enabled ?? true,
+          isInMergeQueue: inQueue,
+          mergeQueueEntry: entry === undefined ? null : { state: entry.state, position: entry.position, enqueuer: { login: entry.enqueuer ?? 'github-actions' } },
+        },
+      },
+    })
+  })
+  return { handler, calls }
+}
+
+export function graphqlMutations(calls: GraphqlCall[], name: string) {
+  return calls.filter(call => call.query.includes(name))
 }

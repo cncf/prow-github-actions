@@ -572,6 +572,8 @@ describe('after a command ran', () => {
     server.events.on('request:start', ({ request }) => {
       calls.push(`${request.method} ${new URL(request.url).pathname}`)
     })
+    // tide asks once whether the base branch requires a merge queue; not here
+    server.use(utils.mergeQueueGraphql({ enabled: false }).handler)
   })
 
   it('/lgtm on a clean pull request adds the label and merges in the same run', async () => {
@@ -592,7 +594,7 @@ describe('after a command ran', () => {
 
     // the binding status goes first so that no unbound label is ever left behind
     const writes = calls.filter(call => !call.startsWith('GET'))
-    expect(writes).toEqual([`POST /repos/Codertocat/Hello-World/statuses/headsha`, `POST /repos/Codertocat/Hello-World/issues/1/labels`, `PUT /repos/Codertocat/Hello-World/pulls/1/merge`])
+    expect(writes).toEqual([`POST /repos/Codertocat/Hello-World/statuses/headsha`, `POST /repos/Codertocat/Hello-World/issues/1/labels`, 'POST /graphql', `PUT /repos/Codertocat/Hello-World/pulls/1/merge`])
     expect(calls.lastIndexOf('GET /repos/Codertocat/Hello-World/pulls/1')).toBeGreaterThan(calls.indexOf('POST /repos/Codertocat/Hello-World/issues/1/labels'))
     expect(setFailed).not.toHaveBeenCalled()
   })
@@ -672,6 +674,7 @@ describe('after a command ran', () => {
     expect(calls.filter(call => !call.startsWith('GET'))).toEqual([
       'POST /repos/Codertocat/Hello-World/issues/1/labels',
       'DELETE /repos/Codertocat/Hello-World/issues/1/labels/needs-kind',
+      'POST /graphql',
     ])
     expect(calls).toContain('GET /repos/Codertocat/Hello-World/pulls/1')
     expect(setFailed).not.toHaveBeenCalled()

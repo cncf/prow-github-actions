@@ -107,6 +107,7 @@ tide:
   missing_labels: [do-not-merge/*, needs-rebase, hold]
   merge_method: merge
   merge_on_events: true
+  merge_queue: auto # enqueue into a required GitHub merge queue instead of merging; off: always merge directly
 
 # the label /hold applies; this is the default
 hold:

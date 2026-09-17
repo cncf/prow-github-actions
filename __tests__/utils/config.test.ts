@@ -1,7 +1,7 @@
 import * as core from '@actions/core'
 import { describe, expect, it, vi } from 'vitest'
 
-import { defaultHoldLabel, mergeProwConfig, parseProwConfig, resolveHoldLabel } from '../../src/utils/config'
+import { defaultHoldLabel, mergeProwConfig, parseProwConfig, resolveHoldLabel, resolveTide } from '../../src/utils/config'
 
 const legacy = `
 area:
@@ -207,6 +207,13 @@ describe('parseProwConfig', () => {
       })
     })
 
+    it('accepts merge_queue auto and off, and defaults it to auto', () => {
+      expect(parseProwConfig('x', 'tide:\n  merge_queue: off\n')).toEqual({ tide: { merge_queue: 'off' } })
+      expect(parseProwConfig('x', 'tide:\n  merge_queue: auto\n')).toEqual({ tide: { merge_queue: 'auto' } })
+      expect(resolveTide({}).merge_queue).toBe('auto')
+      expect(resolveTide({ merge_queue: 'off' }).merge_queue).toBe('off')
+    })
+
     it.each([
       ['a non-mapping', 'tide: [lgtm]\n', 'x: tide must be a mapping'],
       ['a non-list labels', 'tide:\n  labels: lgtm\n', 'x: tide.labels must be a list of label names'],
@@ -214,6 +221,7 @@ describe('parseProwConfig', () => {
       ['an empty label name', 'tide:\n  labels: [lgtm, ""]\n', 'x: tide.labels must be a list of label names'],
       ['an unknown merge method', 'tide:\n  merge_method: fast-forward\n', 'x: tide.merge_method must be one of merge, squash, rebase'],
       ['a non-boolean merge_on_events', 'tide:\n  merge_on_events: yes please\n', 'x: tide.merge_on_events must be a boolean'],
+      ['an unknown merge_queue', 'tide:\n  merge_queue: always\n', 'x: tide.merge_queue must be one of auto, off'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })

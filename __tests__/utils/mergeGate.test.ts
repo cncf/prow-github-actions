@@ -79,6 +79,7 @@ describe('resolveTide', () => {
       missing_labels: ['do-not-merge/*', 'needs-rebase', 'hold'],
       merge_method: 'merge',
       merge_on_events: true,
+      merge_queue: 'auto',
     })
   })
 
@@ -113,6 +114,7 @@ describe('resolveTide', () => {
       missing_labels: [],
       merge_method: 'merge',
       merge_on_events: true,
+      merge_queue: 'auto',
     })
   })
 })

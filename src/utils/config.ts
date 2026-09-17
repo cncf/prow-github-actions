@@ -35,12 +35,17 @@ export interface RequireMatchingLabel {
 
 export type MergeMethod = 'merge' | 'squash' | 'rebase'
 
+/** `auto`: detect a required merge queue per pull request and enqueue instead of merging; `off`: always `PUT /merge` */
+export type MergeQueueMode = 'auto' | 'off'
+
 export interface TideConfig {
   labels?: string[]
   missing_labels?: string[]
   merge_method?: MergeMethod
   /** evaluate and merge on pull_request, pull_request_review and check_suite events; default true */
   merge_on_events?: boolean
+  /** default `auto` */
+  merge_queue?: MergeQueueMode
 }
 
 /** TideConfig with every default applied, see resolveTide */
@@ -49,6 +54,7 @@ export interface ResolvedTide {
   missing_labels: string[]
   merge_method: MergeMethod
   merge_on_events: boolean
+  merge_queue: MergeQueueMode
 }
 
 export interface HoldConfig {
@@ -101,6 +107,7 @@ export interface ProwConfig {
 }
 
 const mergeMethods = ['merge', 'squash', 'rebase'] as const
+const mergeQueueModes = ['auto', 'off'] as const
 const colorPattern = /^[0-9a-f]{6}$/i
 
 export const defaultHoldLabel = 'do-not-merge/hold'
@@ -493,11 +500,16 @@ function normalizeTide(source: string, raw: unknown): TideConfig {
     throw new Error(`${source}: tide.merge_on_events must be a boolean`)
   }
 
+  if (raw.merge_queue !== undefined && !(mergeQueueModes as readonly unknown[]).includes(raw.merge_queue)) {
+    throw new Error(`${source}: tide.merge_queue must be one of ${mergeQueueModes.join(', ')}`)
+  }
+
   return stripUndefined({
     labels: raw.labels as string[] | undefined,
     missing_labels: raw.missing_labels as string[] | undefined,
     merge_method: raw.merge_method as TideConfig['merge_method'],
     merge_on_events: raw.merge_on_events as boolean | undefined,
+    merge_queue: raw.merge_queue as TideConfig['merge_queue'],
   })
 }
 
@@ -640,7 +652,7 @@ export interface ResolveTideOptions {
  * `missing_labels` the do-not-merge family, `needs-rebase` and `hold`. A
  * configured list replaces the default one, it does not extend it. The merge
  * method is `tide.merge_method`, else the `merge-method` action input, else
- * `merge`. `merge_on_events` defaults to true.
+ * `merge`. `merge_on_events` defaults to true, `merge_queue` to `auto`.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
@@ -652,6 +664,7 @@ export function resolveTide(tide: TideConfig, inputMergeMethod = '', options: Re
     missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
     merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
     merge_on_events: tide.merge_on_events ?? true,
+    merge_queue: tide.merge_queue ?? 'auto',
   }
 }
 

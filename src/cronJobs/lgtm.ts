@@ -6,7 +6,7 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { lgtmSettings } from '../plugins/lgtmBinding'
-import { evaluateMerge, loadTide } from '../plugins/tide'
+import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokit } from '../utils/octokit'
@@ -141,14 +141,15 @@ async function getOpenPrs(
  * Evaluates a PR that passes the tide merge gate on its listed labels
  * through the shared merge path; a PR that does not is skipped with the
  * reason logged and costs no further call. A refused merge is recorded in
- * failures instead of aborting the run.
+ * failures instead of aborting the run. On a branch that requires a merge
+ * queue the PR is enqueued instead; that counts as done.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
  * @param policy - the resolved tide and lgtm configuration
  * @param failures - collects PRs whose merge the api refused
- * @returns whether the PR was merged
+ * @returns whether the PR was merged or enqueued
  */
 async function tryMergePr(
   pr: PullsListResponseItem,
@@ -167,5 +168,5 @@ async function tryMergePr(
   if (verdict.result === 'failed') {
     failures.push({ number: pr.number, message: verdict.message })
   }
-  return verdict.result === 'merged'
+  return successfulResults.has(verdict.result)
 }

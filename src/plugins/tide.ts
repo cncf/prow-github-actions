@@ -8,6 +8,7 @@ import * as github from '@actions/github'
 
 import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
+import { dequeue, enqueue, enqueuedByBot, queueState } from '../utils/mergeQueue'
 import { newOctokit } from '../utils/octokit'
 import { repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
@@ -26,11 +27,18 @@ export interface Mergeability {
   sha: string
 }
 
-export type MergeResult = 'merged' | 'skipped' | 'failed'
+export type MergeResult = 'merged' | 'enqueued' | 'skipped' | 'failed'
 
 export type MergeOutcome = { result: 'merged' } | { result: 'failed', message: string, status?: number }
 
-export type MergeVerdict = { result: 'merged' } | { result: 'skipped', reason: string } | { result: 'failed', message: string }
+export type MergeVerdict
+  = { result: 'merged' }
+    | { result: 'enqueued', position?: number }
+    | { result: 'skipped', reason: string }
+    | { result: 'failed', message: string }
+
+/** the verdicts that count as success: the pull request is merged, or handed to GitHub's merge queue */
+export const successfulResults: ReadonlySet<MergeResult> = new Set<MergeResult>(['merged', 'enqueued'])
 
 export interface FetchMergeabilityOptions {
   /** called before each wait; returning false stops retrying an unknown state (default: always retry) */
@@ -45,6 +53,8 @@ export const unknownRetryDelaysMs = [1000, 2000, 4000]
 
 // `has_hooks` is `clean` with a pending non-required pre-receive hook
 const mergeableStates = new Set(['clean', 'has_hooks'])
+// in a merge queue only conflicts and drafts are ours to refuse; required checks, `behind` and `unstable` are the queue's
+const queueRefusedStates = new Set(['dirty', 'draft'])
 
 // `synchronize` is left out on purpose: a push removes lgtm (the lgtm PR job) and must not merge
 const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_for_review', 'edited'])
@@ -125,6 +135,11 @@ export async function mergeOnce(octokit: Octokit, context: Context, number: numb
  * A refused merge is logged as an error and reported as `failed` with
  * GitHub's message; the caller decides whether that fails the run.
  *
+ * When the base branch requires a merge queue (`tide.merge_queue: auto`),
+ * the gate is the ticket: a pull request that passes is enqueued, pinned to
+ * the verified head, and the queue does the rest; one that stops passing
+ * while the bot's own entry waits is dequeued.
+ *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
@@ -146,7 +161,13 @@ export async function evaluateMerge(
     reason = `lgtm not bound to ${shortSha(first.sha)}`
   }
   if (reason !== undefined) {
-    return skip(number, reason)
+    const dequeued = await dequeueIfOurs(octokit, context, number, tide, reason)
+    return skip(number, dequeued ? `${reason} (dequeued)` : reason)
+  }
+
+  const queue = tide.merge_queue === 'auto' ? await queueState(octokit, context, number) : undefined
+  if (queue?.enabled === true) {
+    return evaluateInQueue(octokit, context, number, tide, first, queue)
   }
 
   const pr = await fetchMergeability(octokit, context, number, {
@@ -179,6 +200,89 @@ export async function evaluateMerge(
 
   core.error(`could not merge pr #${number}: ${outcome.message}`)
   return outcome
+}
+
+let warnedMergeMethodIgnored = false
+
+export function resetTideWarnings(): void {
+  warnedMergeMethodIgnored = false
+}
+
+async function evaluateInQueue(
+  octokit: Octokit,
+  context: Context,
+  number: number,
+  tide: ResolvedTide,
+  first: Mergeability,
+  queue: NonNullable<Awaited<ReturnType<typeof queueState>>>,
+): Promise<MergeVerdict> {
+  if (queue.inQueue) {
+    const entry = queue.entry
+    return skip(number, entry === undefined ? 'in the merge queue' : `in the merge queue (position ${entry.position}, ${entry.state})`)
+  }
+
+  const pr = await fetchMergeability(octokit, context, number, {
+    retryIf: candidate => blockedReason(candidate, tide) === undefined,
+    initial: first,
+  })
+  const reason = blockedReason(pr, tide) ?? (queueRefusedStates.has(pr.state) ? `not mergeable (${pr.state})` : undefined)
+  if (reason !== undefined) {
+    return skip(number, reason)
+  }
+  if (pr.sha !== first.sha) {
+    return skip(number, 'head moved during evaluation')
+  }
+  if (!mergeableStates.has(pr.state)) {
+    core.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`)
+  }
+  if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || core.getInput('merge-method', { required: false }) !== '')) {
+    warnedMergeMethodIgnored = true
+    core.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`)
+  }
+
+  // the gate is the ticket; the queue does the rest
+  const outcome = await enqueue(octokit, context, queue, first.sha)
+  if (outcome.ok) {
+    core.info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`)
+    return outcome.position === undefined ? { result: 'enqueued' } : { result: 'enqueued', position: outcome.position }
+  }
+
+  switch (outcome.kind) {
+    case 'head_moved':
+      return skip(number, 'head moved')
+    case 'already_queued':
+      return skip(number, 'already in the merge queue')
+    case 'not_ready':
+      return skip(number, `not ready for the merge queue: ${outcome.message}`)
+    case 'forbidden': {
+      const message = `cannot add pr #${number} to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues): ${outcome.message}`
+      core.error(message)
+      return { result: 'failed', message }
+    }
+    default:
+      core.error(`could not enqueue pr #${number}: ${outcome.message}`)
+      return { result: 'failed', message: outcome.message }
+  }
+}
+
+// a scheduled run would cost one GraphQL query per open pull request, so the cron and the sweep never dequeue
+async function dequeueIfOurs(octokit: Octokit, context: Context, number: number, tide: ResolvedTide, reason: string): Promise<boolean> {
+  if (tide.merge_queue !== 'auto' || context.eventName === 'schedule') {
+    return false
+  }
+  const queue = await queueState(octokit, context, number)
+  if (queue === undefined || !queue.inQueue) {
+    return false
+  }
+  if (!enqueuedByBot(queue.entry)) {
+    core.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`)
+    return false
+  }
+  if (!(await dequeue(octokit, context, queue, number))) {
+    return false
+  }
+  core.info(`dequeued pr #${number}: ${reason}`)
+  return true
 }
 
 /**

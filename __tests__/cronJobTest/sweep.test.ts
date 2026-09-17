@@ -134,7 +134,7 @@ describe('sweep candidates', () => {
     }))
     const info = vi.spyOn(core, 'info')
 
-    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1, 3], merged: [], failures: [] })
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1, 3], merged: [], enqueued: [], failures: [] })
     expect(reads.sort()).toEqual([1, 3])
     expect(info).toHaveBeenCalledWith(`sweep: 2 candidates updated since ${ago(hour)}`)
     expect(info).toHaveBeenCalledWith('skipping pr #1: missing lgtm')
@@ -179,7 +179,7 @@ describe('sweep candidates', () => {
     const tree = new utils.ObserveRequest()
     server.use(utils.defaultBranchTree([], tree))
 
-    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], failures: [] })
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
     await expect(tree.notCalled()).resolves.toBe('not called')
   })
 
@@ -203,7 +203,7 @@ describe('sweep on a repository without OWNERS files', () => {
     )
     const info = vi.spyOn(core, 'info')
 
-    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [1], failures: [] })
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [1], enqueued: [], failures: [] })
     await expect(merge.called()).resolves.toBe('called')
     await expect(ownersTree.notCalled()).resolves.toBe('not called')
     expect(info).toHaveBeenCalledWith('sweep: #1 merged')
@@ -223,7 +223,7 @@ describe('sweep on a repository without OWNERS files', () => {
       http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {})),
     )
 
-    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], failures: [] })
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], enqueued: [], failures: [] })
     await expect(removeLabel.called()).resolves.toBe('called')
     await expect(merge.notCalled()).resolves.toBe('not called')
   })
@@ -241,6 +241,29 @@ describe('sweep on a repository without OWNERS files', () => {
     await expect(sweep(context)).resolves.toMatchObject({ failures: [] })
     await expect(add.called()).resolves.toBe('called')
     expect(await add.body()).toEqual({ labels: ['needs-kind'] })
+  })
+
+  it('on a branch that requires a merge queue the pr is enqueued and counted, and the summary says so', async () => {
+    servePulls([{ number: 1, labels: ['lgtm'] }])
+    const merge = new utils.ObserveRequest()
+    const { handler, calls } = utils.mergeQueueGraphql({ headOid: 'sha1' })
+    server.use(handler, http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, merge)))
+    const info = vi.spyOn(core, 'info')
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], enqueued: [1], failures: [] })
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(utils.graphqlMutations(calls, 'enqueuePullRequest')).toHaveLength(1)
+    expect(info).toHaveBeenCalledWith('sweep: #1 enqueued')
+  })
+
+  it('a gate-failing pr on the sweep costs no GraphQL call: the sweep never dequeues', async () => {
+    servePulls([{ number: 1, labels: [] }])
+    const { handler, calls } = utils.mergeQueueGraphql({ inQueue: true })
+    server.use(handler)
+    context.eventName = 'schedule'
+
+    await expect(sweep(context)).resolves.toMatchObject({ enqueued: [], failures: [] })
+    expect(calls).toHaveLength(0)
   })
 
   it('merges regardless of tide.merge_on_events: the sweep is a scheduled job, not an event handler', async () => {
@@ -322,7 +345,7 @@ describe('sweep on a repository with OWNERS files', () => {
     )
     const info = vi.spyOn(core, 'info')
 
-    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], failures: [] })
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], enqueued: [], failures: [] })
     await expect(labels.called()).resolves.toBe('called')
     expect(await labels.body()).toEqual({ labels: ['area/sdk'] })
     await expect(reviewers.called()).resolves.toBe('called')
@@ -369,7 +392,7 @@ describe('sweep on a repository with OWNERS files', () => {
       http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, merge)),
     )
 
-    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [1], failures: [] })
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [1], enqueued: [], failures: [] })
     await expect(merge.called()).resolves.toBe('called')
   })
 

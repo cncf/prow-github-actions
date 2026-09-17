@@ -437,4 +437,37 @@ describe('cronLgtm', () => {
     expect(error).not.toHaveBeenCalled()
     expect(setFailed).not.toHaveBeenCalled()
   })
+
+  it('on a branch that requires a merge queue the pr is enqueued, not merged, and the run succeeds', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    context.eventName = 'schedule'
+    routePulls([lgtmPr(5)])
+    const { handler, calls } = utils.mergeQueueGraphql({ headOid: listPullReqs[0].head.sha })
+    const merge = new utils.ObserveRequest()
+    server.use(handler, http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/5/merge`, utils.mockResponse(200, null, merge)))
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const info = vi.spyOn(core, 'info')
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(utils.graphqlMutations(calls, 'enqueuePullRequest')).toHaveLength(1)
+    expect(utils.graphqlMutations(calls, 'enqueuePullRequest')[0].variables).toEqual({ pullRequestId: 'PR_kwDOtest', expectedHeadOid: listPullReqs[0].head.sha })
+    expect(info).toHaveBeenCalledWith('enqueued pr #5 (position 3)')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a pr already in the queue is skipped without a mutation', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    context.eventName = 'schedule'
+    routePulls([lgtmPr(5)])
+    const { handler, calls } = utils.mergeQueueGraphql({ inQueue: true, entry: { state: 'AWAITING_CHECKS', position: 1 } })
+    server.use(handler)
+
+    const info = vi.spyOn(core, 'info')
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    expect(calls).toHaveLength(1)
+    expect(info).toHaveBeenCalledWith('skipping pr #5: in the merge queue (position 1, AWAITING_CHECKS)')
+  })
 })
