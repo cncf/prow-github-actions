@@ -34,7 +34,7 @@ code on `main` does today.
 | `welcome` plugin | ✗ | |
 | `size` plugin | ✗ | Use [`actions/labeler`](https://github.com/actions/labeler) or similar |
 | `wip` plugin | ✗ | No `WIP` title check; a **draft** PR never merges (`mergeable_state` `draft` is skipped) and blunderbuss waits for `ready_for_review` |
-| `trigger` plugin: `/retest`, `/test all`, `/test <workflow>`, `/test ?` | ✓ | GitHub Actions runs only: re-runs the repository's own workflow runs on the head commit; other CI systems are not touched. Needs `actions: write`. [commands](./commands.md#trigger) |
+| `trigger` plugin: `/retest`, `/test all`, `/test <workflow>`, `/test ?`, `/ok-to-test` | ✓ | GitHub Actions runs only: re-runs the repository's own workflow runs on the head commit and approves the runs GitHub holds for a first-time contributor's fork; the `ok-to-test` label keeps approving on push and in the sweep. Other CI systems are not touched. Needs `actions: write`. [commands](./commands.md#trigger) |
 | `/override`, `/skip` | ✗ | |
 | `cherrypicker` (`/cherry-pick`) | ✗ | |
 | `OWNERS_ALIASES` | ✗ | Not read |
@@ -218,6 +218,7 @@ lines.
 | `/lgtm` as the PR author | refused with the comment "you cannot LGTM your own PR."; the run is marked failed |
 | `/approve` and `/lgtm` on **two lines** of one comment from a second account that is an OWNERS reviewer/approver | a green `prow/lgtm` check on the head, `lgtm` applied, `approved` once coverage is complete, merged seconds later (we observed 3 s) |
 | push a commit to the PR, then re-run *Actions → Prow* on `schedule` or wait for the next check suite | `lgtm` removed with the comment "`lgtm` is not bound to the current head commit"; nothing merges until a new `/lgtm` |
+| `/ok-to-test` from a maintainer on a first-time contributor's fork PR | the held workflow runs start, `ok-to-test` applied, a 🚀 on the comment; the next push starts its runs without a click |
 | `/retest` on a PR with a failed workflow run | a 🚀 reaction on the comment and the failed jobs of that run re-running under *Actions*; the Prow run itself is never re-run |
 | `/approve /lgtm` on **one line** | nothing beyond `/approve` with the argument `/lgtm`, which is ignored: a command must start a line ([commands](./commands.md#command-syntax)) |
 

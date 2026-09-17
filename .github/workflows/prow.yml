@@ -17,7 +17,7 @@ on:
         description: The /commands to enable on issue_comment; the default is every built-in command except /meow. Listing a dynamic /<key> command needs that labels section in prow.yaml.
         type: string
         required: false
-        default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels /retest /test
+        default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels /retest /test /ok-to-test
       jobs:
         description: The jobs to run on schedule, workflow_dispatch, push and pull_request; 'lgtm' merges on the schedule and removes lgtm on new commits, 'sweep' evaluates the pull requests updated recently (for fork pull requests under pull_request), 'label-sync' creates the labels prow.yaml describes.
         type: string

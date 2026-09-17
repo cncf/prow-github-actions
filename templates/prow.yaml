@@ -4,8 +4,8 @@
 # .github/prow.yaml on top. Reference: docs/configuration.md.
 #
 # Every key under `labels` is a /<key> command; run the label-sync job once so the labels exist.
-# label-sync also creates the built-in lgtm, approved, do-not-merge/hold, help wanted and
-# good first issue labels. Colors follow kubernetes/test-infra's label_sync.
+# label-sync also creates the built-in lgtm, approved, do-not-merge/hold, help wanted,
+# good first issue and ok-to-test labels. Colors follow kubernetes/test-infra's label_sync.
 labels:
   kind:
     - name: bug

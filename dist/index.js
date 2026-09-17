@@ -41299,156 +41299,29 @@ function stripUndefined(value) {
     return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 }
 
-;// CONCATENATED MODULE: ./lib/utils/command.js
+;// CONCATENATED MODULE: external "node:process"
+const external_node_process_namespaceObject = require("node:process");
+var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
+;// CONCATENATED MODULE: ./lib/utils/comments.js
 /**
- * hasCommand reports whether the command starts a line of the body
- * (leading whitespace allowed) so that mentions mid-sentence and
- * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ * createComment comments on the specified issue or pull request
  *
- * @param command - the command to look for. Ex: '/assign'
- * @param body - the full body of the comment
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue associated with this runtime
+ * @param message - the comment message body
  */
-function hasCommand(command, body) {
-    return findCommandArgs(command, body).length > 0;
-}
-/**
- * getLineArgs will return the trimmed text following the command on its line.
- * When the command appears on several lines the last one wins, which suits
- * single-valued commands such as /milestone and /retitle
- * Ex return: 'some-user some-other-user'
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getLineArgs(command, body) {
-    return findCommandArgs(command, body).at(-1) ?? '';
-}
-/**
- * getCommandArgs will return an array of the arguments associated with a command,
- * collected in order from every line that carries it and de-duplicated
- * Ex return: [`some-user', 'some-other-user']
- *
- * @param command - the given command to get arguments for. Ex: '/assign'
- * @param body - the full body of the comment
- */
-function getCommandArgs(command, body) {
-    const rests = findCommandArgs(command, body);
-    if (rests.length === 0) {
-        throw new Error(`command ${command} missing from body`);
+async function createComment(octokit, context, issueNum, message) {
+    try {
+        await octokit.issues.createComment({
+            ...context.repo,
+            issue_number: issueNum,
+            body: message,
+        });
     }
-    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
-    return [...new Set(stripAtSign(args))];
-}
-/**
- * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
- * is among the arguments, ignoring case like Prow's (?i) plugin regexes
- *
- * @param args - the arguments returned by getCommandArgs
- * @param keyword - the lowercase keyword to look for
- */
-function hasKeyword(args, keyword) {
-    return args.some(arg => arg.toLowerCase() === keyword);
-}
-function findCommandArgs(command, body) {
-    const pattern = commandPattern(command);
-    const found = [];
-    for (const line of commandLines(body)) {
-        const match = pattern.exec(line);
-        if (match) {
-            found.push((match[1] ?? '').trim());
-        }
+    catch (e) {
+        throw new Error(`could not add comment: ${e}`);
     }
-    return found;
-}
-const indentedCode = /^(?: {4}| {0,3}\t)/;
-// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
-const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/;
-/**
- * commandLines returns the lines of the body that can carry a command:
- * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
- *
- * @param body - the full body of the comment
- */
-function commandLines(body) {
-    const visible = [];
-    let fence;
-    let inIndentedCode = false;
-    let afterBlockBoundary = true;
-    for (const line of splitLines(body)) {
-        if (fence) {
-            if (closesFence(line, fence)) {
-                fence = undefined;
-                afterBlockBoundary = true;
-            }
-            continue;
-        }
-        if (line.trim() === '') {
-            visible.push(line);
-            inIndentedCode = false;
-            afterBlockBoundary = true;
-            continue;
-        }
-        // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
-        if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
-            inIndentedCode = true;
-            continue;
-        }
-        inIndentedCode = false;
-        afterBlockBoundary = false;
-        const opener = fenceOpener(line);
-        if (opener) {
-            fence = opener;
-            continue;
-        }
-        visible.push(line);
-    }
-    return visible;
-}
-function fenceOpener(line) {
-    const match = fenceLine.exec(line);
-    if (!match)
-        return undefined;
-    const char = match[1][0];
-    if (char === '`' && match[2].includes('`'))
-        return undefined;
-    return { char, length: match[1].length };
-}
-function closesFence(line, fence) {
-    const match = fenceLine.exec(line);
-    if (!match)
-        return false;
-    return match[1][0] === fence.char
-        && match[1].length >= fence.length
-        && match[2].trim() === '';
-}
-function commandPattern(command) {
-    // escape regex metacharacters so a command is matched literally
-    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
-    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
-}
-// splitLines splits a comment body into lines, tolerating CRLF and CR endings
-function splitLines(body) {
-    return body.replace(/\r\n?/g, '\n').split('\n');
-}
-/**
- * stripAtSign will remove a leading '@' sign from the arguments array
- * This is necessary as some commands may have arguments with users tagged with
- * a leading at sign. Ex: /assign @some-user
- *
- * @param args - the array to remove at signs from
- */
-function stripAtSign(args) {
-    const toReturn = [];
-    for (const e of args) {
-        if (e.startsWith('@')) {
-            toReturn.push(e.replace('@', ''));
-        }
-        else {
-            toReturn.push(e);
-        }
-    }
-    return toReturn;
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
@@ -41630,9 +41503,6 @@ function labeling_isNotFound(error) {
         && error.status === 404);
 }
 
-;// CONCATENATED MODULE: external "node:process"
-const external_node_process_namespaceObject = require("node:process");
-var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
 ;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/version.js
 const plugin_request_log_dist_src_version_VERSION = "6.0.0";
 
@@ -41689,451 +41559,6 @@ function newOctokit(token) {
         auth: token,
         baseUrl: (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
     });
-}
-
-;// CONCATENATED MODULE: ./lib/labels/hold.js
-
-
-
-
-
-
-// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
-const legacyHoldLabel = 'hold';
-/**
- * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
- * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
- * Note - the label blocks automatic merging through `tide.missing_labels`.
- *
- * @param context - the github actions event context
- */
-async function hold(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    const config = await loadProwConfig(octokit, context);
-    const holdLabel = resolveHoldLabel(config.hold);
-    const cancel = hasCommand('/unhold', commentBody)
-        || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
-    if (cancel) {
-        await cancelHold(octokit, context, issueNumber, holdLabel);
-        return;
-    }
-    await labelIssue(octokit, context, issueNumber, [holdLabel]);
-}
-async function cancelHold(octokit, context, issueNumber, holdLabel) {
-    let currentLabels;
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
-    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
-    if (present.length === 0) {
-        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
-        return;
-    }
-    try {
-        await removeLabels(octokit, context, issueNumber, present);
-    }
-    catch (e) {
-        throw new Error(`could not remove the hold label: ${e}`);
-    }
-}
-
-;// CONCATENATED MODULE: ./lib/labels/prefixed.js
-
-
-
-
-
-const prefixedLabelCommands = [
-    { command: '/area', prefix: 'area', allowlistKey: 'area' },
-    { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
-    { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
-    { command: '/label', prefix: '', allowlistKey: 'labels' },
-    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
-    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
-    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
-];
-// a label section name usable as a slash command: lower-case letters, digits and dashes
-const labelCommandName = /^[a-z][a-z0-9-]*$/;
-// labels with dedicated, authorization-gated commands; never reachable through /label
-const protectedLabels = ['lgtm', 'hold', 'approved'];
-const protectedPrefixes = ['do-not-merge/'];
-/**
- * isProtectedLabel reports whether /label and /remove-label must refuse the
- * label: the built-in command labels, the do-not-merge family, and any
- * `extra` names such as a configured `hold.label`.
- *
- * @param label - the label name
- * @param extra - further protected names, compared case-insensitively
- */
-function isProtectedLabel(label, extra = []) {
-    const lower = label.toLowerCase();
-    return protectedLabels.includes(lower)
-        || protectedPrefixes.some(prefix => lower.startsWith(prefix))
-        || extra.some(name => name.toLowerCase() === lower);
-}
-/**
- * dynamicPrefixedCommand builds the command for an arbitrary label section
- * so that `/<key> value` labels the issue with '<key>/value'
- *
- * @param name - the top level key, ex: 'level'
- */
-function dynamicPrefixedCommand(name) {
-    return { command: `/${name}`, prefix: name, allowlistKey: name };
-}
-/**
- * removeCommandFor returns the Prow-style removal spelling of a label command
- * Ex: '/kind' -> '/remove-kind'
- *
- * @param command - the add form of the command
- */
-function removeCommandFor(command) {
-    return `/remove-${command.slice(1)}`;
-}
-/**
- * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
- * that is both in the comment and in the configured allowlist.
- * When the command is exclusive, existing '<prefix>/*' labels that were not
- * requested are removed first.
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function addPrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
-    const commentBody = context.payload.comment?.body;
-    const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
-    if (section.exclusive) {
-        const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
-        const stale = currentLabels.filter((label) => {
-            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
-                && !labels.some(requested => sameLabel(requested, label));
-        });
-        if (stale.length > 0) {
-            await removeLabels(octokit, context, issueNumber, stale);
-        }
-    }
-    await labelIssue(octokit, context, issueNumber, labels);
-}
-/**
- * removePrefixedLabels removes '<prefix>/<value>' for every value in the
- * /remove-<command> line that is in the configured allowlist and
- * currently on the issue. Labels owned by other commands (lgtm, hold,
- * approved, do-not-merge/*) are refused even when the allowlist names them.
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function removePrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = requireIssueNumber(context);
-    const commentBody = context.payload.comment?.body;
-    const command = removeCommandFor(cmd.command);
-    const section = await allowlistFor(octokit, context, cmd);
-    const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels);
-    const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
-    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
-    if (present.length === 0) {
-        core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
-        return;
-    }
-    await removeLabels(octokit, context, issueNumber, present);
-}
-function requireIssueNumber(context) {
-    const issueNumber = context.payload.issue?.number;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    return issueNumber;
-}
-/**
- * sectionFor resolves the label section a command reads: the yaml section
- * wins over the built-in defaults, and a yaml `exclusive` wins over the
- * registry. Undefined when neither exists.
- *
- * @param labels - the label sections of the prow configuration
- * @param cmd - the command definition
- */
-function sectionFor(labels, cmd) {
-    const section = labels[cmd.allowlistKey];
-    if (section) {
-        return { ...section, exclusive: section.exclusive ?? cmd.exclusive };
-    }
-    if (cmd.defaultValues) {
-        return {
-            values: cmd.defaultValues,
-            exclusive: cmd.exclusive,
-            definitions: cmd.defaultValues.map(name => ({ name })),
-        };
-    }
-    return undefined;
-}
-async function allowlistFor(octokit, context, cmd) {
-    const key = cmd.allowlistKey;
-    try {
-        const labels = await getLabelConfig(octokit, context);
-        const section = sectionFor(labels, cmd);
-        if (section === undefined) {
-            throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
-        }
-        core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
-        const { hold } = await loadProwConfig(octokit, context);
-        return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] };
-    }
-    catch (e) {
-        throw new Error(`could not get labels from yaml: ${e}`);
-    }
-}
-function requestedLabels(cmd, command, commentBody, allowed, protectedExtra) {
-    const args = getCommandArgs(command, commentBody);
-    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
-    const values = args
-        .map(arg => canonical.get(arg.toLowerCase()))
-        .filter((value) => value !== undefined);
-    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
-    // no arguments after command provided
-    if (labels.length === 0) {
-        throw new Error(`${command.slice(1)}: command args missing from body`);
-    }
-    if (cmd.prefix === '') {
-        const offender = labels.find(label => isProtectedLabel(label, protectedExtra));
-        if (offender !== undefined) {
-            throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`);
-        }
-    }
-    return labels;
-}
-// GitHub label names are case-insensitive, as are Prow's comparisons
-function sameLabel(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
-}
-async function currentIssueLabels(octokit, context, issueNumber, command) {
-    try {
-        const currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
-        return currentLabels;
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-}
-
-;// CONCATENATED MODULE: ./lib/utils/labelCatalog.js
-
-
-
-/**
- * Colors and descriptions of the labels the action manages itself. They
- * follow kubernetes/test-infra's label_sync where a label exists there;
- * the legacy `hold` mirrors `do-not-merge/hold`.
- */
-const builtinLabelDefaults = {
-    'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
-    'approved': { color: '0ffa16', description: 'Indicates a PR has been approved by an approver from all required OWNERS files.' },
-    'hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
-    'do-not-merge/hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
-    'help wanted': { color: '006b75', description: 'Denotes an issue that needs help from a contributor. Must meet "help wanted" guidelines.' },
-    'good first issue': { color: '7057ff', description: 'Denotes an issue ready for a new contributor, according to the "help wanted" guidelines.' },
-    'lifecycle/frozen': { color: 'd3e2f0', description: 'Indicates that an issue or PR should not be auto-closed due to staleness.' },
-    'lifecycle/stale': { color: '795548', description: 'Denotes an issue or PR has remained open with no activity and has become stale.' },
-    'lifecycle/rotten': { color: '604460', description: 'Denotes an issue or PR that has aged beyond stale and will be auto-closed.' },
-};
-const needsLabelColor = 'ededed';
-/**
- * desiredLabels lists every label the prow configuration describes, with the
- * color and description the label-sync job should give it: the label
- * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
- * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
- * section, the labels the action's own commands apply (`hold.label` and
- * the legacy `hold`), and every `require_matching_label` missing label. Names are unique
- * case-insensitively (first definition wins) and sorted.
- *
- * @param config - the merged prow configuration
- */
-function desiredLabels(config) {
-    const registryKeys = new Set(prefixedLabelCommands.map(cmd => cmd.allowlistKey));
-    const labels = [];
-    for (const cmd of prefixedLabelCommands) {
-        const section = sectionFor(config.labels, cmd);
-        if (section) {
-            labels.push(...section.definitions.map(value => prefixed(cmd.prefix, value)));
-        }
-    }
-    for (const [key, section] of Object.entries(config.labels)) {
-        if (!registryKeys.has(key)) {
-            labels.push(...section.definitions.map(value => prefixed(key, value)));
-        }
-    }
-    const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel];
-    for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
-        labels.push({ name });
-    }
-    for (const rule of config.require_matching_label) {
-        labels.push({ name: rule.missing_label });
-    }
-    const seen = new Set();
-    const unique = labels.filter((label) => {
-        const key = label.name.toLowerCase();
-        if (seen.has(key)) {
-            return false;
-        }
-        seen.add(key);
-        return true;
-    });
-    return unique
-        .map(labelCatalog_withDefaults)
-        .sort((a, b) => a.name.localeCompare(b.name));
-}
-function prefixed(prefix, value) {
-    return prefix === '' ? { ...value } : { ...value, name: `${prefix}/${value.name}` };
-}
-// the configuration wins over the built-in defaults; a label with neither gets no color
-function labelCatalog_withDefaults(label) {
-    const defaults = builtinLabelDefaults[label.name.toLowerCase()]
-        ?? (label.name.toLowerCase().startsWith('needs-') ? { color: needsLabelColor } : {});
-    const merged = { name: label.name };
-    const color = label.color ?? defaults.color;
-    const description = label.description ?? defaults.description;
-    if (color !== undefined) {
-        merged.color = color.toLowerCase();
-    }
-    if (description !== undefined) {
-        merged.description = description;
-    }
-    return merged;
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/labelSync.js
-
-
-
-
-
-/**
- * labelSync creates the labels the prow configuration describes and updates
- * the color or description of those that drifted. It never deletes or
- * renames a label. With the `dry-run` input set it only logs what would
- * change. Every label is attempted; the run fails at the end if any write
- * was refused.
- *
- * @param context - the github actions event context
- */
-async function labelSync(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const dryRun = getInput('dry-run', { required: false }).trim().toLowerCase() === 'true';
-    const config = await loadProwConfig(octokit, context);
-    const desired = desiredLabels(config);
-    core_debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`);
-    let existing;
-    try {
-        existing = await octokit.paginate(octokit.issues.listLabelsForRepo, { ...context.repo, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list the repository labels: ${e}`);
-    }
-    const byName = new Map(existing.map(label => [label.name.toLowerCase(), label]));
-    const result = { created: [], updated: [], unchanged: 0, failures: [] };
-    const plan = { create: [], update: [] };
-    for (const label of desired) {
-        const current = byName.get(label.name.toLowerCase());
-        if (current === undefined) {
-            plan.create.push(label.name);
-            if (!dryRun) {
-                await write(result, label.name, result.created, () => createLabel(octokit, context, label));
-            }
-            continue;
-        }
-        const patch = drift(label, current);
-        if (patch === undefined) {
-            result.unchanged++;
-            continue;
-        }
-        plan.update.push(`${current.name} (${Object.keys(patch).join(', ')})`);
-        if (!dryRun) {
-            await write(result, current.name, result.updated, () => updateLabel(octokit, context, current.name, patch));
-        }
-    }
-    if (dryRun) {
-        info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`);
-        return result;
-    }
-    info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`);
-    if (result.failures.length > 0) {
-        const list = result.failures.map(f => `${f.name} (${f.message})`).join(', ');
-        throw new Error(`${result.failures.length} label(s) could not be synced: ${list}`);
-    }
-    return result;
-}
-// a refused write is logged and recorded so the remaining labels are still attempted
-async function write(result, name, done, action) {
-    try {
-        await action();
-        done.push(name);
-    }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        error(`label-sync: could not sync ${name}: ${message}`);
-        result.failures.push({ name, message });
-    }
-}
-function createLabel(octokit, context, label) {
-    return octokit.issues.createLabel({
-        ...context.repo,
-        name: label.name,
-        ...(label.color === undefined ? {} : { color: label.color }),
-        ...(label.description === undefined ? {} : { description: label.description }),
-    });
-}
-function updateLabel(octokit, context, name, patch) {
-    return octokit.issues.updateLabel({ ...context.repo, name, ...patch });
-}
-// the fields of `desired` that the repository's label does not match; undefined when in sync
-function drift(desired, current) {
-    const patch = {};
-    if (desired.color !== undefined && desired.color.toLowerCase() !== current.color.toLowerCase()) {
-        patch.color = desired.color;
-    }
-    if (desired.description !== undefined && desired.description !== (current.description ?? '')) {
-        patch.description = desired.description;
-    }
-    return Object.keys(patch).length === 0 ? undefined : patch;
-}
-
-;// CONCATENATED MODULE: ./lib/utils/comments.js
-/**
- * createComment comments on the specified issue or pull request
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param message - the comment message body
- */
-async function createComment(octokit, context, issueNum, message) {
-    try {
-        await octokit.issues.createComment({
-            ...context.repo,
-            issue_number: issueNum,
-            body: message,
-        });
-    }
-    catch (e) {
-        throw new Error(`could not add comment: ${e}`);
-    }
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
@@ -42305,74 +41730,6 @@ function isBot(user) {
 }
 function isForbidden(error) {
     return typeof error === 'object' && error !== null && 'status' in error && error.status === 403;
-}
-
-;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
-/**
- * matchesLabelPattern reports whether a label name matches a tide label
- * pattern. Names compare case-insensitively, like GitHub does. `*` matches any
- * run of characters, `/` included, so `do-not-merge/*` covers the whole
- * family; everything else is literal (`do-not-merge` alone does not match
- * `do-not-merge/hold`).
- *
- * @param pattern - a label name, optionally with `*` wildcards
- * @param label - the label name to test
- */
-function matchesLabelPattern(pattern, label) {
-    const parts = pattern.toLowerCase().split('*');
-    const subject = label.toLowerCase();
-    if (parts.length === 1) {
-        return subject === parts[0];
-    }
-    if (!subject.startsWith(parts[0])) {
-        return false;
-    }
-    const last = parts[parts.length - 1];
-    if (!subject.endsWith(last) || subject.length < parts[0].length + last.length) {
-        return false;
-    }
-    // the middle parts must appear in order between the anchored ends
-    let at = parts[0].length;
-    const end = subject.length - last.length;
-    for (const part of parts.slice(1, -1)) {
-        const found = subject.indexOf(part, at);
-        if (found === -1 || found + part.length > end) {
-            return false;
-        }
-        at = found + part.length;
-    }
-    return true;
-}
-/**
- * anyLabelMatches reports whether any of the patterns matches any of the labels
- *
- * @param patterns - label patterns, see matchesLabelPattern
- * @param labels - the label names to test
- */
-function anyLabelMatches(patterns, labels) {
-    return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)));
-}
-
-;// CONCATENATED MODULE: ./lib/utils/mergeGate.js
-
-/**
- * meetsMergeGate decides, like Prow's tide query, whether a pull request's
- * labels allow merging: every `tide.labels` pattern must match at least one
- * label and no `tide.missing_labels` pattern may match any label.
- *
- * @param labels - the labels on the pull request
- * @param tide - the resolved tide configuration
- */
-function meetsMergeGate(labels, tide) {
-    const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
-    if (missing !== undefined) {
-        return { ok: false, reason: `missing ${missing}` };
-    }
-    const blocking = labels.find(label => tide.missing_labels.some(pattern => matchesLabelPattern(pattern, label)));
-    if (blocking !== undefined) {
-        return { ok: false, reason: `blocked by ${blocking}` };
-    }
-    return { ok: true };
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/owners.js
@@ -42625,6 +41982,1231 @@ async function defaultBranch(octokit, context) {
 }
 function owners_isNotFound(error) {
     return typeof error === 'object' && error !== null && 'status' in error && error.status === 404;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
+
+const pullRequestOwners_cache = new Map();
+/**
+ * loadPullRequestOwners reads the pull request, its changed files and the
+ * OWNERS files of the base branch that cover them. The result is memoized per
+ * pull request for the lifetime of the process, so every plugin acting on the
+ * same event shares one fetch.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param pullNumber - the pull request
+ */
+function loadPullRequestOwners(octokit, context, pullNumber) {
+    const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
+    let pending = pullRequestOwners_cache.get(key);
+    if (pending === undefined) {
+        pending = pullRequestOwners_load(octokit, context, pullNumber);
+        pullRequestOwners_cache.set(key, pending);
+    }
+    return pending;
+}
+function resetPullRequestOwnersCache() {
+    pullRequestOwners_cache.clear();
+}
+async function pullRequestOwners_load(octokit, context, pullNumber) {
+    const { data: pull } = await octokit.pulls.get({
+        ...context.repo,
+        pull_number: pullNumber,
+    });
+    const changed = await octokit.paginate(octokit.pulls.listFiles, {
+        ...context.repo,
+        pull_number: pullNumber,
+        per_page: 100,
+    });
+    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
+    // OWNERS come from the base branch so a PR cannot grant itself approvers
+    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
+    const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]));
+    return {
+        number: pullNumber,
+        baseSha: pull.base.sha,
+        headSha: pull.head.sha,
+        author: (pull.user?.login ?? '').toLowerCase(),
+        draft: pull.draft === true,
+        requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+        assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
+        labels: (pull.labels ?? []).map(label => label.name),
+        files,
+        tree,
+        perFile,
+    };
+}
+
+;// CONCATENATED MODULE: ./lib/utils/auth.js
+
+
+
+
+function getErrorDetails(error) {
+    if (typeof error === 'object' && error !== null) {
+        const status = 'status' in error ? error.status : 'unknown';
+        const message = 'message' in error && typeof error.message === 'string'
+            ? error.message
+            : String(error);
+        return { status, message };
+    }
+    return {
+        status: 'unknown',
+        message: String(error),
+    };
+}
+/**
+ * checkOrgMember will check to see if the given user is a repo org member
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the users to check auth on
+ */
+async function checkOrgMember(octokit, context, user) {
+    try {
+        if (context.payload.repository === undefined) {
+            core_debug(`checkOrgMember error: context payload repository undefined`);
+            return false;
+        }
+        await octokit.orgs.checkMembershipForUser({
+            org: context.payload.repository.owner.login,
+            username: user,
+        });
+        return true;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        if (status === 404 || status === 302) {
+            core_debug(`${user} is not an org member: ${message}`);
+            return false;
+        }
+        warning(`encountered unexpected error: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * checkCollaborator checks to see if the given user is a repo collaborator
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the users to check auth on
+ */
+async function checkCollaborator(octokit, context, user) {
+    try {
+        await octokit.repos.checkCollaborator({
+            ...context.repo,
+            username: user,
+        });
+        return true;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        if (status === 404) {
+            core_debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
+            return false;
+        }
+        warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * checkIssueComments will check to see if the given user
+ * has commented on the given issue
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param user - the users to check auth on
+ */
+async function checkIssueComments(octokit, context, issueNum, user) {
+    try {
+        const comments = await octokit.issues.listComments({
+            ...context.repo,
+            issue_number: issueNum,
+        });
+        for (const e of comments.data) {
+            if (e.user?.login === user) {
+                return true;
+            }
+        }
+        return false;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * getOrgCollabCommentUsers will return an array of users who are org members,
+ * repo collaborators, or have commented previously
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param args - the users to check auth on
+ */
+async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
+    const toReturn = [];
+    try {
+        await Promise.all(args.map(async (arg) => {
+            const isOrgMember = await checkOrgMember(octokit, context, arg);
+            const isCollaborator = await checkCollaborator(octokit, context, arg);
+            const hasCommented = await checkIssueComments(octokit, context, issueNum, arg);
+            if (isOrgMember || isCollaborator || hasCommented) {
+                toReturn.push(arg);
+            }
+        }));
+    }
+    catch (e) {
+        throw new Error(`could not get authorized user: ${e}`);
+    }
+    return toReturn;
+}
+/**
+ * checkCommenterAuth will return true
+ * if the user is a org member, a collaborator, or has commented previously
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param args - the users to check auth on
+ */
+async function checkCommenterAuth(octokit, context, issueNum, user) {
+    let isOrgMember = false;
+    let isCollaborator = false;
+    let hasCommented = false;
+    try {
+        isOrgMember = await checkOrgMember(octokit, context, user);
+    }
+    catch (e) {
+        throw new Error(`error in checking org member: ${e}`);
+    }
+    try {
+        isCollaborator = await checkCollaborator(octokit, context, user);
+    }
+    catch (e) {
+        throw new Error(`could not check collaborator: ${e}`);
+    }
+    try {
+        hasCommented = await checkIssueComments(octokit, context, issueNum, user);
+    }
+    catch (e) {
+        throw new Error(`could not check issue comments: ${e}`);
+    }
+    if (isOrgMember || isCollaborator || hasCommented) {
+        return true;
+    }
+    return false;
+}
+/**
+ * When the repository has OWNERS files, use them to authorize the action,
+ * otherwise fall back to allowing organization members and collaborators.
+ * On a pull request the OWNERS covering each changed file are used: the user
+ * must hold the role for at least one changed file (an approver's /approve
+ * then counts for the files they cover; the approve plugin decides whether the
+ * whole PR is approved). On an issue the root OWNERS file is used.
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param role - the role to check
+ * @param username - the user to authorize
+ */
+async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
+    core_debug('Checking if the user is authorized to interact with prow');
+    const hasOwners = context.payload.issue?.pull_request !== undefined
+        ? await assertPullRequestOwner(octokit, context, role, username)
+        : await assertRootOwner(octokit, context, role, username);
+    if (!hasOwners) {
+        const isOrgMember = await checkOrgMember(octokit, context, username);
+        const isCollaborator = await checkCollaborator(octokit, context, username);
+        if (!isOrgMember && !isCollaborator) {
+            throw new Error(`${username} is not a org member or collaborator`);
+        }
+    }
+}
+/**
+ * Authorize against the root OWNERS file of the default branch.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function assertRootOwner(octokit, context, role, username) {
+    const contents = await retrieveOwnersFile(octokit, context);
+    if (contents === '') {
+        return false;
+    }
+    const owners = parseOwners('OWNERS', contents);
+    if (!owners[role].includes(username.toLowerCase())) {
+        throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
+    }
+    return true;
+}
+/**
+ * Authorize against the OWNERS files covering the pull request's changed files.
+ * @returns false when the repository has no OWNERS files at all
+ */
+async function assertPullRequestOwner(octokit, context, role, username) {
+    const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
+    if (!tree.hasOwners) {
+        core_debug('No OWNERS files found');
+        return false;
+    }
+    const login = username.toLowerCase();
+    const covered = files.map((file) => {
+        const owners = perFile.get(file);
+        if (owners === undefined) {
+            throw new Error(`no OWNERS file covers ${file}`);
+        }
+        return { file, owners };
+    });
+    if (role === 'approvers') {
+        if (!covered.some(({ owners }) => owners.approvers.has(login))) {
+            throw new Error(`${username} is not an approver for any changed file`);
+        }
+    }
+    else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
+        throw new Error(`${username} is not a reviewer or approver for any changed file`);
+    }
+    return true;
+}
+/**
+ * Retrieve the contents of the OWNERS file at the root of the repository.
+ * If the file does not exist, returns an empty string.
+ */
+async function retrieveOwnersFile(octokit, context) {
+    core_debug(`Looking for an OWNERS file at the root of the repository`);
+    let data;
+    try {
+        const response = await octokit.repos.getContent({
+            ...context.repo,
+            path: 'OWNERS',
+        });
+        data = response.data;
+    }
+    catch (e) {
+        if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
+            core_debug('No OWNERS file found');
+            return '';
+        }
+        throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
+    }
+    if (!data.content || !data.encoding) {
+        throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
+    }
+    const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
+    core_debug(`OWNERS file contents: ${decoded}`);
+    return decoded;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/command.js
+/**
+ * hasCommand reports whether the command starts a line of the body
+ * (leading whitespace allowed) so that mentions mid-sentence and
+ * longer commands sharing a prefix (/remove-lgtm vs /lgtm) do not match
+ *
+ * @param command - the command to look for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function hasCommand(command, body) {
+    return findCommandArgs(command, body).length > 0;
+}
+/**
+ * getLineArgs will return the trimmed text following the command on its line.
+ * When the command appears on several lines the last one wins, which suits
+ * single-valued commands such as /milestone and /retitle
+ * Ex return: 'some-user some-other-user'
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getLineArgs(command, body) {
+    return findCommandArgs(command, body).at(-1) ?? '';
+}
+/**
+ * getCommandArgs will return an array of the arguments associated with a command,
+ * collected in order from every line that carries it and de-duplicated
+ * Ex return: [`some-user', 'some-other-user']
+ *
+ * @param command - the given command to get arguments for. Ex: '/assign'
+ * @param body - the full body of the comment
+ */
+function getCommandArgs(command, body) {
+    const rests = findCommandArgs(command, body);
+    if (rests.length === 0) {
+        throw new Error(`command ${command} missing from body`);
+    }
+    const args = rests.flatMap(rest => rest.split(/\s+/).filter(Boolean));
+    return [...new Set(stripAtSign(args))];
+}
+/**
+ * hasKeyword reports whether a command keyword such as 'cancel' or 'clear'
+ * is among the arguments, ignoring case like Prow's (?i) plugin regexes
+ *
+ * @param args - the arguments returned by getCommandArgs
+ * @param keyword - the lowercase keyword to look for
+ */
+function hasKeyword(args, keyword) {
+    return args.some(arg => arg.toLowerCase() === keyword);
+}
+function findCommandArgs(command, body) {
+    const pattern = commandPattern(command);
+    const found = [];
+    for (const line of commandLines(body)) {
+        const match = pattern.exec(line);
+        if (match) {
+            found.push((match[1] ?? '').trim());
+        }
+    }
+    return found;
+}
+const indentedCode = /^(?: {4}| {0,3}\t)/;
+// CommonMark fence: up to 3 spaces then 3+ backticks or tildes; the closer uses the same character, is at least as long and is alone on its line
+const fenceLine = /^ {0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)$/;
+/**
+ * commandLines returns the lines of the body that can carry a command:
+ * everything except Markdown code (fenced ``` / ~~~ blocks and indented code)
+ *
+ * @param body - the full body of the comment
+ */
+function commandLines(body) {
+    const visible = [];
+    let fence;
+    let inIndentedCode = false;
+    let afterBlockBoundary = true;
+    for (const line of splitLines(body)) {
+        if (fence) {
+            if (closesFence(line, fence)) {
+                fence = undefined;
+                afterBlockBoundary = true;
+            }
+            continue;
+        }
+        if (line.trim() === '') {
+            visible.push(line);
+            inIndentedCode = false;
+            afterBlockBoundary = true;
+            continue;
+        }
+        // simplification: indented code only after a blank line, a fence or the start of the body; paragraph and list continuations stay visible
+        if (indentedCode.test(line) && (afterBlockBoundary || inIndentedCode)) {
+            inIndentedCode = true;
+            continue;
+        }
+        inIndentedCode = false;
+        afterBlockBoundary = false;
+        const opener = fenceOpener(line);
+        if (opener) {
+            fence = opener;
+            continue;
+        }
+        visible.push(line);
+    }
+    return visible;
+}
+function fenceOpener(line) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return undefined;
+    const char = match[1][0];
+    if (char === '`' && match[2].includes('`'))
+        return undefined;
+    return { char, length: match[1].length };
+}
+function closesFence(line, fence) {
+    const match = fenceLine.exec(line);
+    if (!match)
+        return false;
+    return match[1][0] === fence.char
+        && match[1].length >= fence.length
+        && match[2].trim() === '';
+}
+function commandPattern(command) {
+    // escape regex metacharacters so a command is matched literally
+    const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // group 1 captures the argument remainder so matcher and tokenizer agree on whitespace
+    return new RegExp(`^\\s*${escaped}(?:\\s+(.*))?\\s*$`, 'i');
+}
+// splitLines splits a comment body into lines, tolerating CRLF and CR endings
+function splitLines(body) {
+    return body.replace(/\r\n?/g, '\n').split('\n');
+}
+/**
+ * stripAtSign will remove a leading '@' sign from the arguments array
+ * This is necessary as some commands may have arguments with users tagged with
+ * a leading at sign. Ex: /assign @some-user
+ *
+ * @param args - the array to remove at signs from
+ */
+function stripAtSign(args) {
+    const toReturn = [];
+    for (const e of args) {
+        if (e.startsWith('@')) {
+            toReturn.push(e.replace('@', ''));
+        }
+        else {
+            toReturn.push(e);
+        }
+    }
+    return toReturn;
+}
+
+;// CONCATENATED MODULE: ./lib/issueComment/trigger.js
+
+
+
+
+
+
+
+
+
+
+/** the label `/ok-to-test` applies; while a pull request carries it, its pending runs are approved on every push and by the sweep */
+const okToTestLabel = 'ok-to-test';
+const actionsPermissionHint = 'grant `actions: write` to the workflow';
+const failedConclusions = new Set(['failure', 'cancelled', 'timed_out']);
+/**
+ * retest re-runs the failed jobs of every completed run on the pull
+ * request's head that ended in failure, cancelled or timed_out. Runs in
+ * progress are left alone. Authorized like `/lgtm`.
+ *
+ * @param context - the github actions event context
+ */
+async function retest(context = github_context) {
+    const cmd = await prepare(context, '/retest');
+    if (cmd === undefined) {
+        return;
+    }
+    const { octokit, issueNumber, headSha } = cmd;
+    const runs = await headRuns(octokit, context, headSha);
+    const failed = runs.filter(run => run.status === 'completed' && failedConclusions.has(run.conclusion ?? ''));
+    if (failed.length === 0) {
+        const inProgress = runs.filter(run => run.status !== 'completed').length;
+        const successful = runs.filter(run => run.status === 'completed' && run.conclusion === 'success').length;
+        const parts = [
+            ...(inProgress > 0 ? [`${inProgress} in progress`] : []),
+            ...(successful > 0 ? [`${successful} successful`] : []),
+        ];
+        const summary = parts.length > 0 ? `: ${parts.join(', ')}` : '';
+        await createComment(octokit, context, issueNumber, `No failed GitHub Actions workflow runs on \`${shortSha(headSha)}\`${summary}. Checks from other CI systems cannot be re-run here.`);
+        return;
+    }
+    const rerun = await rerunEach(octokit, context, issueNumber, failed, run => octokit.actions.reRunWorkflowFailedJobs({ ...context.repo, run_id: run.id }));
+    if (rerun === 0) {
+        await createComment(octokit, context, issueNumber, `The failed GitHub Actions workflow runs on \`${shortSha(headSha)}\` are already being re-run.`);
+        return;
+    }
+    await react(octokit, context);
+}
+/**
+ * test re-runs whole workflow runs on the head: `/test all` every completed
+ * run, `/test <name>` those whose workflow name or file matches, and
+ * `/test ?` (or no argument) lists the runs instead. Authorized like `/lgtm`.
+ *
+ * @param context - the github actions event context
+ */
+async function test(context = github_context) {
+    const cmd = await prepare(context, '/test');
+    if (cmd === undefined) {
+        return;
+    }
+    const { octokit, issueNumber, headSha } = cmd;
+    const args = getCommandArgs('/test', context.payload.comment?.body).map(arg => arg.toLowerCase());
+    const runs = await headRuns(octokit, context, headSha);
+    if (args.length === 0 || args.includes('?')) {
+        await createComment(octokit, context, issueNumber, runTable(headSha, runs));
+        return;
+    }
+    const completed = runs.filter(run => run.status === 'completed');
+    const selected = args.includes('all')
+        ? completed
+        : completed.filter(run => args.some(arg => matchesWorkflow(run, arg)));
+    if (selected.length === 0) {
+        await createComment(octokit, context, issueNumber, `No completed GitHub Actions workflow run on \`${shortSha(headSha)}\` matches \`${args.join(' ')}\`.\n\n${runTable(headSha, runs)}`);
+        return;
+    }
+    const rerun = await rerunEach(octokit, context, issueNumber, selected, run => octokit.actions.reRunWorkflow({ ...context.repo, run_id: run.id }));
+    if (rerun === 0) {
+        await createComment(octokit, context, issueNumber, `The GitHub Actions workflow runs on \`${shortSha(headSha)}\` are already being re-run.`);
+        return;
+    }
+    await react(octokit, context);
+}
+/**
+ * okToTest approves the runs waiting for approval on the head (a first-time
+ * contributor's fork) and applies the `ok-to-test` label, which keeps
+ * approving them on later pushes and in the sweep. Authorized like `/lgtm`,
+ * and refused for the pull request author: it is the trust decision.
+ *
+ * @param context - the github actions event context
+ */
+async function okToTest(context = github_context) {
+    const cmd = await prepare(context, '/ok-to-test', { refuseAuthor: 'you cannot approve the workflow runs of your own pull request' });
+    if (cmd === undefined) {
+        return;
+    }
+    const { octokit, issueNumber, headSha } = cmd;
+    const approved = await approvePendingRuns(octokit, context, issueNumber, headSha);
+    const labels = await getCurrentLabels(octokit, context, issueNumber);
+    const alreadyLabeled = labels.some(label => label.toLowerCase() === okToTestLabel);
+    if (!alreadyLabeled) {
+        await labelIssue(octokit, context, issueNumber, [okToTestLabel]);
+    }
+    if (approved === 0 && alreadyLabeled) {
+        await createComment(octokit, context, issueNumber, `No workflow runs waiting for approval on \`${shortSha(headSha)}\`.`);
+        return;
+    }
+    await react(octokit, context);
+}
+/**
+ * approvePendingRuns approves every run on `headSha` that awaits approval.
+ * A 403 names the permission to grant.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param number - the pull request number, for the log
+ * @param headSha - the pull request's head commit
+ * @returns how many runs were approved
+ */
+async function approvePendingRuns(octokit, context, number, headSha) {
+    const pending = (await headRuns(octokit, context, headSha))
+        .filter(run => run.status === 'action_required' || run.conclusion === 'action_required');
+    let approved = 0;
+    for (const run of pending) {
+        try {
+            await octokit.actions.approveWorkflowRun({ ...context.repo, run_id: run.id });
+            approved++;
+        }
+        catch (e) {
+            if (trigger_isForbidden(e)) {
+                throw new Error(`cannot approve workflow runs: ${actionsPermissionHint}`);
+            }
+            throw new Error(`could not approve run ${run.id} (${run.name}): ${e}`);
+        }
+    }
+    info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`);
+    return approved;
+}
+/**
+ * okToTestOnPullRequest is the `pull_request` handler of the trust marker:
+ * on `synchronize` and `reopened` of a pull request carrying `ok-to-test`
+ * it approves the runs waiting on the new head.
+ *
+ * @param context - the github context of the current action event
+ */
+async function okToTestOnPullRequest(context = github_context) {
+    const action = context.payload.action;
+    if (action !== 'synchronize' && action !== 'reopened') {
+        return;
+    }
+    const pull = context.payload.pull_request;
+    const labels = pull?.labels;
+    if (!Array.isArray(labels) || !labels.some(label => String(label?.name ?? '').toLowerCase() === okToTestLabel)) {
+        core_debug('trigger: the pull request does not carry ok-to-test');
+        return;
+    }
+    const sha = pull?.head?.sha;
+    if (typeof sha !== 'string' || pull?.number === undefined) {
+        throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    await approvePendingRuns(octokit, context, pull.number, sha);
+}
+async function prepare(context, command, options = {}) {
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const issueNumber = context.payload.issue?.number;
+    const commenter = context.payload.comment?.user?.login;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    if (context.payload.issue?.pull_request === undefined) {
+        await createComment(octokit, context, issueNumber, `\`${command}\` only applies to pull requests.`);
+        return undefined;
+    }
+    if (options.refuseAuthor !== undefined && commenter === context.payload.issue?.user?.login) {
+        await refuse(octokit, context, issueNumber, options.refuseAuthor);
+    }
+    try {
+        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenter);
+    }
+    catch (e) {
+        await refuse(octokit, context, issueNumber, `Cannot ${command} because ${e}`, e);
+    }
+    const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
+    return { octokit, issueNumber, headSha };
+}
+// the reusable workflow runs inside the caller's workflow, whose name GITHUB_WORKFLOW carries;
+// re-running or approving that run would re-run this very command
+async function headRuns(octokit, context, headSha) {
+    const current = (external_node_process_default()).env.GITHUB_WORKFLOW;
+    let runs;
+    try {
+        runs = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, { ...context.repo, head_sha: headSha, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list the workflow runs of ${shortSha(headSha)}: ${e}`);
+    }
+    return runs.filter(run => current === undefined || run.name !== current);
+}
+async function rerunEach(octokit, context, issueNumber, runs, rerun) {
+    let count = 0;
+    for (const run of runs) {
+        try {
+            await rerun(run);
+            count++;
+        }
+        catch (e) {
+            if (isConflict(e)) {
+                core_debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`);
+                continue;
+            }
+            if (trigger_isForbidden(e)) {
+                await refuse(octokit, context, issueNumber, `cannot re-run workflows: ${actionsPermissionHint}`);
+            }
+            throw new Error(`could not re-run ${run.name} (${run.id}): ${e}`);
+        }
+    }
+    return count;
+}
+function matchesWorkflow(run, arg) {
+    if ((run.name ?? '').toLowerCase() === arg) {
+        return true;
+    }
+    const path = run.path.toLowerCase();
+    return [arg, `${arg}.yml`, `${arg}.yaml`].some(file => path === file || path.endsWith(`/${file}`));
+}
+function runTable(headSha, runs) {
+    const rows = runs.map(run => `\`${run.name ?? run.path}\` | ${run.status ?? ''} | ${run.conclusion ?? ''}`);
+    return [
+        `Workflow runs on \`${shortSha(headSha)}\`:`,
+        '',
+        'workflow | status | conclusion',
+        '--- | --- | ---',
+        ...(rows.length > 0 ? rows : ['_none_ | |']),
+    ].join('\n');
+}
+async function react(octokit, context) {
+    const commentId = context.payload.comment?.id;
+    if (commentId === undefined) {
+        return;
+    }
+    try {
+        await octokit.reactions.createForIssueComment({ ...context.repo, comment_id: commentId, content: 'rocket' });
+    }
+    catch (e) {
+        warning(`trigger: could not react to the comment: ${e}`);
+    }
+}
+async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+    error(msg);
+    try {
+        await createComment(octokit, context, issueNumber, msg);
+    }
+    catch (commentE) {
+        error(`Could not comment with an auth error: ${commentE}`);
+    }
+    throw cause;
+}
+function trigger_isForbidden(error) {
+    return statusOf(error) === 403;
+}
+function isConflict(error) {
+    return statusOf(error) === 409;
+}
+function statusOf(error) {
+    return typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
+}
+
+;// CONCATENATED MODULE: ./lib/labels/hold.js
+
+
+
+
+
+
+// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
+const legacyHoldLabel = 'hold';
+/**
+ * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
+ * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
+ * Note - the label blocks automatic merging through `tide.missing_labels`.
+ *
+ * @param context - the github actions event context
+ */
+async function hold(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    const config = await loadProwConfig(octokit, context);
+    const holdLabel = resolveHoldLabel(config.hold);
+    const cancel = hasCommand('/unhold', commentBody)
+        || hasCommand('/remove-hold', commentBody)
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+    if (cancel) {
+        await cancelHold(octokit, context, issueNumber, holdLabel);
+        return;
+    }
+    await labelIssue(octokit, context, issueNumber, [holdLabel]);
+}
+async function cancelHold(octokit, context, issueNumber, holdLabel) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
+    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
+    if (present.length === 0) {
+        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, present);
+    }
+    catch (e) {
+        throw new Error(`could not remove the hold label: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/labels/prefixed.js
+
+
+
+
+
+const prefixedLabelCommands = [
+    { command: '/area', prefix: 'area', allowlistKey: 'area' },
+    { command: '/kind', prefix: 'kind', allowlistKey: 'kind' },
+    { command: '/priority', prefix: 'priority', allowlistKey: 'priority', exclusive: true },
+    { command: '/label', prefix: '', allowlistKey: 'labels' },
+    { command: '/lifecycle', prefix: 'lifecycle', allowlistKey: 'lifecycle', exclusive: true, defaultValues: ['frozen', 'stale', 'rotten'] },
+    { command: '/stage', prefix: 'stage', allowlistKey: 'stage', exclusive: true, defaultValues: ['alpha', 'beta', 'stable'] },
+    { command: '/status', prefix: 'status', allowlistKey: 'status', exclusive: true, defaultValues: ['approved-for-milestone', 'in-progress', 'in-review'] },
+];
+// a label section name usable as a slash command: lower-case letters, digits and dashes
+const labelCommandName = /^[a-z][a-z0-9-]*$/;
+// labels with dedicated, authorization-gated commands; never reachable through /label
+const protectedLabels = ['lgtm', 'hold', 'approved'];
+const protectedPrefixes = ['do-not-merge/'];
+/**
+ * isProtectedLabel reports whether /label and /remove-label must refuse the
+ * label: the built-in command labels, the do-not-merge family, and any
+ * `extra` names such as a configured `hold.label`.
+ *
+ * @param label - the label name
+ * @param extra - further protected names, compared case-insensitively
+ */
+function isProtectedLabel(label, extra = []) {
+    const lower = label.toLowerCase();
+    return protectedLabels.includes(lower)
+        || protectedPrefixes.some(prefix => lower.startsWith(prefix))
+        || extra.some(name => name.toLowerCase() === lower);
+}
+/**
+ * dynamicPrefixedCommand builds the command for an arbitrary label section
+ * so that `/<key> value` labels the issue with '<key>/value'
+ *
+ * @param name - the top level key, ex: 'level'
+ */
+function dynamicPrefixedCommand(name) {
+    return { command: `/${name}`, prefix: name, allowlistKey: name };
+}
+/**
+ * removeCommandFor returns the Prow-style removal spelling of a label command
+ * Ex: '/kind' -> '/remove-kind'
+ *
+ * @param command - the add form of the command
+ */
+function removeCommandFor(command) {
+    return `/remove-${command.slice(1)}`;
+}
+/**
+ * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
+ * that is both in the comment and in the configured allowlist.
+ * When the command is exclusive, existing '<prefix>/*' labels that were not
+ * requested are removed first.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addPrefixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    const commentBody = context.payload.comment?.body;
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
+    if (section.exclusive) {
+        const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
+        const stale = currentLabels.filter((label) => {
+            return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
+                && !labels.some(requested => sameLabel(requested, label));
+        });
+        if (stale.length > 0) {
+            await removeLabels(octokit, context, issueNumber, stale);
+        }
+    }
+    await labelIssue(octokit, context, issueNumber, labels);
+}
+/**
+ * removePrefixedLabels removes '<prefix>/<value>' for every value in the
+ * /remove-<command> line that is in the configured allowlist and
+ * currently on the issue. Labels owned by other commands (lgtm, hold,
+ * approved, do-not-merge/*) are refused even when the allowlist names them.
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removePrefixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = requireIssueNumber(context);
+    const commentBody = context.payload.comment?.body;
+    const command = removeCommandFor(cmd.command);
+    const section = await allowlistFor(octokit, context, cmd);
+    const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels);
+    const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
+    const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
+    if (present.length === 0) {
+        core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
+}
+/**
+ * sectionFor resolves the label section a command reads: the yaml section
+ * wins over the built-in defaults, and a yaml `exclusive` wins over the
+ * registry. Undefined when neither exists.
+ *
+ * @param labels - the label sections of the prow configuration
+ * @param cmd - the command definition
+ */
+function sectionFor(labels, cmd) {
+    const section = labels[cmd.allowlistKey];
+    if (section) {
+        return { ...section, exclusive: section.exclusive ?? cmd.exclusive };
+    }
+    if (cmd.defaultValues) {
+        return {
+            values: cmd.defaultValues,
+            exclusive: cmd.exclusive,
+            definitions: cmd.defaultValues.map(name => ({ name })),
+        };
+    }
+    return undefined;
+}
+async function allowlistFor(octokit, context, cmd) {
+    const key = cmd.allowlistKey;
+    try {
+        const labels = await getLabelConfig(octokit, context);
+        const section = sectionFor(labels, cmd);
+        if (section === undefined) {
+            throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
+        }
+        core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
+        const { hold } = await loadProwConfig(octokit, context);
+        return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] };
+    }
+    catch (e) {
+        throw new Error(`could not get labels from yaml: ${e}`);
+    }
+}
+function requestedLabels(cmd, command, commentBody, allowed, protectedExtra) {
+    const args = getCommandArgs(command, commentBody);
+    const canonical = new Map(allowed.map(value => [value.toLowerCase(), value]));
+    const values = args
+        .map(arg => canonical.get(arg.toLowerCase()))
+        .filter((value) => value !== undefined);
+    const labels = addPrefix(cmd.prefix, [...new Set(values)]);
+    // no arguments after command provided
+    if (labels.length === 0) {
+        throw new Error(`${command.slice(1)}: command args missing from body`);
+    }
+    if (cmd.prefix === '') {
+        const offender = labels.find(label => isProtectedLabel(label, protectedExtra));
+        if (offender !== undefined) {
+            throw new Error(`${command.slice(1)}: ${offender} is managed by its own command and cannot be changed with ${command}`);
+        }
+    }
+    return labels;
+}
+// GitHub label names are case-insensitive, as are Prow's comparisons
+function sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
+}
+async function currentIssueLabels(octokit, context, issueNumber, command) {
+    try {
+        const currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
+        return currentLabels;
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/utils/labelCatalog.js
+
+
+
+
+/**
+ * Colors and descriptions of the labels the action manages itself. They
+ * follow kubernetes/test-infra's label_sync where a label exists there;
+ * the legacy `hold` mirrors `do-not-merge/hold`.
+ */
+const builtinLabelDefaults = {
+    'lgtm': { color: '15dd18', description: '"Looks good to me", indicates that a PR is ready to be merged.' },
+    'approved': { color: '0ffa16', description: 'Indicates a PR has been approved by an approver from all required OWNERS files.' },
+    'hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
+    'do-not-merge/hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
+    'help wanted': { color: '006b75', description: 'Denotes an issue that needs help from a contributor. Must meet "help wanted" guidelines.' },
+    'good first issue': { color: '7057ff', description: 'Denotes an issue ready for a new contributor, according to the "help wanted" guidelines.' },
+    'ok-to-test': { color: '15dd18', description: 'Indicates a non-member PR verified by an org member that is safe to test.' },
+    'lifecycle/frozen': { color: 'd3e2f0', description: 'Indicates that an issue or PR should not be auto-closed due to staleness.' },
+    'lifecycle/stale': { color: '795548', description: 'Denotes an issue or PR has remained open with no activity and has become stale.' },
+    'lifecycle/rotten': { color: '604460', description: 'Denotes an issue or PR that has aged beyond stale and will be auto-closed.' },
+};
+const needsLabelColor = 'ededed';
+/**
+ * desiredLabels lists every label the prow configuration describes, with the
+ * color and description the label-sync job should give it: the label
+ * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
+ * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
+ * section, the labels the action's own commands apply (`hold.label` and
+ * the legacy `hold`, `ok-to-test`), and every `require_matching_label` missing label. Names are unique
+ * case-insensitively (first definition wins) and sorted.
+ *
+ * @param config - the merged prow configuration
+ */
+function desiredLabels(config) {
+    const registryKeys = new Set(prefixedLabelCommands.map(cmd => cmd.allowlistKey));
+    const labels = [];
+    for (const cmd of prefixedLabelCommands) {
+        const section = sectionFor(config.labels, cmd);
+        if (section) {
+            labels.push(...section.definitions.map(value => prefixed(cmd.prefix, value)));
+        }
+    }
+    for (const [key, section] of Object.entries(config.labels)) {
+        if (!registryKeys.has(key)) {
+            labels.push(...section.definitions.map(value => prefixed(key, value)));
+        }
+    }
+    const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel];
+    for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue', okToTestLabel]) {
+        labels.push({ name });
+    }
+    for (const rule of config.require_matching_label) {
+        labels.push({ name: rule.missing_label });
+    }
+    const seen = new Set();
+    const unique = labels.filter((label) => {
+        const key = label.name.toLowerCase();
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+    return unique
+        .map(labelCatalog_withDefaults)
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+function prefixed(prefix, value) {
+    return prefix === '' ? { ...value } : { ...value, name: `${prefix}/${value.name}` };
+}
+// the configuration wins over the built-in defaults; a label with neither gets no color
+function labelCatalog_withDefaults(label) {
+    const defaults = builtinLabelDefaults[label.name.toLowerCase()]
+        ?? (label.name.toLowerCase().startsWith('needs-') ? { color: needsLabelColor } : {});
+    const merged = { name: label.name };
+    const color = label.color ?? defaults.color;
+    const description = label.description ?? defaults.description;
+    if (color !== undefined) {
+        merged.color = color.toLowerCase();
+    }
+    if (description !== undefined) {
+        merged.description = description;
+    }
+    return merged;
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/labelSync.js
+
+
+
+
+
+/**
+ * labelSync creates the labels the prow configuration describes and updates
+ * the color or description of those that drifted. It never deletes or
+ * renames a label. With the `dry-run` input set it only logs what would
+ * change. Every label is attempted; the run fails at the end if any write
+ * was refused.
+ *
+ * @param context - the github actions event context
+ */
+async function labelSync(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const dryRun = getInput('dry-run', { required: false }).trim().toLowerCase() === 'true';
+    const config = await loadProwConfig(octokit, context);
+    const desired = desiredLabels(config);
+    core_debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`);
+    let existing;
+    try {
+        existing = await octokit.paginate(octokit.issues.listLabelsForRepo, { ...context.repo, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const byName = new Map(existing.map(label => [label.name.toLowerCase(), label]));
+    const result = { created: [], updated: [], unchanged: 0, failures: [] };
+    const plan = { create: [], update: [] };
+    for (const label of desired) {
+        const current = byName.get(label.name.toLowerCase());
+        if (current === undefined) {
+            plan.create.push(label.name);
+            if (!dryRun) {
+                await write(result, label.name, result.created, () => createLabel(octokit, context, label));
+            }
+            continue;
+        }
+        const patch = drift(label, current);
+        if (patch === undefined) {
+            result.unchanged++;
+            continue;
+        }
+        plan.update.push(`${current.name} (${Object.keys(patch).join(', ')})`);
+        if (!dryRun) {
+            await write(result, current.name, result.updated, () => updateLabel(octokit, context, current.name, patch));
+        }
+    }
+    if (dryRun) {
+        info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`);
+        return result;
+    }
+    info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`);
+    if (result.failures.length > 0) {
+        const list = result.failures.map(f => `${f.name} (${f.message})`).join(', ');
+        throw new Error(`${result.failures.length} label(s) could not be synced: ${list}`);
+    }
+    return result;
+}
+// a refused write is logged and recorded so the remaining labels are still attempted
+async function write(result, name, done, action) {
+    try {
+        await action();
+        done.push(name);
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        error(`label-sync: could not sync ${name}: ${message}`);
+        result.failures.push({ name, message });
+    }
+}
+function createLabel(octokit, context, label) {
+    return octokit.issues.createLabel({
+        ...context.repo,
+        name: label.name,
+        ...(label.color === undefined ? {} : { color: label.color }),
+        ...(label.description === undefined ? {} : { description: label.description }),
+    });
+}
+function updateLabel(octokit, context, name, patch) {
+    return octokit.issues.updateLabel({ ...context.repo, name, ...patch });
+}
+// the fields of `desired` that the repository's label does not match; undefined when in sync
+function drift(desired, current) {
+    const patch = {};
+    if (desired.color !== undefined && desired.color.toLowerCase() !== current.color.toLowerCase()) {
+        patch.color = desired.color;
+    }
+    if (desired.description !== undefined && desired.description !== (current.description ?? '')) {
+        patch.description = desired.description;
+    }
+    return Object.keys(patch).length === 0 ? undefined : patch;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
+/**
+ * matchesLabelPattern reports whether a label name matches a tide label
+ * pattern. Names compare case-insensitively, like GitHub does. `*` matches any
+ * run of characters, `/` included, so `do-not-merge/*` covers the whole
+ * family; everything else is literal (`do-not-merge` alone does not match
+ * `do-not-merge/hold`).
+ *
+ * @param pattern - a label name, optionally with `*` wildcards
+ * @param label - the label name to test
+ */
+function matchesLabelPattern(pattern, label) {
+    const parts = pattern.toLowerCase().split('*');
+    const subject = label.toLowerCase();
+    if (parts.length === 1) {
+        return subject === parts[0];
+    }
+    if (!subject.startsWith(parts[0])) {
+        return false;
+    }
+    const last = parts[parts.length - 1];
+    if (!subject.endsWith(last) || subject.length < parts[0].length + last.length) {
+        return false;
+    }
+    // the middle parts must appear in order between the anchored ends
+    let at = parts[0].length;
+    const end = subject.length - last.length;
+    for (const part of parts.slice(1, -1)) {
+        const found = subject.indexOf(part, at);
+        if (found === -1 || found + part.length > end) {
+            return false;
+        }
+        at = found + part.length;
+    }
+    return true;
+}
+/**
+ * anyLabelMatches reports whether any of the patterns matches any of the labels
+ *
+ * @param patterns - label patterns, see matchesLabelPattern
+ * @param labels - the label names to test
+ */
+function anyLabelMatches(patterns, labels) {
+    return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)));
+}
+
+;// CONCATENATED MODULE: ./lib/utils/mergeGate.js
+
+/**
+ * meetsMergeGate decides, like Prow's tide query, whether a pull request's
+ * labels allow merging: every `tide.labels` pattern must match at least one
+ * label and no `tide.missing_labels` pattern may match any label.
+ *
+ * @param labels - the labels on the pull request
+ * @param tide - the resolved tide configuration
+ */
+function meetsMergeGate(labels, tide) {
+    const missing = tide.labels.find(pattern => !labels.some(label => matchesLabelPattern(pattern, label)));
+    if (missing !== undefined) {
+        return { ok: false, reason: `missing ${missing}` };
+    }
+    const blocking = labels.find(label => tide.missing_labels.some(pattern => matchesLabelPattern(pattern, label)));
+    if (blocking !== undefined) {
+        return { ok: false, reason: `blocked by ${blocking}` };
+    }
+    return { ok: true };
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
@@ -43077,60 +43659,6 @@ async function tryMergePr(pr, octokit, context = github_context, policy, failure
         failures.push({ number: pr.number, message: verdict.message });
     }
     return verdict.result === 'merged';
-}
-
-;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
-
-const pullRequestOwners_cache = new Map();
-/**
- * loadPullRequestOwners reads the pull request, its changed files and the
- * OWNERS files of the base branch that cover them. The result is memoized per
- * pull request for the lifetime of the process, so every plugin acting on the
- * same event shares one fetch.
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param pullNumber - the pull request
- */
-function loadPullRequestOwners(octokit, context, pullNumber) {
-    const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
-    let pending = pullRequestOwners_cache.get(key);
-    if (pending === undefined) {
-        pending = pullRequestOwners_load(octokit, context, pullNumber);
-        pullRequestOwners_cache.set(key, pending);
-    }
-    return pending;
-}
-function resetPullRequestOwnersCache() {
-    pullRequestOwners_cache.clear();
-}
-async function pullRequestOwners_load(octokit, context, pullNumber) {
-    const { data: pull } = await octokit.pulls.get({
-        ...context.repo,
-        pull_number: pullNumber,
-    });
-    const changed = await octokit.paginate(octokit.pulls.listFiles, {
-        ...context.repo,
-        pull_number: pullNumber,
-        per_page: 100,
-    });
-    const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
-    // OWNERS come from the base branch so a PR cannot grant itself approvers
-    const tree = await loadOwnersTree(octokit, context, pull.base.sha, files);
-    const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]));
-    return {
-        number: pullNumber,
-        baseSha: pull.base.sha,
-        headSha: pull.head.sha,
-        author: (pull.user?.login ?? '').toLowerCase(),
-        draft: pull.draft === true,
-        requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
-        assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
-        labels: (pull.labels ?? []).map(label => label.name),
-        files,
-        tree,
-        perFile,
-    };
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approve.js
@@ -43962,6 +44490,7 @@ function requireMatchingLabel_sameLabel(a, b) {
 
 
 
+
 /** pull requests evaluated at once; keeps a busy repository within the api's secondary rate limits */
 const sweepConcurrency = 3;
 const pageSize = 100;
@@ -43971,7 +44500,7 @@ const pageSize = 100;
  * `pull_request` and `pull_request_review` handlers would have done with a
  * write token, in their order: the `require_matching_label` rules, the OWNERS
  * labels, blunderbuss on a fresh pull request nobody reviews yet, the
- * approval, then the merge path (lgtm binding, mergeability, merge). Each
+ * approval, the pending runs of a pull request labeled `ok-to-test`, then the merge path (lgtm binding, mergeability, merge). Each
  * pull request is evaluated sequentially, a few pull requests at a time; a
  * failure on one is collected and the rest still run. The run fails at the
  * end listing the failures.
@@ -44022,6 +44551,7 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
     const steps = [
         ['require-matching-label', () => enforceRequiredLabels(octokit, context, { issueNumber: pr.number, isPullRequest: true })],
         ...(plugins.hasOwners ? ownersSteps : []),
+        ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
         ['tide', async () => {
                 const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm);
                 if (verdict.result === 'merged') {
@@ -44042,6 +44572,13 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
     }
     info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
     return outcome;
+}
+async function approveIfTrusted(octokit, context, pr) {
+    if (!(pr.labels ?? []).some(label => label.name.toLowerCase() === okToTestLabel)) {
+        core_debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`);
+        return;
+    }
+    await approvePendingRuns(octokit, context, pr.number, pr.head.sha);
 }
 async function requestReviewersIfFresh(octokit, context, pr, plugins) {
     if (new Date(pr.created_at) < plugins.since) {
@@ -44196,265 +44733,6 @@ function fixed_requireIssueNumber(context) {
     return issueNumber;
 }
 
-;// CONCATENATED MODULE: ./lib/utils/auth.js
-
-
-
-
-function getErrorDetails(error) {
-    if (typeof error === 'object' && error !== null) {
-        const status = 'status' in error ? error.status : 'unknown';
-        const message = 'message' in error && typeof error.message === 'string'
-            ? error.message
-            : String(error);
-        return { status, message };
-    }
-    return {
-        status: 'unknown',
-        message: String(error),
-    };
-}
-/**
- * checkOrgMember will check to see if the given user is a repo org member
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param user - the users to check auth on
- */
-async function checkOrgMember(octokit, context, user) {
-    try {
-        if (context.payload.repository === undefined) {
-            core_debug(`checkOrgMember error: context payload repository undefined`);
-            return false;
-        }
-        await octokit.orgs.checkMembershipForUser({
-            org: context.payload.repository.owner.login,
-            username: user,
-        });
-        return true;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        if (status === 404 || status === 302) {
-            core_debug(`${user} is not an org member: ${message}`);
-            return false;
-        }
-        warning(`encountered unexpected error: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * checkCollaborator checks to see if the given user is a repo collaborator
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param user - the users to check auth on
- */
-async function checkCollaborator(octokit, context, user) {
-    try {
-        await octokit.repos.checkCollaborator({
-            ...context.repo,
-            username: user,
-        });
-        return true;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        if (status === 404) {
-            core_debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
-            return false;
-        }
-        warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * checkIssueComments will check to see if the given user
- * has commented on the given issue
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param user - the users to check auth on
- */
-async function checkIssueComments(octokit, context, issueNum, user) {
-    try {
-        const comments = await octokit.issues.listComments({
-            ...context.repo,
-            issue_number: issueNum,
-        });
-        for (const e of comments.data) {
-            if (e.user?.login === user) {
-                return true;
-            }
-        }
-        return false;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * getOrgCollabCommentUsers will return an array of users who are org members,
- * repo collaborators, or have commented previously
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param args - the users to check auth on
- */
-async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
-    const toReturn = [];
-    try {
-        await Promise.all(args.map(async (arg) => {
-            const isOrgMember = await checkOrgMember(octokit, context, arg);
-            const isCollaborator = await checkCollaborator(octokit, context, arg);
-            const hasCommented = await checkIssueComments(octokit, context, issueNum, arg);
-            if (isOrgMember || isCollaborator || hasCommented) {
-                toReturn.push(arg);
-            }
-        }));
-    }
-    catch (e) {
-        throw new Error(`could not get authorized user: ${e}`);
-    }
-    return toReturn;
-}
-/**
- * checkCommenterAuth will return true
- * if the user is a org member, a collaborator, or has commented previously
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param args - the users to check auth on
- */
-async function checkCommenterAuth(octokit, context, issueNum, user) {
-    let isOrgMember = false;
-    let isCollaborator = false;
-    let hasCommented = false;
-    try {
-        isOrgMember = await checkOrgMember(octokit, context, user);
-    }
-    catch (e) {
-        throw new Error(`error in checking org member: ${e}`);
-    }
-    try {
-        isCollaborator = await checkCollaborator(octokit, context, user);
-    }
-    catch (e) {
-        throw new Error(`could not check collaborator: ${e}`);
-    }
-    try {
-        hasCommented = await checkIssueComments(octokit, context, issueNum, user);
-    }
-    catch (e) {
-        throw new Error(`could not check issue comments: ${e}`);
-    }
-    if (isOrgMember || isCollaborator || hasCommented) {
-        return true;
-    }
-    return false;
-}
-/**
- * When the repository has OWNERS files, use them to authorize the action,
- * otherwise fall back to allowing organization members and collaborators.
- * On a pull request the OWNERS covering each changed file are used: the user
- * must hold the role for at least one changed file (an approver's /approve
- * then counts for the files they cover; the approve plugin decides whether the
- * whole PR is approved). On an issue the root OWNERS file is used.
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param role - the role to check
- * @param username - the user to authorize
- */
-async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
-    core_debug('Checking if the user is authorized to interact with prow');
-    const hasOwners = context.payload.issue?.pull_request !== undefined
-        ? await assertPullRequestOwner(octokit, context, role, username)
-        : await assertRootOwner(octokit, context, role, username);
-    if (!hasOwners) {
-        const isOrgMember = await checkOrgMember(octokit, context, username);
-        const isCollaborator = await checkCollaborator(octokit, context, username);
-        if (!isOrgMember && !isCollaborator) {
-            throw new Error(`${username} is not a org member or collaborator`);
-        }
-    }
-}
-/**
- * Authorize against the root OWNERS file of the default branch.
- * @returns false when the repository has no root OWNERS file
- */
-async function assertRootOwner(octokit, context, role, username) {
-    const contents = await retrieveOwnersFile(octokit, context);
-    if (contents === '') {
-        return false;
-    }
-    const owners = parseOwners('OWNERS', contents);
-    if (!owners[role].includes(username.toLowerCase())) {
-        throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
-    }
-    return true;
-}
-/**
- * Authorize against the OWNERS files covering the pull request's changed files.
- * @returns false when the repository has no OWNERS files at all
- */
-async function assertPullRequestOwner(octokit, context, role, username) {
-    const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
-    if (!tree.hasOwners) {
-        core_debug('No OWNERS files found');
-        return false;
-    }
-    const login = username.toLowerCase();
-    const covered = files.map((file) => {
-        const owners = perFile.get(file);
-        if (owners === undefined) {
-            throw new Error(`no OWNERS file covers ${file}`);
-        }
-        return { file, owners };
-    });
-    if (role === 'approvers') {
-        if (!covered.some(({ owners }) => owners.approvers.has(login))) {
-            throw new Error(`${username} is not an approver for any changed file`);
-        }
-    }
-    else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
-        throw new Error(`${username} is not a reviewer or approver for any changed file`);
-    }
-    return true;
-}
-/**
- * Retrieve the contents of the OWNERS file at the root of the repository.
- * If the file does not exist, returns an empty string.
- */
-async function retrieveOwnersFile(octokit, context) {
-    core_debug(`Looking for an OWNERS file at the root of the repository`);
-    let data;
-    try {
-        const response = await octokit.repos.getContent({
-            ...context.repo,
-            path: 'OWNERS',
-        });
-        data = response.data;
-    }
-    catch (e) {
-        if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-            core_debug('No OWNERS file found');
-            return '';
-        }
-        throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
-    }
-    if (!data.content || !data.encoding) {
-        throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
-    }
-    const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
-    core_debug(`OWNERS file contents: ${decoded}`);
-    return decoded;
-}
-
 ;// CONCATENATED MODULE: ./lib/labels/lgtm.js
 
 
@@ -44499,7 +44777,7 @@ async function lgtm(context = github_context) {
         return;
     }
     if (isAuthor) {
-        await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
+        await lgtm_refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
     }
     await assertReviewer(octokit, context, issueNumber, commenterId);
     if (isPullRequest && (await bindsToCommit(octokit, context))) {
@@ -44508,7 +44786,7 @@ async function lgtm(context = github_context) {
             await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url);
         }
         catch (e) {
-            await refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e);
+            await lgtm_refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e);
         }
     }
     await labelIssue(octokit, context, issueNumber, [lgtmLabel]);
@@ -44544,11 +44822,11 @@ async function assertReviewer(octokit, context, issueNumber, commenterId) {
         await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
     }
     catch (e) {
-        await refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
+        await lgtm_refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
     }
 }
 // refuse logs and replies with msg, then fails the run with cause (or msg)
-async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
     error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
@@ -45317,190 +45595,6 @@ async function retitle(context = github_context) {
     }
 }
 
-;// CONCATENATED MODULE: ./lib/issueComment/trigger.js
-
-
-
-
-
-
-
-
-
-const actionsPermissionHint = 'grant `actions: write` to the workflow';
-const failedConclusions = new Set(['failure', 'cancelled', 'timed_out']);
-/**
- * retest re-runs the failed jobs of every completed run on the pull
- * request's head that ended in failure, cancelled or timed_out. Runs in
- * progress are left alone. Authorized like `/lgtm`.
- *
- * @param context - the github actions event context
- */
-async function retest(context = github_context) {
-    const cmd = await prepare(context, '/retest');
-    if (cmd === undefined) {
-        return;
-    }
-    const { octokit, issueNumber, headSha } = cmd;
-    const runs = await headRuns(octokit, context, headSha);
-    const failed = runs.filter(run => run.status === 'completed' && failedConclusions.has(run.conclusion ?? ''));
-    if (failed.length === 0) {
-        const inProgress = runs.filter(run => run.status !== 'completed').length;
-        const successful = runs.filter(run => run.status === 'completed' && run.conclusion === 'success').length;
-        const parts = [
-            ...(inProgress > 0 ? [`${inProgress} in progress`] : []),
-            ...(successful > 0 ? [`${successful} successful`] : []),
-        ];
-        const summary = parts.length > 0 ? `: ${parts.join(', ')}` : '';
-        await createComment(octokit, context, issueNumber, `No failed GitHub Actions workflow runs on \`${shortSha(headSha)}\`${summary}. Checks from other CI systems cannot be re-run here.`);
-        return;
-    }
-    const rerun = await rerunEach(octokit, context, issueNumber, failed, run => octokit.actions.reRunWorkflowFailedJobs({ ...context.repo, run_id: run.id }));
-    if (rerun === 0) {
-        await createComment(octokit, context, issueNumber, `The failed GitHub Actions workflow runs on \`${shortSha(headSha)}\` are already being re-run.`);
-        return;
-    }
-    await react(octokit, context);
-}
-/**
- * test re-runs whole workflow runs on the head: `/test all` every completed
- * run, `/test <name>` those whose workflow name or file matches, and
- * `/test ?` (or no argument) lists the runs instead. Authorized like `/lgtm`.
- *
- * @param context - the github actions event context
- */
-async function test(context = github_context) {
-    const cmd = await prepare(context, '/test');
-    if (cmd === undefined) {
-        return;
-    }
-    const { octokit, issueNumber, headSha } = cmd;
-    const args = getCommandArgs('/test', context.payload.comment?.body).map(arg => arg.toLowerCase());
-    const runs = await headRuns(octokit, context, headSha);
-    if (args.length === 0 || args.includes('?')) {
-        await createComment(octokit, context, issueNumber, runTable(headSha, runs));
-        return;
-    }
-    const completed = runs.filter(run => run.status === 'completed');
-    const selected = args.includes('all')
-        ? completed
-        : completed.filter(run => args.some(arg => matchesWorkflow(run, arg)));
-    if (selected.length === 0) {
-        await createComment(octokit, context, issueNumber, `No completed GitHub Actions workflow run on \`${shortSha(headSha)}\` matches \`${args.join(' ')}\`.\n\n${runTable(headSha, runs)}`);
-        return;
-    }
-    const rerun = await rerunEach(octokit, context, issueNumber, selected, run => octokit.actions.reRunWorkflow({ ...context.repo, run_id: run.id }));
-    if (rerun === 0) {
-        await createComment(octokit, context, issueNumber, `The GitHub Actions workflow runs on \`${shortSha(headSha)}\` are already being re-run.`);
-        return;
-    }
-    await react(octokit, context);
-}
-async function prepare(context, command, options = {}) {
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    const issueNumber = context.payload.issue?.number;
-    const commenter = context.payload.comment?.user?.login;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    if (context.payload.issue?.pull_request === undefined) {
-        await createComment(octokit, context, issueNumber, `\`${command}\` only applies to pull requests.`);
-        return undefined;
-    }
-    if (options.refuseAuthor !== undefined && commenter === context.payload.issue?.user?.login) {
-        await trigger_refuse(octokit, context, issueNumber, options.refuseAuthor);
-    }
-    try {
-        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenter);
-    }
-    catch (e) {
-        await trigger_refuse(octokit, context, issueNumber, `Cannot ${command} because ${e}`, e);
-    }
-    const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
-    return { octokit, issueNumber, headSha };
-}
-// the reusable workflow runs inside the caller's workflow, whose name GITHUB_WORKFLOW carries;
-// re-running or approving that run would re-run this very command
-async function headRuns(octokit, context, headSha) {
-    const current = (external_node_process_default()).env.GITHUB_WORKFLOW;
-    let runs;
-    try {
-        runs = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, { ...context.repo, head_sha: headSha, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list the workflow runs of ${shortSha(headSha)}: ${e}`);
-    }
-    return runs.filter(run => current === undefined || run.name !== current);
-}
-async function rerunEach(octokit, context, issueNumber, runs, rerun) {
-    let count = 0;
-    for (const run of runs) {
-        try {
-            await rerun(run);
-            count++;
-        }
-        catch (e) {
-            if (isConflict(e)) {
-                core_debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`);
-                continue;
-            }
-            if (trigger_isForbidden(e)) {
-                await trigger_refuse(octokit, context, issueNumber, `cannot re-run workflows: ${actionsPermissionHint}`);
-            }
-            throw new Error(`could not re-run ${run.name} (${run.id}): ${e}`);
-        }
-    }
-    return count;
-}
-function matchesWorkflow(run, arg) {
-    if ((run.name ?? '').toLowerCase() === arg) {
-        return true;
-    }
-    const path = run.path.toLowerCase();
-    return [arg, `${arg}.yml`, `${arg}.yaml`].some(file => path === file || path.endsWith(`/${file}`));
-}
-function runTable(headSha, runs) {
-    const rows = runs.map(run => `\`${run.name ?? run.path}\` | ${run.status ?? ''} | ${run.conclusion ?? ''}`);
-    return [
-        `Workflow runs on \`${shortSha(headSha)}\`:`,
-        '',
-        'workflow | status | conclusion',
-        '--- | --- | ---',
-        ...(rows.length > 0 ? rows : ['_none_ | |']),
-    ].join('\n');
-}
-async function react(octokit, context) {
-    const commentId = context.payload.comment?.id;
-    if (commentId === undefined) {
-        return;
-    }
-    try {
-        await octokit.reactions.createForIssueComment({ ...context.repo, comment_id: commentId, content: 'rocket' });
-    }
-    catch (e) {
-        warning(`trigger: could not react to the comment: ${e}`);
-    }
-}
-async function trigger_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    error(msg);
-    try {
-        await createComment(octokit, context, issueNumber, msg);
-    }
-    catch (commentE) {
-        error(`Could not comment with an auth error: ${commentE}`);
-    }
-    throw cause;
-}
-function trigger_isForbidden(error) {
-    return statusOf(error) === 403;
-}
-function isConflict(error) {
-    return statusOf(error) === 409;
-}
-function statusOf(error) {
-    return typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
-}
-
 ;// CONCATENATED MODULE: ./lib/issueComment/unassign.js
 
 
@@ -45670,6 +45764,7 @@ const handlers = {
     '/auto-cc': context => autoCc(context),
     '/retest': context => retest(context),
     '/test': context => test(context),
+    '/ok-to-test': context => okToTest(context),
 };
 // Prow-style spellings that are handled by the canonical command's module
 const commandAliases = {
@@ -45687,7 +45782,7 @@ function isDynamicLabelCommand(command) {
         && !(command in commandAliases);
 }
 // only a command that may have written a label needs the post-command sweep; the rest stay free of extra calls
-const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove']);
+const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove', '/ok-to-test']);
 function changesLabels(command) {
     return labelWritingHandlers.has(command)
         || prefixedLabelCommands.some(cmd => cmd.command === command)
@@ -45927,8 +46022,9 @@ async function onPrLgtm(context) {
 
 
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, tideOnPullRequest];
+
+/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them; ok-to-test approves the pending runs of a trusted pull request */
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, okToTestOnPullRequest, tideOnPullRequest];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on

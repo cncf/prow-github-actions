@@ -114,7 +114,7 @@ describe('the reusable workflow mirrors action.yml', () => {
 
   it('enables the trigger commands by default and asks for actions: write to serve them', () => {
     const defaults = String((workflowCall.inputs['prow-commands'] as Mapping).default).split(/\s+/)
-    expect(defaults).toEqual(expect.arrayContaining(['/retest', '/test']))
+    expect(defaults).toEqual(expect.arrayContaining(['/retest', '/test', '/ok-to-test']))
     expect(reusableJob.permissions).toMatchObject({ 'actions': 'write', 'statuses': 'write', 'contents': 'write', 'issues': 'write', 'pull-requests': 'write' })
   })
 })

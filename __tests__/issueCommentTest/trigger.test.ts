@@ -555,3 +555,154 @@ describe('/test', () => {
     expect(setFailed).toHaveBeenCalled()
   })
 })
+
+describe('/ok-to-test', () => {
+  // the label write is followed by the post-command sweep: no prow.yaml, no OWNERS files, tide skips a pr without lgtm
+  beforeEach(() => {
+    setup('/ok-to-test')
+    server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree())
+  })
+
+  const pendingRuns: RunSpec[] = [
+    { id: 8, name: 'CI', status: 'action_required', conclusion: 'action_required' },
+    { id: 9, name: 'Lint', status: 'completed', conclusion: 'action_required' },
+    { id: 2, name: 'Docs', status: 'completed', conclusion: 'success' },
+    { id: 5, name: 'Prow', path: '.github/workflows/prow.yml', status: 'in_progress' },
+  ]
+
+  function serveApprove(approved: number[]): HttpHandler {
+    return http.post(`${repo}/actions/runs/:id/approve`, ({ params }) => {
+      approved.push(Number(params.id))
+      return new Response(null, { status: 201 })
+    })
+  }
+
+  it('approves the runs waiting for approval, adds the ok-to-test label and reacts with a rocket', async () => {
+    const approved: number[] = []
+    const label = new utils.ObserveRequest()
+    const reaction = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns(pendingRuns),
+      serveApprove(approved),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),
+      utils.repoHasLabels(['ok-to-test']),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    await expect(label.called()).resolves.toBe('called')
+    expect(await label.body()).toEqual({ labels: ['ok-to-test'] })
+    await expect(reaction.called()).resolves.toBe('called')
+    expect(approved.sort()).toEqual([8, 9])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('with nothing pending still reacts when the label was just added', async () => {
+    const reaction = new utils.ObserveRequest()
+    const reply = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([{ id: 2, name: 'Docs', status: 'completed', conclusion: 'success' }]),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),
+      utils.repoHasLabels(['ok-to-test']),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [])),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    await expect(reaction.called()).resolves.toBe('called')
+    await expect(reply.notCalled()).resolves.toBe('not called')
+  })
+
+  it('with the label already present and nothing pending comments instead of reacting, and re-adds nothing', async () => {
+    const reaction = new utils.ObserveRequest()
+    const reply = new utils.ObserveRequest()
+    const label = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([{ id: 2, name: 'Docs', status: 'completed', conclusion: 'success' }]),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'ok-to-test' }] })),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe('No workflow runs waiting for approval on `headsha`.')
+    await expect(reaction.notCalled()).resolves.toBe('not called')
+    await expect(label.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('is refused for the pull request author', async () => {
+    const reply = new utils.ObserveRequest()
+    const runs = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns(pendingRuns, runs),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test', 'Codertocat', 'Codertocat')))
+
+    const wantErr = 'you cannot approve the workflow runs of your own pull request'
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe(wantErr)
+    await expect(runs.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
+  })
+
+  it('surfaces the missing-label error when the repository has no ok-to-test label', async () => {
+    const approved: number[] = []
+    server.use(
+      ...memberAuth(),
+      serveRuns(pendingRuns),
+      serveApprove(approved),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),
+      utils.repoHasLabels(['lgtm']),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('the label(s) ok-to-test cannot be applied because the repository doesn\'t have them'))
+  })
+
+  it('a 403 on the approval fails with the actions: write hint', async () => {
+    const reply = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns(pendingRuns),
+      http.post(`${repo}/actions/runs/:id/approve`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('cannot approve workflow runs: grant `actions: write` to the workflow'))
+  })
+
+  it('on an issue comments that it only applies to pull requests', async () => {
+    const reply = new utils.ObserveRequest()
+    const event = structuredClone(issueCommentEvent)
+    event.comment.body = '/ok-to-test'
+    server.use(http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+
+    await handleIssueComment(new utils.MockContext(event))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe('`/ok-to-test` only applies to pull requests.')
+  })
+})

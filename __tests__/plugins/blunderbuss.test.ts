@@ -311,7 +311,7 @@ describe('blunderbuss handler', () => {
   })
 
   it('is registered on the pull_request event after owners-label and shares its OWNERS fetch', async () => {
-    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'lgtmOnPullRequest', 'approveOnPullRequest', 'tideOnPullRequest'])
+    expect(pullRequestHandlers.map(handler => handler.name)).toEqual(['requireMatchingLabel', 'ownersLabel', 'blunderbuss', 'lgtmOnPullRequest', 'approveOnPullRequest', 'okToTestOnPullRequest', 'tideOnPullRequest'])
 
     utils.setupJobsEnv('')
     serveConfig()

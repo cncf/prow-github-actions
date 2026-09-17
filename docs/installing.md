@@ -80,7 +80,7 @@ caller grants. The reusable job asks for exactly `contents: write` (merges, read
 and configuration files), `issues: write` and `pull-requests: write` (labels, comments,
 assignees, reviews) `statuses: write` (the `prow/lgtm` commit status that
 [binds `lgtm` to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)) and
-`actions: write` ([`/retest` and `/test`](./commands.md#trigger) re-run workflow runs).
+`actions: write` ([`/retest`, `/test` and `/ok-to-test`](./commands.md#trigger) re-run or approve workflow runs).
 Grant less and GitHub refuses to start the called job, since a called
 workflow may only downgrade, never elevate, the caller's permissions.
 
@@ -209,11 +209,11 @@ With the caller alone and no `prow.yaml` in any tier:
 
 Feature | Docs
 --- | ---
-Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, retest, test, and the label commands once their labels exist | [commands](./commands.md)
+Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, retest, test, ok-to-test, and the label commands once their labels exist | [commands](./commands.md)
 Reviewers requested and labels applied from OWNERS files | [labeling](./labeling.md#labels-from-owners-files), [blunderbuss](./configuration.md#blunderbuss)
 Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly; `lgtm` counts only for the commit it reviewed | [automatic merging](./automatic-merging.md)
 `lgtm` removed when new commits are pushed | [PR jobs](./pr-jobs.md)
-`label-sync` creating `lgtm`, `approved`, `do-not-merge/hold`, `hold`, `help wanted`, `good first issue` and the `lifecycle/*`, `stage/*`, `status/*` labels | [jobs](./cron-jobs.md#label-sync)
+`label-sync` creating `lgtm`, `approved`, `do-not-merge/hold`, `hold`, `help wanted`, `good first issue`, `ok-to-test` and the `lifecycle/*`, `stage/*`, `status/*` labels | [jobs](./cron-jobs.md#label-sync)
 
 Label sections (`/kind`, `/area`, `/priority`, ...) and `needs-*` rules need a `prow.yaml`
 ([starter](../templates/prow.yaml)).

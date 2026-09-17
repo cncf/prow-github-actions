@@ -710,6 +710,7 @@ describe('dist/index.js', () => {
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
       gh.route('GET', `${repo}/actions/runs`, { status: 200, body: runsOnHead })
       gh.route('POST', /\/actions\/runs\/\d+\/rerun-failed-jobs$/, { status: 201 })
+      gh.route('POST', /\/actions\/runs\/\d+\/approve$/, { status: 201 })
       gh.route('POST', `${repo}/issues/comments/492700400/reactions`, { status: 201, body: { content: 'rocket' } })
     }
 
@@ -734,6 +735,32 @@ describe('dist/index.js', () => {
       expect(calls.slice(0, authReads.length).sort()).toEqual([...authReads].sort())
       expect(calls.slice(authReads.length)).toEqual([runsRead, `POST ${repo}/actions/runs/1/rerun-failed-jobs`, rocket])
       expect(gh.requestsMatching('POST', /\/reactions$/)[0].body).toEqual({ content: 'rocket' })
+    })
+
+    it('/ok-to-test approves the run awaiting approval, labels ok-to-test, reacts, then the post-command sweep skips the unlgtm\'d pr', async () => {
+      routeTrigger()
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/labels`, repoLabels('ok-to-test', 'lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/ok-to-test'),
+        inputs: { ...token, 'prow-commands': '/ok-to-test' },
+        apiUrl: gh.url,
+        env: { GITHUB_WORKFLOW: 'Prow' },
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('skipping pr #1: missing lgtm')
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, authReads.length).sort()).toEqual([...authReads].sort())
+      const command = [runsRead, `POST ${repo}/actions/runs/4/approve`, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, rocket]
+      expect(calls.slice(authReads.length, authReads.length + command.length)).toEqual(command)
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['ok-to-test'] })
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/rerun/)).toEqual([])
     })
   })
 
@@ -1751,6 +1778,7 @@ describe('dist/index.js', () => {
       'lifecycle/frozen',
       'lifecycle/rotten',
       'lifecycle/stale',
+      'ok-to-test',
       'stage/alpha',
       'stage/beta',
       'stage/stable',

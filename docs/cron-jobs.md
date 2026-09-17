@@ -8,7 +8,7 @@ parallel; an unknown name fails the run with `could not execute <job>`.
 Jobs | Description | Permissions
 --- | --- | ---
 `lgtm` | Backstop for [event-driven merging](./automatic-merging.md#event-driven-merging): catches events GitHub dropped or runs that were skipped; comment commands (`/lgtm`, `/approve`, `/unhold`) evaluate the PR themselves and do not need it. Pages through the repository's open pull requests, following pages until one comes back empty, and sends every one that passes the [merge gate](./automatic-merging.md#the-merge-gate) on its listed labels (`tide.labels` present, no `tide.missing_labels`; by default `lgtm` and none of `do-not-merge/*`, `needs-rebase`, `hold`) through the shared merge path: the [`lgtm` binding](./automatic-merging.md#lgtm-is-bound-to-a-commit) (a stale `lgtm` is stripped, not merged), then `mergeable_state` (`clean` and `has_hooks` merge). A PR that fails the gate on its listed labels costs no further call. Skips locked and closed PRs and logs why each other PR was skipped; a refused merge fails the run listing those PRs. With the events subscribed an hourly or daily schedule is enough, or drop the job. | `contents: write`, `pull-requests: write`, `statuses: write`
-`sweep` | For the [`pull_request` install mode](./installing.md#without-pull_request_target): evaluates every open pull request updated within [`sweep.lookback`](#sweep) the way the `pull_request` and `pull_request_review` handlers would have, which those events cannot do for fork pull requests (read-only token). `needs-*` rules, OWNERS labels, reviewers, approval, the merge path. | `contents: write`, `issues: write`, `pull-requests: write`, `statuses: write`
+`sweep` | For the [`pull_request` install mode](./installing.md#without-pull_request_target): evaluates every open pull request updated within [`sweep.lookback`](#sweep) the way the `pull_request` and `pull_request_review` handlers would have, which those events cannot do for fork pull requests (read-only token). `needs-*` rules, OWNERS labels, reviewers, approval, the pending runs of PRs labeled `ok-to-test`, the merge path. | `contents: write`, `issues: write`, `pull-requests: write`, `statuses: write`, `actions: write`
 `label-sync` | Creates the labels the prow configuration describes and updates the color or description of those that drifted. Never deletes or renames a label. | `contents: read`, `issues: write`
 
 ## `sweep`
@@ -26,7 +26,8 @@ Step | Reuses | Does | Skipped when
 2 | [`owners-label`](./labeling.md#labels-from-owners-files) | adds the missing OWNERS `labels:` | the repository has no OWNERS files
 3 | [`blunderbuss`](./configuration.md#blunderbuss) | requests reviewers like `opened` would; honours `ignore_authors` and `ignore_drafts` | no OWNERS files; the PR was created before the window; it has requested reviewers, reviews, or is a draft
 4 | [`approve`](./commands.md#approve) | recomputes `approved` and the notifier | no OWNERS files
-5 | [`tide`](./automatic-merging.md) | the label gate, the [`lgtm` binding](./automatic-merging.md#lgtm-is-bound-to-a-commit) (a stale `lgtm` is stripped), `mergeable_state`, the merge | never; `tide.merge_on_events` does not apply, the sweep is a scheduled job like `lgtm`
+5 | [`ok-to-test`](./commands.md#trigger) | approves the workflow runs waiting for approval on the head | the PR does not carry `ok-to-test`
+6 | [`tide`](./automatic-merging.md) | the label gate, the [`lgtm` binding](./automatic-merging.md#lgtm-is-bound-to-a-commit) (a stale `lgtm` is stripped), `mergeable_state`, the merge | never; `tide.merge_on_events` does not apply, the sweep is a scheduled job like `lgtm`
 
 Same-repository pull requests are evaluated too; every step is idempotent, so the sweep
 changes nothing the events already did. The log has one `sweep: N candidates updated since
@@ -42,7 +43,7 @@ sweep:
 Cost: one list page per 100 candidates, then per candidate one pull request read, one status
 read when it carries `lgtm`, one labels read with `needs-*` rules, and on OWNERS repositories
 the changed files, the base tree and its OWNERS blobs (shared by steps 2–4), the comments and
-the reviews: about 4–6 calls on a plain repository, 8–10 with OWNERS files. Run it every five
+the reviews, and one workflow-runs read plus one approval per held run when it carries `ok-to-test`: about 4–6 calls on a plain repository, 8–10 with OWNERS files. Run it every five
 minutes: `*/5 * * * *` is the shortest interval GitHub schedules ("The shortest interval you can
 run scheduled workflows is once every 5 minutes"), and slots are delayed or dropped under load,
 so a fork pull request waits minutes for its labels, reviewers and merge. The `lookback` must be
@@ -59,6 +60,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 jobs:
   execute:
@@ -75,7 +77,7 @@ jobs:
 The job reconciles the repository's labels with the catalogue derived from the
 [configuration](./configuration.md#the-label-catalogue): every label section, the
 built-in `/lifecycle`, `/stage` and `/status` values, the labels the action's own
-commands apply (`lgtm`, `approved`, `do-not-merge/hold`, the legacy `hold`, `help wanted`, `good first issue`) and every
+commands apply (`lgtm`, `approved`, `do-not-merge/hold`, the legacy `hold`, `help wanted`, `good first issue`, `ok-to-test`) and every
 `require_matching_label` missing label. Label commands only apply labels that exist
 ([labeling](./labeling.md#labels-must-exist-in-the-repository)), so run this job once
 after adopting the action and whenever the configuration changes.

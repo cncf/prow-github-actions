@@ -9,10 +9,14 @@ import { shortSha } from '../plugins/lgtmBinding'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
+import { getCurrentLabels, labelIssue } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 type WorkflowRun = RestEndpointMethodTypes['actions']['listWorkflowRunsForRepo']['response']['data']['workflow_runs'][number]
+
+/** the label `/ok-to-test` applies; while a pull request carries it, its pending runs are approved on every push and by the sweep */
+export const okToTestLabel = 'ok-to-test'
 
 export const actionsPermissionHint = 'grant `actions: write` to the workflow'
 
@@ -94,6 +98,98 @@ export async function test(context: Context = github.context): Promise<void> {
   }
 
   await react(octokit, context)
+}
+
+/**
+ * okToTest approves the runs waiting for approval on the head (a first-time
+ * contributor's fork) and applies the `ok-to-test` label, which keeps
+ * approving them on later pushes and in the sweep. Authorized like `/lgtm`,
+ * and refused for the pull request author: it is the trust decision.
+ *
+ * @param context - the github actions event context
+ */
+export async function okToTest(context: Context = github.context): Promise<void> {
+  const cmd = await prepare(context, '/ok-to-test', { refuseAuthor: 'you cannot approve the workflow runs of your own pull request' })
+  if (cmd === undefined) {
+    return
+  }
+  const { octokit, issueNumber, headSha } = cmd
+
+  const approved = await approvePendingRuns(octokit, context, issueNumber, headSha)
+
+  const labels = await getCurrentLabels(octokit, context, issueNumber)
+  const alreadyLabeled = labels.some(label => label.toLowerCase() === okToTestLabel)
+  if (!alreadyLabeled) {
+    await labelIssue(octokit, context, issueNumber, [okToTestLabel])
+  }
+
+  if (approved === 0 && alreadyLabeled) {
+    await createComment(octokit, context, issueNumber, `No workflow runs waiting for approval on \`${shortSha(headSha)}\`.`)
+    return
+  }
+
+  await react(octokit, context)
+}
+
+/**
+ * approvePendingRuns approves every run on `headSha` that awaits approval.
+ * A 403 names the permission to grant.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param number - the pull request number, for the log
+ * @param headSha - the pull request's head commit
+ * @returns how many runs were approved
+ */
+export async function approvePendingRuns(octokit: Octokit, context: Context, number: number, headSha: string): Promise<number> {
+  const pending = (await headRuns(octokit, context, headSha))
+    .filter(run => run.status === 'action_required' || run.conclusion === 'action_required')
+
+  let approved = 0
+  for (const run of pending) {
+    try {
+      await octokit.actions.approveWorkflowRun({ ...context.repo, run_id: run.id })
+      approved++
+    }
+    catch (e) {
+      if (isForbidden(e)) {
+        throw new Error(`cannot approve workflow runs: ${actionsPermissionHint}`)
+      }
+      throw new Error(`could not approve run ${run.id} (${run.name}): ${e}`)
+    }
+  }
+
+  core.info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`)
+  return approved
+}
+
+/**
+ * okToTestOnPullRequest is the `pull_request` handler of the trust marker:
+ * on `synchronize` and `reopened` of a pull request carrying `ok-to-test`
+ * it approves the runs waiting on the new head.
+ *
+ * @param context - the github context of the current action event
+ */
+export async function okToTestOnPullRequest(context: Context = github.context): Promise<void> {
+  const action: string | undefined = context.payload.action
+  if (action !== 'synchronize' && action !== 'reopened') {
+    return
+  }
+
+  const pull = context.payload.pull_request
+  const labels: unknown = pull?.labels
+  if (!Array.isArray(labels) || !labels.some(label => String(label?.name ?? '').toLowerCase() === okToTestLabel)) {
+    core.debug('trigger: the pull request does not carry ok-to-test')
+    return
+  }
+
+  const sha: unknown = pull?.head?.sha
+  if (typeof sha !== 'string' || pull?.number === undefined) {
+    throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`)
+  }
+
+  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  await approvePendingRuns(octokit, context, pull.number, sha)
 }
 
 interface PreparedCommand {

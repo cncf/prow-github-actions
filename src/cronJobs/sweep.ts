@@ -5,6 +5,7 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
+import { approvePendingRuns, okToTestLabel } from '../issueComment/trigger'
 import { evaluateApproval } from '../plugins/approve'
 import { blunderbussSettings, requestOwnersReviewers } from '../plugins/blunderbuss'
 import { lgtmSettings } from '../plugins/lgtmBinding'
@@ -39,7 +40,7 @@ const pageSize = 100
  * `pull_request` and `pull_request_review` handlers would have done with a
  * write token, in their order: the `require_matching_label` rules, the OWNERS
  * labels, blunderbuss on a fresh pull request nobody reviews yet, the
- * approval, then the merge path (lgtm binding, mergeability, merge). Each
+ * approval, the pending runs of a pull request labeled `ok-to-test`, then the merge path (lgtm binding, mergeability, merge). Each
  * pull request is evaluated sequentially, a few pull requests at a time; a
  * failure on one is collected and the rest still run. The run fails at the
  * end listing the failures.
@@ -111,6 +112,7 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
   const steps: Step[] = [
     ['require-matching-label', () => enforceRequiredLabels(octokit, context, { issueNumber: pr.number, isPullRequest: true })],
     ...(plugins.hasOwners ? ownersSteps : []),
+    ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
     ['tide', async () => {
       const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm)
       if (verdict.result === 'merged') {
@@ -133,6 +135,14 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
 
   core.info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`)
   return outcome
+}
+
+async function approveIfTrusted(octokit: Octokit, context: Context, pr: PullsListItem): Promise<void> {
+  if (!(pr.labels ?? []).some(label => label.name.toLowerCase() === okToTestLabel)) {
+    core.debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`)
+    return
+  }
+  await approvePendingRuns(octokit, context, pr.number, pr.head.sha)
 }
 
 async function requestReviewersIfFresh(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<void> {

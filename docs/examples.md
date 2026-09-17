@@ -129,7 +129,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v3
         with:
-          prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc /retest /test
+          prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc /retest /test /ok-to-test
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
