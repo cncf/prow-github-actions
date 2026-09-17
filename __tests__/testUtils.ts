@@ -77,6 +77,20 @@ export function defaultBranchTree(paths: string[] = [], observeReq?: ObserveRequ
   return http.get(`${api}/repos/Codertocat/Hello-World/git/trees/master`, mockResponse(200, { sha: 'master', truncated: false, tree }, observeReq))
 }
 
+/**
+ * lgtmStatus serves the combined commit status of `sha` (any sha by default):
+ * with `bound`, the head carries the `prow/lgtm` success status the merge
+ * path requires next to the `lgtm` label.
+ *
+ * @param sha - the head commit, or an msw path parameter
+ * @param bound - whether `prow/lgtm` is `success` on it
+ * @param observeReq - optionally records the request
+ */
+export function lgtmStatus(sha = ':sha', bound = true, observeReq?: ObserveRequest) {
+  const statuses = bound ? [{ context: 'prow/lgtm', state: 'success', description: 'lgtm by alice' }] : []
+  return http.get(`${api}/repos/Codertocat/Hello-World/commits/${sha}/status`, mockResponse(200, { state: bound ? 'success' : 'pending', statuses }, observeReq))
+}
+
 // @actions/github exports only the context instance; extend its class via the prototype
 const ContextClass = github.context.constructor as new () => Context
 

@@ -31,7 +31,9 @@ actions up to date on a weekly schedule.
 
 This repository runs the bot on itself through the reusable workflow
 ([`prow.yml`](../.github/workflows/prow.yml)) from a single caller,
-[`prow-bot.yml`](../.github/workflows/prow-bot.yml); a pull request that touches
+[`prow-bot.yml`](../.github/workflows/prow-bot.yml), in the
+[`pull_request` install mode](./installing.md#without-pull_request_target): fork pull requests
+are handled by the scheduled `sweep` job (every 20 minutes). A pull request that touches
 either file is exercised by its own bot run. `__tests__/workflows.test.ts` checks
 that the reusable workflow, its callers and the [install templates](../templates)
 stay in step with `action.yml` and the label catalogue.

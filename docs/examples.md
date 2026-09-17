@@ -91,6 +91,8 @@ permissions:
   issues: write
   # Allow adding a review to a pull request
   pull-requests: write
+  # Allow /lgtm to record the reviewed commit as a prow/lgtm commit status
+  statuses: write
   # Allow reading the repository
   contents: read
 
@@ -117,6 +119,7 @@ on:
 permissions:
   issues: write
   pull-requests: write
+  statuses: write
   contents: read
 
 jobs:

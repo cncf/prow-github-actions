@@ -1,12 +1,18 @@
 # Automatic PR merging
 
-A pull request is merged as soon as it passes the [merge gate](#the-merge-gate) **and** GitHub
-reports it mergeable. Two paths get there:
+A pull request is merged as soon as it passes the [merge gate](#the-merge-gate), its `lgtm`
+is [bound to the head commit](#lgtm-is-bound-to-a-commit) **and** GitHub reports it mergeable.
+Three paths reach the one merge routine:
 
-Path | Trigger | Reads `mergeable_state` | Role
---- | --- | --- | ---
-event-driven | `issue_comment` (after a command), `pull_request`, `pull_request_review`, `check_suite`, `status` | yes: merges `clean` and `has_hooks` only | primary; merges within seconds of the last command, label, review or check
-`lgtm` cron job | `schedule` with `jobs: lgtm` | no: merges blindly and lets GitHub refuse | backstop for missed events; optional
+Path | Trigger | Role
+--- | --- | ---
+event-driven | `issue_comment` (after a command), `pull_request`, `pull_request_review`, `check_suite`, `status` | primary; merges within seconds of the last command, label, review or check
+`lgtm` cron job | `schedule` with `jobs: lgtm` | backstop for missed events; optional
+[`sweep` job](./cron-jobs.md#sweep) | `schedule` with `jobs: sweep` | fork pull requests under `pull_request` ([installing](./installing.md#without-pull_request_target))
+
+Every path evaluates a pull request the same way, in this order: label gate → `lgtm` binding →
+`mergeable_state` (`clean` and `has_hooks` merge, everything else is skipped with the state as
+the reason). Only the first step is free: a PR that fails the gate costs one read and nothing more.
 
 ## Event-driven merging
 
@@ -30,6 +36,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  statuses: write # the prow/lgtm commit status
   issues: write
 
 jobs:
@@ -46,7 +53,7 @@ jobs:
 Event | Activity types evaluated | Pull request(s)
 --- | --- | ---
 `issue_comment` | `created`, after a label-writing [command](./commands.md) (`/lgtm`, `/approve`, `/hold`, `/remove`, `/kind`, ...) ran, on an open PR | `issue.number`
-`pull_request`, `pull_request_target` | `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited` | `pull_request.number`
+`pull_request`, `pull_request_target` | `labeled`, `unlabeled`, `reopened`, `ready_for_review`, `edited`; a `labeled` `lgtm` by a human is [bound to the head](#lgtm-is-bound-to-a-commit) first | `pull_request.number`
 `pull_request_review` | `submitted`, `dismissed` | `pull_request.number`
 `check_suite` | `completed`, unless the conclusion is `failure`, `cancelled`, `timed_out` or `action_required` | `check_suite.pull_requests`, else every open PR whose head is `head_sha`
 `status` | `success` (`pending`, `failure`, `error` make no call) | every open PR whose head is `sha`
@@ -64,7 +71,8 @@ push starts, or the cron, evaluates the PR once it is reviewed again. A review h
 towards branch protection; turning reviews into `lgtm` is not what this does.
 
 For each candidate the handler reads `GET /pulls/{n}` (labels are taken from that read, not
-from the payload), applies the [merge gate](#the-merge-gate), then looks at GitHub's own verdict:
+from the payload), applies the [merge gate](#the-merge-gate), checks the
+[`lgtm` binding](#lgtm-is-bound-to-a-commit), then looks at GitHub's own verdict:
 
 `mergeable_state` | Outcome | Why
 --- | --- | ---
@@ -77,8 +85,9 @@ from the payload), applies the [merge gate](#the-merge-gate), then looks at GitH
 `draft` | skip | draft pull request
 `unknown` | retry, then skip | see below
 
-A skip is logged as `skipping pr #<n>: not mergeable (<state>)` and never fails the run. This is
-stricter than the cron, which sends the merge and reports GitHub's refusal instead.
+A skip is logged as `skipping pr #<n>: not mergeable (<state>)` and never fails the run. The cron
+jobs apply the same rule since `lgtm` became bound to a commit; the cron no longer sends merges
+GitHub would refuse.
 
 ### `unknown`: GitHub computes mergeability lazily
 
@@ -111,13 +120,62 @@ evaluation and get the rest of the effect without the flag.
 A merge performed with `GITHUB_TOKEN` does not trigger `push` workflows for other automation;
 use a PAT or GitHub App token if something must run after the merge.
 
+## `lgtm` is bound to a commit
+
+The `lgtm` label counts toward a merge only while it is bound to the pull request's **current
+head commit**. The binding is a commit status, context `prow/lgtm`, on the head SHA. A status
+was chosen over a marker comment because only a write-token holder can set one (a PR author
+cannot forge it) and because it is per commit by construction: a new head has no status, full
+stop. So "new commits after review never merge" holds on **every** merge path (events, the
+after-command evaluation, the `lgtm` cron, the `sweep`), whatever events the caller subscribed
+to; the [`lgtm` PR job](./pr-jobs.md) removing the label on `synchronize` is defense in depth.
+
+Step | When | Does
+--- | --- | ---
+bind | `/lgtm` succeeds | reads the PR's head, `POST /statuses/{head}` `prow/lgtm` `success` "lgtm by \<login\> at \<sha7\>" linking to the comment, **then** applies the label. A refused status (403) fails the command with `cannot bind lgtm to the commit: grant statuses: write to the workflow (or set lgtm.bind_to_commit: false)` and applies no label
+bind | `pull_request` `labeled` `lgtm` by a **human** | the same status on `pull_request.head.sha`; a bot sender is ignored (the bot records its own bindings). `unlabeled` needs nothing: the label is the gate, the status the binding
+verify | before any merge, once the label gate passes | `GET /commits/{head}/status`; `lgtm` on the PR ⇒ the head must carry `prow/lgtm` `success`. Without `lgtm` nothing is read
+stale | the label is present, the head has no `success` | removes `lgtm`, sets `prow/lgtm` `pending` "lgtm removed: not bound to \<sha7\>", posts **one** comment per head (marker `<!-- prow-github-actions/lgtm-stale: <sha7> -->`), logs `skipping pr #<n>: lgtm not bound to <sha7>`; the run does not fail. The label being gone, the next evaluation makes no further call
+cancel | `/lgtm cancel`, `/remove-lgtm` | removes the label as before and sets the head's `prow/lgtm` to `pending` "lgtm cancelled by \<login\>" so the checks UI stops showing a green lgtm; a refused status write here is a warning, not a failure
+
+The stale comment reads: "`lgtm` is not bound to the current head commit (`<sha7>`): either
+commits were pushed after it was applied, or it was applied by hand where the bot could not
+record the commit. Removed. Re-apply with `/lgtm` once the current commits are reviewed."
+
+```yaml
+lgtm:
+  bind_to_commit: true # the default
+```
+
+`false` restores label-only semantics: no status is written or read, and an `lgtm` applied
+before a push merges the pushed commits unless the `synchronize` run removed it first. That is
+weaker; use it only where `statuses: write` cannot be granted.
+
+The merge itself is pinned to the verified commit: `PUT /pulls/{n}/merge` carries the head
+`sha` the binding was checked on, so a push landing between the check and the merge is refused
+by GitHub (409) and logged as `skipping pr #<n>: head moved`, never merged; the next event or
+sweep re-evaluates the new head. Known window: a push that lands between a maintainer typing
+`/lgtm` and the run recording the binding is bound, the same event-ordering window Prow has. Reading the status needs `statuses`
+access too; with `statuses: write` missing the verification fails the run with
+`could not read the prow/lgtm status of <sha7>: grant statuses: write ...`.
+
+### Upgrading to the bound `lgtm`
+
+**BREAKING.** The workflow needs `statuses: write` unless `lgtm.bind_to_commit: false`
+([installing](./installing.md#upgrading)). Pull requests that already carry `lgtm` when you
+upgrade are unbound: the next evaluation strips the label once, with the explanatory comment;
+re-apply with `/lgtm`. The `lgtm` cron job now reads `mergeable_state` like the event path and
+skips `blocked`, `unstable`, `behind`, `dirty` and `unknown` PRs instead of sending a merge
+GitHub refuses; its failure list only contains merges GitHub actually refused.
+
 ## The `lgtm` cron job
 
 The cron is the backstop for missed events (a workflow run that was skipped, a webhook that was
 lost, a PR whose state was still `unknown` when the last event ran), not for comment commands:
-those evaluate the PR themselves. It pages through every open
-pull request, applies the merge gate to the listed labels and sends the merge without reading
-`mergeable_state`; GitHub refuses what cannot merge.
+those evaluate the PR themselves. It pages through every open pull request, applies the merge
+gate to the listed labels and sends every PR that passes through the same evaluation as the
+events: the [`lgtm` binding](#lgtm-is-bound-to-a-commit), then `mergeable_state`, then the merge.
+A PR that fails the gate on its listed labels costs no further call.
 
 ```yaml
 name: Merge on lgtm label
@@ -128,6 +186,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  statuses: write
 
 jobs:
   execute:
@@ -143,15 +202,16 @@ jobs:
 ```
 
 Locked and closed PRs are skipped. Every eligible PR is attempted, so one un-mergeable PR does
-not stop the others. Each failed merge is logged as an error annotation
+not stop the others. A PR GitHub reports as not mergeable is skipped with the state logged; a
+stale `lgtm` is stripped. Each refused merge is logged as an error annotation
 (`could not merge pr #<n>: <reason>`); once all pages are processed the run fails if any merge
-failed, listing the PRs: `2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
+was refused, listing the PRs: `2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
 With event-driven merging in place an hourly or daily schedule is plenty; drop the cron entirely
 if a missed event is acceptable.
 
-The companion `lgtm` PR job removes the `lgtm` label from a PR that gets updated.
-This prevents any un-reviewed code from being automatically merged by either path.
-See [PR jobs](./pr-jobs.md) for the full workflow.
+The companion `lgtm` PR job removes the `lgtm` label from a PR that gets updated on
+`synchronize`; the [binding](#lgtm-is-bound-to-a-commit) makes the same guarantee without the
+event. See [PR jobs](./pr-jobs.md) for the full workflow.
 
 ## The merge gate
 
@@ -183,9 +243,10 @@ branch it is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
 the default branch per run (the event payload's `repository.default_branch`, else
 `GET /repos/{owner}/{repo}`), skipped entirely when `tide.labels` is configured.
 
-`lgtm` and `approved` age differently: a push (`synchronize`) removes `lgtm` (the
-[`lgtm` PR job](./pr-jobs.md)) but never `approved`, which is recomputed from the comments and
-reviews on the PR and stays until an approver cancels or a review requests changes.
+`lgtm` and `approved` age differently: `lgtm` is [bound to the head commit](#lgtm-is-bound-to-a-commit)
+and a push (`synchronize`) removes it (the [`lgtm` PR job](./pr-jobs.md)); `approved` is never
+removed by a push, it is recomputed from the comments and reviews on the PR and stays until an
+approver cancels or a review requests changes.
 
 A PR that does not pass is skipped with the reason in the job log:
 
@@ -292,7 +353,8 @@ Steps:
 Refer to the [lgtm command](./commands.md) and the [PR jobs](./pr-jobs.md) for further reference.
 
 ## Known limitations
-The cron job pages through the repository's open PRs, following pages until one comes back empty. This _may_ trigger a state
+The cron job pages through the repository's open PRs, following pages until one comes back empty,
+and reads each PR that passes the label gate (plus its head's status). This _may_ trigger a state
 where github rate limits Prow github actions.
 This may only happen with very large projects.
 Please open an issue if you see this consistently happen.

@@ -40,6 +40,7 @@ describe('loadPullRequestOwners', () => {
         order.push('pull')
         return utils.mockResponse(200, {
           base: { sha: baseSha },
+          head: { sha: 'headsha' },
           user: { login: 'Some-Author' },
           draft: true,
           requested_reviewers: [{ login: 'Rita' }],
@@ -123,7 +124,7 @@ describe('loadPullRequestOwners', () => {
     server.use(
       http.get(`${repo}/pulls/1`, () => {
         pulls++
-        return new Response(JSON.stringify({ base: { sha: baseSha } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        return new Response(JSON.stringify({ base: { sha: baseSha }, head: { sha: 'headsha' } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }),
       filesHandler(changedFiles('src/file1.txt')),
       ...treeHandlers({ OWNERS: rootOwners }),
@@ -144,7 +145,7 @@ describe('loadPullRequestOwners', () => {
 
     const observePull = new utils.ObserveRequest()
     server.use(
-      http.get(`${repo}/pulls/2`, utils.mockResponse(200, { base: { sha: baseSha } }, observePull)),
+      http.get(`${repo}/pulls/2`, utils.mockResponse(200, { base: { sha: baseSha }, head: { sha: 'headsha' } }, observePull)),
       http.get(`${repo}/pulls/2/files`, utils.mockResponse(200, changedFiles('sdk/x.go'))),
       ...treeHandlers({ OWNERS: rootOwners }),
     )

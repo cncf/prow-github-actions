@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest'
 import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
+import type { LgtmSettings } from './lgtmBinding'
 
 import * as core from '@actions/core'
 import * as github from '@actions/github'
@@ -11,6 +12,7 @@ import { newOctokit } from '../utils/octokit'
 import { repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
+import { defaultLgtmSettings, hasLgtmLabel, isLgtmBound, lgtmSettings, shortSha, stripStaleLgtm } from './lgtmBinding'
 
 export interface Mergeability {
   /** GitHub's `mergeable_state`: clean, has_hooks, unstable, blocked, behind, dirty, draft or unknown */
@@ -26,11 +28,15 @@ export interface Mergeability {
 
 export type MergeResult = 'merged' | 'skipped' | 'failed'
 
-export type MergeOutcome = { result: 'merged' } | { result: 'failed', message: string }
+export type MergeOutcome = { result: 'merged' } | { result: 'failed', message: string, status?: number }
+
+export type MergeVerdict = { result: 'merged' } | { result: 'skipped', reason: string } | { result: 'failed', message: string }
 
 export interface FetchMergeabilityOptions {
   /** called before each wait; returning false stops retrying an unknown state (default: always retry) */
   retryIf?: (pr: Mergeability) => boolean
+  /** a read of the pull request made moments ago, spared a re-read when its state is known */
+  initial?: Mergeability
 }
 
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
@@ -64,7 +70,7 @@ export async function fetchMergeability(
 ): Promise<Mergeability> {
   const retryIf = options.retryIf ?? (() => true)
 
-  let pr = await getPull(octokit, context, number)
+  let pr = options.initial ?? await getPull(octokit, context, number)
   for (const delay of unknownRetryDelaysMs) {
     if (!isUnknown(pr) || !retryIf(pr)) {
       return pr
@@ -82,69 +88,121 @@ export async function fetchMergeability(
 
 /**
  * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
- * cron and the event handlers. A refused merge is returned, not thrown.
+ * cron and the event handlers. The merge is pinned to `sha`, the head the
+ * caller verified: GitHub refuses with 409 when the head moved since. A
+ * refused merge is returned, not thrown.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param sha - the head commit the merge must apply to
  */
-export async function mergeOnce(octokit: Octokit, context: Context, number: number, tide: ResolvedTide): Promise<MergeOutcome> {
+export async function mergeOnce(octokit: Octokit, context: Context, number: number, tide: ResolvedTide, sha: string): Promise<MergeOutcome> {
   try {
     await octokit.pulls.merge({
       ...context.repo,
       pull_number: number,
       merge_method: tide.merge_method,
+      sha,
     })
     return { result: 'merged' }
   }
   catch (e) {
-    return { result: 'failed', message: e instanceof Error ? e.message : String(e) }
+    const status = typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' ? e.status : undefined
+    return { result: 'failed', message: e instanceof Error ? e.message : String(e), status }
   }
 }
 
 /**
- * tryMergePullRequest evaluates one pull request against the tide gate and
- * GitHub's own mergeability and merges it when both pass. Unlike the cron,
- * it only merges a `clean` (or `has_hooks`) pull request; every other state
- * is skipped with the state as the reason. A refused merge is logged as an
- * error and reported as `failed`; the caller decides whether that fails the run.
+ * evaluateMerge evaluates one pull request in three steps, in this order:
+ * the tide label gate, the lgtm binding (an `lgtm` label counts only while
+ * the head commit carries the `prow/lgtm` status; a stale one is stripped
+ * with an explanatory comment) and GitHub's own mergeability, of which only
+ * `clean` and `has_hooks` merge. The merge is pinned to the head that was
+ * verified: a head that moved in between is skipped, not merged. Every path
+ * to a merge (events, the comment sweep, the cron jobs) goes through here.
+ * A refused merge is logged as an error and reported as `failed` with
+ * GitHub's message; the caller decides whether that fails the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
+ */
+export async function evaluateMerge(
+  octokit: Octokit,
+  context: Context,
+  number: number,
+  tide: ResolvedTide,
+  lgtm: LgtmSettings = defaultLgtmSettings,
+): Promise<MergeVerdict> {
+  const first = await getPull(octokit, context, number)
+
+  let reason = blockedReason(first, tide)
+  if (reason === undefined && lgtm.bind_to_commit && hasLgtmLabel(first.labels) && !(await isLgtmBound(octokit, context, first.sha))) {
+    await stripStaleLgtm(octokit, context, number, first.sha)
+    reason = `lgtm not bound to ${shortSha(first.sha)}`
+  }
+  if (reason !== undefined) {
+    return skip(number, reason)
+  }
+
+  const pr = await fetchMergeability(octokit, context, number, {
+    retryIf: candidate => blockedReason(candidate, tide) === undefined,
+    initial: first,
+  })
+
+  reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`)
+  if (reason !== undefined) {
+    return skip(number, reason)
+  }
+  if (pr.sha !== first.sha) {
+    return skip(number, 'head moved during evaluation')
+  }
+
+  const outcome = await mergeOnce(octokit, context, number, tide, first.sha)
+  if (outcome.result === 'merged') {
+    core.info(`merged pr #${number}`)
+    return outcome
+  }
+
+  // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
+  if (await isMerged(octokit, context, number)) {
+    return skip(number, 'merged concurrently')
+  }
+  // 409: the head (or the base) moved between the verification and the merge; the next event re-evaluates
+  if (outcome.status === 409) {
+    return skip(number, /base branch/i.test(outcome.message) ? 'base branch moved' : 'head moved')
+  }
+
+  core.error(`could not merge pr #${number}: ${outcome.message}`)
+  return outcome
+}
+
+/**
+ * tryMergePullRequest is evaluateMerge without the reason or message.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
  */
 export async function tryMergePullRequest(
   octokit: Octokit,
   context: Context,
   number: number,
   tide: ResolvedTide,
+  lgtm: LgtmSettings = defaultLgtmSettings,
 ): Promise<MergeResult> {
-  const pr = await fetchMergeability(octokit, context, number, {
-    retryIf: candidate => blockedReason(candidate, tide) === undefined,
-  })
+  return (await evaluateMerge(octokit, context, number, tide, lgtm)).result
+}
 
-  const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`)
-  if (reason !== undefined) {
-    core.info(`skipping pr #${number}: ${reason}`)
-    return 'skipped'
-  }
-
-  const outcome = await mergeOnce(octokit, context, number, tide)
-  if (outcome.result === 'merged') {
-    core.info(`merged pr #${number}`)
-    return 'merged'
-  }
-
-  // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
-  if (await isMerged(octokit, context, number)) {
-    core.info(`pr #${number} was merged concurrently`)
-    return 'skipped'
-  }
-
-  core.error(`could not merge pr #${number}: ${outcome.message}`)
-  return 'failed'
+function skip(number: number, reason: string): MergeVerdict {
+  core.info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`)
+  return { result: 'skipped', reason }
 }
 
 function blockedReason(pr: Mergeability, tide: ResolvedTide): string | undefined {
@@ -302,6 +360,7 @@ async function evaluate(
     return
   }
   const tide = await loadTide(octokit, context)
+  const lgtm = lgtmSettings(config)
 
   const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers
   if (candidates.length === 0) {
@@ -309,7 +368,7 @@ async function evaluate(
     return
   }
 
-  const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide)))
+  const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)))
   const failed = candidates.filter((_, i) => results[i] === 'failed')
   if (failed.length > 0) {
     throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`)

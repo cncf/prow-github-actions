@@ -278,6 +278,12 @@ describe('label-sync job', () => {
         payload[0].labels[0].name = 'lgtm'
         return json(page === '1' ? payload : [])
       }),
+      http.get(`${repo}/pulls/2`, () => {
+        const payload = structuredClone(listPullReqs[0])
+        payload.labels[0].name = 'lgtm'
+        return json({ ...payload, mergeable: true, mergeable_state: 'clean' })
+      }),
+      utils.lgtmStatus(),
       http.put(`${repo}/pulls/2/merge`, utils.mockResponse(200, null, mergeReq)),
       // the dispatch payload names no default branch, so the lgtm job's gate asks the api before listing the tree
       http.get(repo, utils.mockResponse(200, { default_branch: 'master' })),

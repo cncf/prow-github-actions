@@ -1,5 +1,6 @@
 # This repository runs the bot through its own reusable workflow; templates/workflow-templates/prow.yml
-# is the same file for consumers, with pull_request_target and @v3. Kept on pull_request here.
+# is the same file for consumers, with pull_request_target and @v3. Kept on pull_request here, so
+# fork pull requests are handled by the scheduled sweep like templates/workflow-templates/prow-pull-request.yml.
 name: Prow bot
 on:
   issues:
@@ -24,6 +25,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 # One run per comment (commands are never collapsed); per event+action for everything else,
 # so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
@@ -33,12 +35,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # commands, plugins, event-driven merging and the scheduled lgtm backstop
+  # commands, plugins and event-driven merging
   prow:
-    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
+    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
     uses: ./.github/workflows/prow.yml
     with:
       prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc /meow /lifecycle /help /triage /check-required-labels
+
+  # fork pull requests (read-only token under pull_request) updated within sweep.lookback, plus the lgtm backstop
+  sweep:
+    if: github.event_name == 'schedule'
+    uses: ./.github/workflows/prow.yml
+    with:
+      jobs: sweep lgtm
 
   # on demand and whenever .github/prow.yaml changes on main
   label-sync:

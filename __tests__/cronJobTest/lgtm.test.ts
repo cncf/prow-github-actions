@@ -18,10 +18,23 @@ function prowYaml(text: string) {
   return http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file))
 }
 
+// the shared merge path re-reads each gate-passing PR: serve it from the listed items, clean and mergeable
+function servePullsByNumber(prs: typeof listPullReqs) {
+  return http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/:number`, ({ params }) => {
+    const pr = prs.find(item => item.number === Number(params.number))
+    return pr === undefined
+      ? new Response(JSON.stringify({ message: 'Not Found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+      : new Response(JSON.stringify({ ...pr, mergeable: true, mergeable_state: 'clean' }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  })
+}
+
 const server = setupServer(
   ...utils.noOrgOrRepoConfigExcept(),
   // the gate's default depends on whether the default branch has OWNERS files; none here unless a test serves a tree
   utils.defaultBranchTree(),
+  // every head is bound unless a test says otherwise
+  utils.lgtmStatus(),
+  servePullsByNumber(listPullReqs),
   // /repos/Codertocat/Hello-World/pulls?state=open&page={1,2}
   http.get(
     `${utils.api}/repos/Codertocat/Hello-World/pulls`,
@@ -77,6 +90,7 @@ describe('cronLgtm', () => {
     await expect(handleCronJobs(context)).resolves.not.toThrow()
     expect(await observeReq.body()).toEqual({
       merge_method: 'merge',
+      sha: listPullReqs[0].head.sha,
     })
   })
 
@@ -101,6 +115,7 @@ describe('cronLgtm', () => {
     await expect(handleCronJobs(context)).resolves.not.toThrow()
     expect(await observeReq.body()).toEqual({
       merge_method: 'squash',
+      sha: listPullReqs[0].head.sha,
     })
   })
 
@@ -125,6 +140,7 @@ describe('cronLgtm', () => {
     await expect(handleCronJobs(context)).resolves.not.toThrow()
     expect(await observeReq.body()).toEqual({
       merge_method: 'rebase',
+      sha: listPullReqs[0].head.sha,
     })
   })
 
@@ -193,7 +209,7 @@ describe('cronLgtm', () => {
     return pr
   }
 
-  function routePulls(prs: unknown[]) {
+  function routePulls(prs: typeof listPullReqs) {
     server.use(
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/pulls`,
@@ -202,6 +218,7 @@ describe('cronLgtm', () => {
           return utils.mockResponse(200, page === '1' ? prs : [])({ request })
         },
       ),
+      servePullsByNumber(prs),
     )
   }
 
@@ -318,7 +335,7 @@ describe('cronLgtm', () => {
 
       await expect(handleCronJobs(context)).resolves.not.toThrow()
       await expect(observeReq.called()).resolves.toBe('called')
-      expect(await observeReq.body()).toEqual({ merge_method: 'squash' })
+      expect(await observeReq.body()).toEqual({ merge_method: 'squash', sha: listPullReqs[0].head.sha })
     })
 
     it('an unknown merge-method input falls back to merge', async () => {
@@ -329,7 +346,7 @@ describe('cronLgtm', () => {
       const observeReq = observeMerge(13)
 
       await expect(handleCronJobs(context)).resolves.not.toThrow()
-      expect(await observeReq.body()).toEqual({ merge_method: 'merge' })
+      expect(await observeReq.body()).toEqual({ merge_method: 'merge', sha: listPullReqs[0].head.sha })
     })
 
     it('fails the run when the prow configuration is invalid', async () => {
@@ -400,7 +417,7 @@ describe('cronLgtm', () => {
     expect(setFailed).not.toHaveBeenCalledWith(expect.stringContaining('#4'))
   })
 
-  it('reports a 409 base branch change in the failure message', async () => {
+  it('a 409 (the head or base moved under the merge) is skipped for the next run, not a failure', async () => {
     utils.setupJobsEnv('lgtm')
     const context = new utils.MockContext(pullReqOpenedEvent)
     routePulls([lgtmPr(5)])
@@ -413,8 +430,11 @@ describe('cronLgtm', () => {
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
-    vi.spyOn(core, 'error').mockImplementation(() => {})
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+    const info = vi.spyOn(core, 'info')
     await expect(handleCronJobs(context)).resolves.not.toThrow()
-    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('#5 (Base branch was modified'))
+    expect(info).toHaveBeenCalledWith('skipping pr #5: base branch moved')
+    expect(error).not.toHaveBeenCalled()
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })

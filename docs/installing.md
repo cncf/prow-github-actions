@@ -8,6 +8,7 @@ The caller owns the triggers, the permissions and the concurrency group; the reu
 workflow runs the action at its own commit, so the two never drift.
 
 * [One repository](#one-repository)
+* [Without `pull_request_target`](#without-pull_request_target)
 * [An organization](#an-organization)
 * [Upgrading](#upgrading)
 * [Inputs and secrets](#inputs-and-secrets)
@@ -48,6 +49,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  statuses: write
 
 concurrency:
   group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
@@ -67,7 +69,7 @@ jobs:
 
 Trigger | Why
 --- | ---
-`pull_request_target` | Fork pull requests get a write token, so they are labeled and merged too. Safe because nothing checks out or runs pull request code: the reusable workflow only checks out `cncf/prow-github-actions` at its own commit ([events](./events.md#pull_request_target-and-the-reusable-workflow)). Use `pull_request` if you prefer; fork PRs then get a read-only token.
+`pull_request_target` | Fork pull requests get a write token, so they are labeled and merged too. Safe because nothing checks out or runs pull request code: the reusable workflow only checks out `cncf/prow-github-actions` at its own commit ([events](./events.md#pull_request_target-and-the-reusable-workflow)). Forbidden by your policy? See [without `pull_request_target`](#without-pull_request_target).
 `schedule` | Backstop for merges the events missed ([jobs](./cron-jobs.md)). Hourly is plenty; drop it if you like.
 `workflow_dispatch`, `push` | The `label-sync` job, on demand and whenever `.github/prow.yaml` changes.
 `concurrency` | One group per comment, and per event and activity type for everything else ([events](./events.md#concurrency)). `cancel-in-progress` stays `false`: a run that is merging must not be cancelled.
@@ -75,8 +77,48 @@ Trigger | Why
 The `permissions` block is the ceiling: a reusable workflow's job can use at most what the
 caller grants. The reusable job asks for exactly `contents: write` (merges, reading OWNERS
 and configuration files), `issues: write` and `pull-requests: write` (labels, comments,
-assignees, reviews). Grant less and GitHub refuses to start the called job, since a called
+assignees, reviews) and `statuses: write` (the `prow/lgtm` commit status that
+[binds `lgtm` to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)).
+Grant less and GitHub refuses to start the called job, since a called
 workflow may only downgrade, never elevate, the caller's permissions.
+
+## Without `pull_request_target`
+
+Some organizations forbid `pull_request_target` outright (zizmor's `dangerous-triggers` audit
+flags it; a hash-pinning policy often comes with it). The second template,
+[`templates/workflow-templates/prow-pull-request.yml`](../templates/workflow-templates/prow-pull-request.yml)
+(with `prow-pull-request.properties.json`, sharing `prow.svg`), installs the same bot on
+`pull_request`. The diff against the default caller is two lines of triggers and one job:
+
+```diff
+-  pull_request_target:
++  pull_request:
+     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+   schedule:
+-    - cron: '0 * * * *'
++    - cron: '*/5 * * * *'
+ jobs:
+   prow:
+-    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
++    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
++  sweep:
++    if: github.event_name == 'schedule'
++    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
++    with:
++      jobs: sweep lgtm
+```
+
+Pull request | Handled by | Latency
+--- | --- | ---
+from the repository itself | the events, as with the default template | seconds
+from a fork | the [`sweep` job](./cron-jobs.md#sweep): `needs-*` labels, OWNERS labels and reviewers, approval, the merge. The `pull_request`/`pull_request_review` runs [return at once](./events.md#fork-pull-requests-under-pull_request): GitHub gives them a read-only token | the cron interval; `*/5` is GitHub's shortest and slots are delayed under load, so minutes
+any, on a comment (`/lgtm`, `/approve`, ...) | the `issue_comment` run, which has a write token on forks too | seconds
+
+Caveat: an `lgtm` label applied **by hand** on a fork pull request cannot be
+[bound to the commit](./automatic-merging.md#lgtm-is-bound-to-a-commit) by the read-only run,
+so the sweep strips it with a comment; use `/lgtm`. Organizations that hash-pin replace `@v3`
+in the template with the release's commit sha and a `# v3.x.y` comment; Dependabot keeps it
+current.
 
 ## An organization
 
@@ -84,6 +126,7 @@ Put | At | Effect
 --- | --- | ---
 [`prow.yaml`](../templates/prow.yaml) | `<org>/.github` repository, `prow.yaml` | Every repository of the organization inherits it; a repository's own `.github/prow.yaml` layers on top ([tiers](./configuration.md#where-configuration-lives)).
 [`prow.yml`](../templates/workflow-templates/prow.yml), [`prow.properties.json`](../templates/workflow-templates/prow.properties.json), [`prow.svg`](../templates/workflow-templates/prow.svg) | `<org>/.github` repository, `workflow-templates/` | Every repository sees **Prow** under *Actions → New workflow → Workflows created by <org>*; one click installs the caller with `$default-branch` filled in ([GitHub docs](https://docs.github.com/en/actions/sharing-automations/creating-workflow-templates-for-your-organization)).
+[`prow-pull-request.yml`](../templates/workflow-templates/prow-pull-request.yml), [`prow-pull-request.properties.json`](../templates/workflow-templates/prow-pull-request.properties.json) | same place, optional | **Prow (pull_request, no pull_request_target)**, the [`pull_request` install mode](#without-pull_request_target) for organizations whose policy forbids `pull_request_target`.
 
 ### The `.project` tier
 
@@ -120,6 +163,13 @@ updates the `uses:` of reusable workflows like any action.
 The reusable workflow needs github.com: it reads the `job.workflow_sha` context, which is not
 available on GitHub Enterprise Server. There, [use the action directly](#using-the-action-directly).
 
+Since `lgtm` is [bound to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)
+the caller must grant `statuses: write` (the templates and the snippets on this page do), unless
+`prow.yaml` sets `lgtm.bind_to_commit: false`. Without it `/lgtm` fails with
+`cannot bind lgtm to the commit: grant statuses: write ...` and applies no label. Pull requests
+already carrying `lgtm` when you upgrade are unbound: their next evaluation strips the label
+once, with a comment saying why; re-apply with `/lgtm`.
+
 ## Inputs and secrets
 
 Every input is optional. Each maps to the `action.yml` input of the same name.
@@ -127,7 +177,7 @@ Every input is optional. Each maps to the `action.yml` input of the same name.
 Input | Default | Meaning
 --- | --- | ---
 `prow-commands` | every built-in command except `/meow` | The [`/commands`](./commands.md) to enable on `issue_comment`. Setting it replaces the list: add `/meow` or a dynamic `/<key>` command here.
-`jobs` | `lgtm` | The [jobs](./cron-jobs.md) for `schedule`, `workflow_dispatch` and `push`, and the [PR jobs](./pr-jobs.md) for `pull_request`: `lgtm` merges on the schedule and strips `lgtm` from updated PRs.
+`jobs` | `lgtm` | The [jobs](./cron-jobs.md) for `schedule`, `workflow_dispatch` and `push`, and the [PR jobs](./pr-jobs.md) for `pull_request`: `lgtm` merges on the schedule and strips `lgtm` from updated PRs; `sweep` evaluates recently updated PRs (fork PRs under `pull_request`).
 `merge-method` | `merge` | `merge`, `squash` or `rebase`; `tide.merge_method` in `prow.yaml` wins.
 `config` | — | An explicit configuration source, `owner/repo:path[@ref]` or an `https://` url ([configuration](./configuration.md#the-config-input)).
 `dry-run` | `false` | `label-sync` logs what it would create or update and writes nothing.
@@ -159,7 +209,7 @@ Feature | Docs
 --- | ---
 Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, and the label commands once their labels exist | [commands](./commands.md)
 Reviewers requested and labels applied from OWNERS files | [labeling](./labeling.md#labels-from-owners-files), [blunderbuss](./configuration.md#blunderbuss)
-Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly | [automatic merging](./automatic-merging.md)
+Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly; `lgtm` counts only for the commit it reviewed | [automatic merging](./automatic-merging.md)
 `lgtm` removed when new commits are pushed | [PR jobs](./pr-jobs.md)
 `label-sync` creating `lgtm`, `approved`, `do-not-merge/hold`, `hold`, `help wanted`, `good first issue` and the `lifecycle/*`, `stage/*`, `status/*` labels | [jobs](./cron-jobs.md#label-sync)
 

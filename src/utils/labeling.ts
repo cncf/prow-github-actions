@@ -228,42 +228,6 @@ export function addPrefix(prefix: string, args: string[]): string[] {
   return toReturn
 }
 
-/**
- * cancelLabel will remove an associated label
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param labels - the label to remove from the issue
- */
-export async function cancelLabel(
-  octokit: Octokit,
-  context: Context,
-  issueNum: number,
-  label: string,
-): Promise<void> {
-  let currentLabels: string[] = []
-  try {
-    currentLabels = await getCurrentLabels(octokit, context, issueNum)
-    core.debug(`remove: found labels for issue ${currentLabels}`)
-  }
-  catch (e) {
-    throw new Error(`could not get labels from issue: ${e}`)
-  }
-
-  if (currentLabels.includes(label)) {
-    try {
-      await removeLabels(octokit, context, issueNum, [label])
-    }
-    catch (e) {
-      throw new Error(`could not remove ${label} label: ${e}`)
-    }
-  }
-  else {
-    core.debug(`could not find ${label} to remove`)
-  }
-}
-
 // isNotFound reports whether an octokit error is a 404
 function isNotFound(error: unknown): boolean {
   return (

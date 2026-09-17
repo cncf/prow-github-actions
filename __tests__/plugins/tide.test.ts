@@ -67,6 +67,8 @@ let context: utils.MockContext
 
 beforeEach(() => {
   utils.setupActionsEnv()
+  // every head is bound unless a test says otherwise
+  server.use(utils.lgtmStatus())
   sleep = vi.spyOn(sleepModule, 'sleep').mockResolvedValue(undefined)
   octokit = newOctokit('some-token')
   context = new utils.MockContext(pullReqOpenedEvent)
@@ -133,7 +135,7 @@ describe('tryMergePullRequest', () => {
 
     await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('merged')
     await expect(merge.called()).resolves.toBe('called')
-    expect(await merge.body()).toEqual({ merge_method: 'squash' })
+    expect(await merge.body()).toEqual({ merge_method: 'squash', sha: 'headsha' })
     expect(gets).toHaveLength(1)
     expect(info).toHaveBeenCalledWith('merged pr #1')
   })
@@ -254,12 +256,230 @@ describe('tryMergePullRequest', () => {
           : new Response(JSON.stringify({ message: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
       }),
     )
-    observeMerge(409, { message: 'Base branch was modified' })
+    observeMerge(405, { message: 'Pull Request is not mergeable' })
     const error = vi.spyOn(core, 'error').mockImplementation(() => {})
 
     await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
     expect(calls).toBe(2)
-    expect(error).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('Base branch was modified'))
+    expect(error).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('Pull Request is not mergeable'))
+  })
+
+  describe('pins the merge to the verified head', () => {
+    it('sends the head sha it verified with the merge', async () => {
+      servePull(pull(['lgtm'], { head: { sha: 'abc1234def' } }))
+      const merge = observeMerge()
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('merged')
+      await expect(merge.called()).resolves.toBe('called')
+      expect((await merge.body()).sha).toBe('abc1234def')
+    })
+
+    it('skips without merging when the head moved while waiting for the mergeability', async () => {
+      const gets = servePull(pull(['lgtm'], unknown), pull(['lgtm'], { head: { sha: 'moved' } }))
+      const merge = observeMerge()
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      await expect(merge.notCalled()).resolves.toBe('not called')
+      expect(gets).toHaveLength(2)
+      expect(info).toHaveBeenCalledWith('skipping pr #1: head moved during evaluation')
+    })
+
+    it('a 409 for a moved head is skipped, not failed, after the re-read', async () => {
+      const gets = servePull(pull(['lgtm']))
+      const merge = observeMerge(409, { message: 'Head branch was modified. Review and try the merge again.' })
+      const info = vi.spyOn(core, 'info')
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      await expect(merge.called()).resolves.toBe('called')
+      expect(gets).toHaveLength(2)
+      expect(info).toHaveBeenCalledWith('skipping pr #1: head moved')
+      expect(error).not.toHaveBeenCalled()
+    })
+
+    it('a 409 for a moved base is skipped too, with its own reason', async () => {
+      servePull(pull(['lgtm']))
+      observeMerge(409, { message: 'Base branch was modified. Review and try the merge again.' })
+      const info = vi.spyOn(core, 'info')
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      expect(info).toHaveBeenCalledWith('skipping pr #1: base branch moved')
+      expect(error).not.toHaveBeenCalled()
+    })
+
+    it('a 409 whose re-read shows the pr merged is a concurrent merge', async () => {
+      servePull(pull(['lgtm']), pull(['lgtm'], { state: 'closed', merged: true }))
+      observeMerge(409, { message: 'Head branch was modified. Review and try the merge again.' })
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      expect(info).toHaveBeenCalledWith('pr #1 was merged concurrently')
+    })
+  })
+})
+
+describe('tryMergePullRequest binds lgtm to the head commit', () => {
+  const sha = 'def0123456789abcdef0123456789abcdef01234'
+  const marker = '<!-- prow-github-actions/lgtm-stale: def0123 -->'
+
+  function observeStrip(comments: unknown[] = []) {
+    const removeLabel = new utils.ObserveRequest()
+    const pending = new utils.ObserveRequest()
+    const comment = new utils.ObserveRequest()
+    server.use(
+      http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [], removeLabel)),
+      http.post(`${repo}/statuses/${sha}`, utils.mockResponse(201, {}, pending)),
+      http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, comments)),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, comment)),
+    )
+    return { removeLabel, pending, comment }
+  }
+
+  it('headline 1: a clean pr with lgtm but no prow/lgtm status on its head is stripped, not merged', async () => {
+    const gets = servePull(pull(['lgtm'], { head: { sha } }))
+    const statuses = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] }, statuses)))
+    const merge = observeMerge()
+    const { removeLabel, pending, comment } = observeStrip()
+    const info = vi.spyOn(core, 'info')
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    await expect(statuses.called()).resolves.toBe('called')
+    await expect(removeLabel.called()).resolves.toBe('called')
+    await expect(pending.called()).resolves.toBe('called')
+    expect(await pending.body()).toEqual({ state: 'pending', context: 'prow/lgtm', description: 'lgtm removed: not bound to def0123' })
+    await expect(comment.called()).resolves.toBe('called')
+    const body = (await comment.body()).body as string
+    expect(body).toContain('`lgtm` is not bound to the current head commit (`def0123`)')
+    expect(body).toContain('Re-apply with `/lgtm` once the current commits are reviewed.')
+    expect(body).toContain(marker)
+    expect(info).toHaveBeenCalledWith('skipping pr #1: lgtm not bound to def0123')
+    expect(gets).toHaveLength(1)
+  })
+
+  it('headline 1, second evaluation: the label is gone, so no statuses read and no second comment', async () => {
+    servePull(pull([], { head: { sha } }))
+    const statuses = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] }, statuses)))
+    const merge = observeMerge()
+    const { comment } = observeStrip()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    await expect(statuses.notCalled()).resolves.toBe('not called')
+    await expect(comment.notCalled()).resolves.toBe('not called')
+  })
+
+  it('does not comment twice on the same head', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] })))
+    observeMerge()
+    const { removeLabel, comment } = observeStrip([{ id: 7, body: `stale\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } }])
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(removeLabel.called()).resolves.toBe('called')
+    await expect(comment.notCalled()).resolves.toBe('not called')
+  })
+
+  it('headline 2: the same pr with prow/lgtm success on its head merges', async () => {
+    const gets = servePull(pull(['lgtm'], { head: { sha } }))
+    const statuses = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, {
+      state: 'success',
+      statuses: [{ context: 'ci/lint', state: 'success' }, { context: 'prow/lgtm', state: 'success', description: 'lgtm by alice at def0123' }],
+    }, statuses)))
+    const merge = observeMerge()
+    const { removeLabel } = observeStrip()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('merged')
+    await expect(merge.called()).resolves.toBe('called')
+    await expect(statuses.called()).resolves.toBe('called')
+    await expect(removeLabel.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(1)
+  })
+
+  it('a pending prow/lgtm (cancelled or stale) on the head counts as unbound', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [{ context: 'prow/lgtm', state: 'pending' }] })))
+    const merge = observeMerge()
+    const { removeLabel } = observeStrip()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    await expect(removeLabel.called()).resolves.toBe('called')
+  })
+
+  it('checks the binding only once the label gate passes', async () => {
+    servePull(pull(['lgtm', 'do-not-merge/hold'], { head: { sha } }))
+    const statuses = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] }, statuses)))
+    observeMerge()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(statuses.notCalled()).resolves.toBe('not called')
+  })
+
+  it('checks the binding before waiting for an unknown mergeability', async () => {
+    const gets = servePull(pull(['lgtm'], { head: { sha }, ...unknown }))
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] })))
+    observeMerge()
+    const { removeLabel } = observeStrip()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(removeLabel.called()).resolves.toBe('called')
+    expect(gets).toHaveLength(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('bind_to_commit: false restores label-only merging without a statuses read', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    const statuses = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] }, statuses)))
+    const merge = observeMerge()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide, { bind_to_commit: false })).resolves.toBe('merged')
+    await expect(merge.called()).resolves.toBe('called')
+    await expect(statuses.notCalled()).resolves.toBe('not called')
+  })
+
+  it('a refused statuses read fails with a hint at the missing permission', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    server.use(http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })))
+    const merge = observeMerge()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).rejects.toThrow('could not read the prow/lgtm status of def0123: grant `statuses: write` to the workflow (or set `lgtm.bind_to_commit: false`)')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+  })
+
+  it('a refused pending status or comment is a warning; the label removal is what matters', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    server.use(
+      http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] })),
+      http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [])),
+      http.post(`${repo}/statuses/${sha}`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+      http.get(`${repo}/issues/1/comments`, utils.mockResponse(500, { message: 'boom' })),
+    )
+    observeMerge()
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    expect(warning).toHaveBeenCalledTimes(2)
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('could not set the prow/lgtm status of def0123 to pending'))
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('could not comment on pr #1'))
+  })
+
+  it('a refused label removal fails the evaluation', async () => {
+    servePull(pull(['lgtm'], { head: { sha } }))
+    server.use(
+      http.get(`${repo}/commits/${sha}/status`, utils.mockResponse(200, { state: 'pending', statuses: [] })),
+      http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(500, { message: 'boom' })),
+    )
+    observeMerge()
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).rejects.toThrow('could not remove label lgtm')
   })
 })
 
@@ -284,7 +504,7 @@ describe('tideOnPullRequest', () => {
 
     await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'lgtm' } }))).resolves.toBeUndefined()
     await expect(merge.called()).resolves.toBe('called')
-    expect(await merge.body()).toEqual({ merge_method: 'merge' })
+    expect(await merge.body()).toEqual({ merge_method: 'merge', sha: 'headsha' })
   })
 
   it('labeled kind/bug on a pr without lgtm: one read, no merge', async () => {
@@ -333,7 +553,7 @@ describe('tideOnPullRequest', () => {
 
     await tideOnPullRequest(prEvent('labeled'))
     await expect(merge.called()).resolves.toBe('called')
-    expect(await merge.body()).toEqual({ merge_method: 'rebase' })
+    expect(await merge.body()).toEqual({ merge_method: 'rebase', sha: 'headsha' })
   })
 
   it('merge_on_events: false makes the handler a no-op after reading the configuration', async () => {
@@ -426,7 +646,7 @@ describe('tideOnComment', () => {
     await expect(tideOnComment(new utils.MockContext(prCommentEvent('/lgtm')))).resolves.toBeUndefined()
     await expect(merge.called()).resolves.toBe('called')
     expect(gets).toHaveLength(1)
-    expect(await merge.body()).toEqual({ merge_method: 'merge' })
+    expect(await merge.body()).toEqual({ merge_method: 'merge', sha: 'headsha' })
   })
 
   it('an issue is not read', async () => {

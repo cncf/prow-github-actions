@@ -29389,7 +29389,7 @@ function utils_toCommandValue(input) {
  * @returns The command properties to send with the actual annotation command
  * See IssueCommandProperties: https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionCommandManager.cs#L646
  */
-function utils_toCommandProperties(annotationProperties) {
+function toCommandProperties(annotationProperties) {
     if (!Object.keys(annotationProperties).length) {
         return {};
     }
@@ -32200,7 +32200,7 @@ function core_debug(message) {
  * @param properties optional properties to add to the annotation.
  */
 function error(message, properties = {}) {
-    command_issueCommand('error', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a warning issue
@@ -32208,7 +32208,7 @@ function error(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function warning(message, properties = {}) {
-    command_issueCommand('warning', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a notice issue
@@ -32216,7 +32216,7 @@ function warning(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function notice(message, properties = {}) {
-    issueCommand('notice', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('notice', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Writes info to log with console.log.
@@ -40790,7 +40790,36 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 
 //# sourceMappingURL=js-yaml.mjs.map
+;// CONCATENATED MODULE: ./lib/utils/duration.js
+const durationUnits = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
+const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy;
+/**
+ * parseDuration reads a Go style duration such as `5s`, `2m30s` or `500ms`
+ * and returns milliseconds; an empty or `0` value is zero.
+ *
+ * @param text - the configured duration
+ * @param field - the configuration field, for the error message
+ */
+function parseDuration(text, field = 'grace_period_duration') {
+    const value = (text ?? '').trim();
+    if (value === '' || value === '0') {
+        return 0;
+    }
+    let ms = 0;
+    let consumed = 0;
+    durationPart.lastIndex = 0;
+    for (let match = durationPart.exec(value); match !== null; match = durationPart.exec(value)) {
+        ms += Number.parseFloat(match[1]) * durationUnits[match[2]];
+        consumed = durationPart.lastIndex;
+    }
+    if (consumed !== value.length) {
+        throw new Error(`invalid ${field} '${text}': expected a duration such as 5s, 2m or 500ms`);
+    }
+    return Math.round(ms);
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/config.js
+
 
 
 
@@ -40803,7 +40832,9 @@ const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep'];
+const defaultSweepLookback = '1h';
+const maxSweepLookbackMs = 24 * 3_600_000;
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
 const orgConfigRepos = ['.project', '.github'];
 const orgConfigPath = 'prow.yaml';
@@ -40952,8 +40983,8 @@ function isNotFound(error) {
  * Both forms share one file. Legacy documents are a flat map of label
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
- * the new form, where `require_matching_label`, `tide`, `hold`,
- * `blunderbuss` and `approve` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
+ * `approve`, `lgtm` and `sweep` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -40992,6 +41023,12 @@ function parseProwConfig(source, text) {
     }
     if (loaded.approve !== undefined) {
         config.approve = normalizeApprove(source, loaded.approve);
+    }
+    if (loaded.lgtm !== undefined) {
+        config.lgtm = normalizeLgtm(source, loaded.lgtm);
+    }
+    if (loaded.sweep !== undefined) {
+        config.sweep = normalizeSweep(source, loaded.sweep);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41157,10 +41194,49 @@ function normalizeApprove(source, raw) {
     }
     return stripUndefined(Object.fromEntries(approveFlags.map(field => [field, raw[field]])));
 }
+function normalizeLgtm(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: lgtm must be a mapping`);
+    }
+    if (raw.bind_to_commit !== undefined && typeof raw.bind_to_commit !== 'boolean') {
+        throw new Error(`${source}: lgtm.bind_to_commit must be a boolean`);
+    }
+    return stripUndefined({ bind_to_commit: raw.bind_to_commit });
+}
+function normalizeSweep(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: sweep must be a mapping`);
+    }
+    if (raw.lookback !== undefined) {
+        if (typeof raw.lookback !== 'string') {
+            throw new TypeError(`${source}: sweep.lookback must be a duration string such as 1h or 30m`);
+        }
+        let ms;
+        try {
+            ms = parseDuration(raw.lookback, 'sweep.lookback');
+        }
+        catch (e) {
+            throw new Error(`${source}: ${e instanceof Error ? e.message : e}`);
+        }
+        if (ms <= 0) {
+            throw new Error(`${source}: sweep.lookback must be longer than 0`);
+        }
+    }
+    return stripUndefined({ lookback: raw.lookback });
+}
+/**
+ * resolveSweepLookback returns the sweep window in milliseconds: the
+ * configured `sweep.lookback`, else 1h, never more than 24h.
+ *
+ * @param sweep - the merged sweep section
+ */
+function resolveSweepLookback(sweep) {
+    return Math.min(maxSweepLookbackMs, parseDuration(sweep.lookback ?? defaultSweepLookback, 'sweep.lookback'));
+}
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
- * key, require_matching_label rules concatenate, tide, hold, blunderbuss and
- * approve shallow-merge.
+ * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
+ * approve, lgtm and sweep shallow-merge.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41173,6 +41249,8 @@ function mergeProwConfig(base, over) {
         hold: { ...base.hold, ...over.hold },
         blunderbuss: { ...base.blunderbuss, ...over.blunderbuss },
         approve: { ...base.approve, ...over.approve },
+        lgtm: { ...base.lgtm, ...over.lgtm },
+        sweep: { ...base.sweep, ...over.sweep },
     };
 }
 /**
@@ -41543,35 +41621,6 @@ function addPrefix(prefix, args) {
         toReturn.push(`${prefix}/${arg}`);
     }
     return toReturn;
-}
-/**
- * cancelLabel will remove an associated label
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param labels - the label to remove from the issue
- */
-async function cancelLabel(octokit, context, issueNum, label) {
-    let currentLabels = [];
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNum);
-        core_debug(`remove: found labels for issue ${currentLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    if (currentLabels.includes(label)) {
-        try {
-            await removeLabels(octokit, context, issueNum, [label]);
-        }
-        catch (e) {
-            throw new Error(`could not remove ${label} label: ${e}`);
-        }
-    }
-    else {
-        core_debug(`could not find ${label} to remove`);
-    }
 }
 // isNotFound reports whether an octokit error is a 404
 function labeling_isNotFound(error) {
@@ -42065,6 +42114,199 @@ function drift(desired, current) {
     return Object.keys(patch).length === 0 ? undefined : patch;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/comments.js
+/**
+ * createComment comments on the specified issue or pull request
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue associated with this runtime
+ * @param message - the comment message body
+ */
+async function createComment(octokit, context, issueNum, message) {
+    try {
+        await octokit.issues.createComment({
+            ...context.repo,
+            issue_number: issueNum,
+            body: message,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not add comment: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
+
+
+
+
+
+
+const lgtmLabel = 'lgtm';
+/** the commit status context that records which head commit `/lgtm` reviewed */
+const lgtmStatusContext = 'prow/lgtm';
+const defaultLgtmSettings = { bind_to_commit: true };
+const permissionHint = 'grant `statuses: write` to the workflow (or set `lgtm.bind_to_commit: false`)';
+/**
+ * lgtmSettings resolves the `lgtm` configuration: binding on by default.
+ *
+ * @param config - the merged prow configuration
+ */
+function lgtmSettings(config) {
+    return { bind_to_commit: config.lgtm.bind_to_commit ?? true };
+}
+function shortSha(sha) {
+    return sha.slice(0, 7);
+}
+function hasLgtmLabel(labels) {
+    return labels.some(label => label.toLowerCase() === lgtmLabel);
+}
+function staleMarker(sha) {
+    return `<!-- prow-github-actions/lgtm-stale: ${shortSha(sha)} -->`;
+}
+/**
+ * bindLgtm records `sha` as the commit the lgtm reviewed: a `prow/lgtm`
+ * commit status in state `success`. A status is the binding of choice
+ * because only a write-token holder can set one (a pull request author
+ * cannot forge it) and because it is per commit by construction: a new head
+ * simply has none. A 403 is reported with the permission to grant.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ * @param by - the login who said lgtm
+ * @param targetUrl - the comment or pull request to link the status to
+ */
+async function bindLgtm(octokit, context, sha, by, targetUrl) {
+    try {
+        await octokit.repos.createCommitStatus({
+            ...context.repo,
+            sha,
+            context: lgtmStatusContext,
+            state: 'success',
+            description: `lgtm by ${by} at ${shortSha(sha)}`.slice(0, 140),
+            ...(targetUrl === undefined ? {} : { target_url: targetUrl }),
+        });
+    }
+    catch (e) {
+        if (isForbidden(e)) {
+            throw new Error(`cannot bind lgtm to the commit: ${permissionHint}`);
+        }
+        throw new Error(`could not bind lgtm to ${shortSha(sha)}: ${e}`);
+    }
+}
+/**
+ * unbindLgtm sets the head's `prow/lgtm` status to `pending` so the checks
+ * UI stops showing a green "lgtm by ..." once the label is gone. A refused
+ * write is a warning: the label, not the status, is the gate.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ * @param description - why the binding is void, ex: `lgtm cancelled by alice`
+ */
+async function unbindLgtm(octokit, context, sha, description) {
+    try {
+        await octokit.repos.createCommitStatus({
+            ...context.repo,
+            sha,
+            context: lgtmStatusContext,
+            state: 'pending',
+            description: description.slice(0, 140),
+        });
+    }
+    catch (e) {
+        warning(`could not set the ${lgtmStatusContext} status of ${shortSha(sha)} to pending: ${e}`);
+    }
+}
+/**
+ * isLgtmBound reports whether `sha` carries a `prow/lgtm` status in state
+ * `success`. The combined status answers with the latest status per context,
+ * so a later `pending` (cancel, stale) wins over an earlier `success`.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param sha - the head commit of the pull request
+ */
+async function isLgtmBound(octokit, context, sha) {
+    let statuses;
+    try {
+        statuses = (await octokit.repos.getCombinedStatusForRef({ ...context.repo, ref: sha, per_page: 100 })).data.statuses;
+    }
+    catch (e) {
+        const hint = isForbidden(e) ? `${permissionHint}: ` : '';
+        throw new Error(`could not read the ${lgtmStatusContext} status of ${shortSha(sha)}: ${hint}${e}`);
+    }
+    return statuses.find(status => status.context === lgtmStatusContext)?.state === 'success';
+}
+/**
+ * stripStaleLgtm removes an `lgtm` label that is not bound to the pull
+ * request's head: the label goes (a refused removal throws), the head's
+ * status is set to `pending`, and one comment per head explains why.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param number - the pull request number
+ * @param sha - the head commit the label is not bound to
+ */
+async function stripStaleLgtm(octokit, context, number, sha) {
+    const short = shortSha(sha);
+    await removeLabels(octokit, context, number, [lgtmLabel]);
+    await unbindLgtm(octokit, context, sha, `lgtm removed: not bound to ${short}`);
+    const marker = staleMarker(sha);
+    try {
+        const comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: number, per_page: 100 });
+        if (comments.some(comment => isBot(comment.user) && (comment.body ?? '').includes(marker))) {
+            core_debug(`lgtm: #${number} was already told about ${short}`);
+            return;
+        }
+        await createComment(octokit, context, number, [
+            `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`,
+            '',
+            marker,
+        ].join('\n'));
+    }
+    catch (e) {
+        warning(`could not comment on pr #${number} about the stale lgtm: ${e}`);
+    }
+}
+/**
+ * lgtmOnPullRequest is the `pull_request` / `pull_request_target` handler
+ * for a hand-applied `lgtm`: on `labeled` by a human it binds the label to
+ * the payload's head commit. The bot's own label writes fire no event, and
+ * `unlabeled` needs nothing: the label is the gate, the status the binding.
+ *
+ * @param context - the github context of the current action event
+ */
+async function lgtmOnPullRequest(context = github_context) {
+    if (context.payload.action !== 'labeled' || String(context.payload.label?.name ?? '').toLowerCase() !== lgtmLabel) {
+        return;
+    }
+    const sender = context.payload.sender;
+    if (isBot(sender)) {
+        core_debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`);
+        return;
+    }
+    const sha = context.payload.pull_request?.head?.sha;
+    if (typeof sha !== 'string') {
+        throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    if (!lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit) {
+        core_debug('lgtm: bind_to_commit is false');
+        return;
+    }
+    await bindLgtm(octokit, context, sha, String(sender?.login ?? 'unknown'), context.payload.pull_request?.html_url);
+    info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`);
+}
+function isBot(user) {
+    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
+}
+function isForbidden(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 403;
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/labelMatch.js
 /**
  * matchesLabelPattern reports whether a label name matches a tide label
@@ -42432,6 +42674,7 @@ function sleep(ms) {
 
 
 
+
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
 // `unknown`, so poll with backoff (7 s in total) before giving up on this event
 const unknownRetryDelaysMs = [1000, 2000, 4000];
@@ -42454,7 +42697,7 @@ const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'actio
  */
 async function fetchMergeability(octokit, context, number, options = {}) {
     const retryIf = options.retryIf ?? (() => true);
-    let pr = await getPull(octokit, context, number);
+    let pr = options.initial ?? await getPull(octokit, context, number);
     for (const delay of unknownRetryDelaysMs) {
         if (!isUnknown(pr) || !retryIf(pr)) {
             return pr;
@@ -42470,59 +42713,100 @@ async function fetchMergeability(octokit, context, number, options = {}) {
 }
 /**
  * mergeOnce is the single `PUT /pulls/{n}/merge` call site shared by the
- * cron and the event handlers. A refused merge is returned, not thrown.
+ * cron and the event handlers. The merge is pinned to `sha`, the head the
+ * caller verified: GitHub refuses with 409 when the head moved since. A
+ * refused merge is returned, not thrown.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param sha - the head commit the merge must apply to
  */
-async function mergeOnce(octokit, context, number, tide) {
+async function mergeOnce(octokit, context, number, tide, sha) {
     try {
         await octokit.pulls.merge({
             ...context.repo,
             pull_number: number,
             merge_method: tide.merge_method,
+            sha,
         });
         return { result: 'merged' };
     }
     catch (e) {
-        return { result: 'failed', message: e instanceof Error ? e.message : String(e) };
+        const status = typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' ? e.status : undefined;
+        return { result: 'failed', message: e instanceof Error ? e.message : String(e), status };
     }
 }
 /**
- * tryMergePullRequest evaluates one pull request against the tide gate and
- * GitHub's own mergeability and merges it when both pass. Unlike the cron,
- * it only merges a `clean` (or `has_hooks`) pull request; every other state
- * is skipped with the state as the reason. A refused merge is logged as an
- * error and reported as `failed`; the caller decides whether that fails the run.
+ * evaluateMerge evaluates one pull request in three steps, in this order:
+ * the tide label gate, the lgtm binding (an `lgtm` label counts only while
+ * the head commit carries the `prow/lgtm` status; a stale one is stripped
+ * with an explanatory comment) and GitHub's own mergeability, of which only
+ * `clean` and `has_hooks` merge. The merge is pinned to the head that was
+ * verified: a head that moved in between is skipped, not merged. Every path
+ * to a merge (events, the comment sweep, the cron jobs) goes through here.
+ * A refused merge is logged as an error and reported as `failed` with
+ * GitHub's message; the caller decides whether that fails the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
  * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
  */
-async function tryMergePullRequest(octokit, context, number, tide) {
+async function evaluateMerge(octokit, context, number, tide, lgtm = defaultLgtmSettings) {
+    const first = await getPull(octokit, context, number);
+    let reason = blockedReason(first, tide);
+    if (reason === undefined && lgtm.bind_to_commit && hasLgtmLabel(first.labels) && !(await isLgtmBound(octokit, context, first.sha))) {
+        await stripStaleLgtm(octokit, context, number, first.sha);
+        reason = `lgtm not bound to ${shortSha(first.sha)}`;
+    }
+    if (reason !== undefined) {
+        return skip(number, reason);
+    }
     const pr = await fetchMergeability(octokit, context, number, {
         retryIf: candidate => blockedReason(candidate, tide) === undefined,
+        initial: first,
     });
-    const reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
+    reason = blockedReason(pr, tide) ?? (mergeableStates.has(pr.state) ? undefined : `not mergeable (${pr.state})`);
     if (reason !== undefined) {
-        info(`skipping pr #${number}: ${reason}`);
-        return 'skipped';
+        return skip(number, reason);
     }
-    const outcome = await mergeOnce(octokit, context, number, tide);
+    if (pr.sha !== first.sha) {
+        return skip(number, 'head moved during evaluation');
+    }
+    const outcome = await mergeOnce(octokit, context, number, tide, first.sha);
     if (outcome.result === 'merged') {
         info(`merged pr #${number}`);
-        return 'merged';
+        return outcome;
     }
     // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
     if (await isMerged(octokit, context, number)) {
-        info(`pr #${number} was merged concurrently`);
-        return 'skipped';
+        return skip(number, 'merged concurrently');
+    }
+    // 409: the head (or the base) moved between the verification and the merge; the next event re-evaluates
+    if (outcome.status === 409) {
+        return skip(number, /base branch/i.test(outcome.message) ? 'base branch moved' : 'head moved');
     }
     error(`could not merge pr #${number}: ${outcome.message}`);
-    return 'failed';
+    return outcome;
+}
+/**
+ * tryMergePullRequest is evaluateMerge without the reason or message.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ * @param tide - the resolved tide configuration
+ * @param lgtm - the resolved lgtm configuration; binding on by default
+ */
+async function tryMergePullRequest(octokit, context, number, tide, lgtm = defaultLgtmSettings) {
+    return (await evaluateMerge(octokit, context, number, tide, lgtm)).result;
+}
+function skip(number, reason) {
+    info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`);
+    return { result: 'skipped', reason };
 }
 function blockedReason(pr, tide) {
     if (pr.merged) {
@@ -42661,12 +42945,13 @@ async function evaluate(context, numbers, lookup) {
         return;
     }
     const tide = await loadTide(octokit, context);
+    const lgtm = lgtmSettings(config);
     const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
     if (candidates.length === 0) {
         core_debug('tide: no open pull request to evaluate');
         return;
     }
-    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide)));
+    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
     const failed = candidates.filter((_, i) => results[i] === 'failed');
     if (failed.length > 0) {
         throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`);
@@ -42686,13 +42971,15 @@ function pullNumber(context) {
 
 
 
+
+
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
- * and attempt to merge every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`). It is the backstop
- * of the event-driven tide handlers: it does not read each PR's
- * mergeable_state and lets GitHub refuse a merge instead.
+ * and evaluate every one that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
+ * through the shared merge path: the lgtm binding, GitHub's mergeability,
+ * then the merge. It is the backstop of the event-driven tide handlers.
  * Every PR is attempted; once all pages are processed the run fails
  * if any merge was refused, listing the affected PRs.
  *
@@ -42704,7 +42991,10 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
     info(`starting lgtm merger page: ${currentPage}`);
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    const tide = await loadTide(octokit, context);
+    const policy = {
+        tide: await loadTide(octokit, context),
+        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
+    };
     // Get next batch
     let prs;
     try {
@@ -42730,7 +43020,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
             return;
         }
         try {
-            if (await tryMergePr(pr, octokit, context, tide, progress.failures)) {
+            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
                 progress.jobsDone++;
             }
         }
@@ -42764,134 +43054,29 @@ async function getOpenPrs(octokit, context = github_context, page) {
     return prResults.data;
 }
 /**
- * Attempts to merge a PR that passes the tide merge gate; a PR that does
- * not is skipped with the reason logged. A refused merge is logged as an
- * error annotation and recorded in failures instead of aborting the run.
+ * Evaluates a PR that passes the tide merge gate on its listed labels
+ * through the shared merge path; a PR that does not is skipped with the
+ * reason logged and costs no further call. A refused merge is recorded in
+ * failures instead of aborting the run.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
- * @param tide - the resolved tide configuration
+ * @param policy - the resolved tide and lgtm configuration
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged
  */
-async function tryMergePr(pr, octokit, context = github_context, tide, failures) {
-    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+async function tryMergePr(pr, octokit, context = github_context, policy, failures) {
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), policy.tide);
     if (!gate.ok) {
         info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
-    const outcome = await mergeOnce(octokit, context, pr.number, tide);
-    if (outcome.result === 'merged') {
-        return true;
+    const verdict = await evaluateMerge(octokit, context, pr.number, policy.tide, policy.lgtm);
+    if (verdict.result === 'failed') {
+        failures.push({ number: pr.number, message: verdict.message });
     }
-    error(`could not merge pr #${pr.number}: ${outcome.message}`);
-    failures.push({ number: pr.number, message: outcome.message });
-    return false;
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
-
-
-
-
-/**
- * This Method handles any cron job events.
- * A user should define which of the jobs they want to run in their workflow yaml
- *
- * @param context - the github context of the current action event
- */
-async function handleCronJobs(context = github_context) {
-    const runConfig = getInput('jobs', { required: false })
-        .split(/\s+/)
-        .filter(command => command !== '')
-        .map(command => command.toLowerCase());
-    if (runConfig.length === 0) {
-        runConfig.push('');
-    }
-    await Promise.all(runConfig.map(async (command) => {
-        switch (command) {
-            case 'lgtm':
-                core_debug('running cronLgtm job');
-                return await cronLgtm(1, context).catch(async (e) => {
-                    return e;
-                });
-            case 'label-sync':
-                core_debug('running label-sync job');
-                return await labelSync(context).catch(async (e) => {
-                    return e;
-                });
-            case '':
-                return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
-            default:
-                return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
-        }
-    }))
-        .then((results) => {
-        // Check to see if any of the promises failed
-        for (const result of results) {
-            if (result instanceof Error) {
-                throw new TypeError(`error handling issue comment: ${result}`);
-            }
-        }
-    })
-        .catch((e) => {
-        setFailed(`${e}`);
-    });
-}
-
-;// CONCATENATED MODULE: ./lib/labels/fixed.js
-
-
-
-
-// Prow's help plugin: label names contain spaces so they bypass the label configuration
-const fixedLabelCommands = [
-    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
-    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
-];
-/**
- * addFixedLabels labels the issue with the command's fixed labels
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function addFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    await labelIssue(octokit, context, fixed_requireIssueNumber(context), cmd.add);
-}
-/**
- * removeFixedLabels removes the command's fixed labels that are on the issue
- *
- * @param context - the github actions event context
- * @param cmd - the command definition
- */
-async function removeFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = fixed_requireIssueNumber(context);
-    let currentLabels = [];
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)));
-    if (present.length === 0) {
-        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
-        return;
-    }
-    await removeLabels(octokit, context, issueNumber, present);
-}
-function fixed_requireIssueNumber(context) {
-    const issueNumber = context.payload.issue?.number;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    return issueNumber;
+    return verdict.result === 'merged';
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
@@ -42936,6 +43121,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
     return {
         number: pullNumber,
         baseSha: pull.base.sha,
+        headSha: pull.head.sha,
         author: (pull.user?.login ?? '').toLowerCase(),
         draft: pull.draft === true,
         requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
@@ -42945,764 +43131,6 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
         tree,
         perFile,
     };
-}
-
-;// CONCATENATED MODULE: ./lib/utils/auth.js
-
-
-
-
-function getErrorDetails(error) {
-    if (typeof error === 'object' && error !== null) {
-        const status = 'status' in error ? error.status : 'unknown';
-        const message = 'message' in error && typeof error.message === 'string'
-            ? error.message
-            : String(error);
-        return { status, message };
-    }
-    return {
-        status: 'unknown',
-        message: String(error),
-    };
-}
-/**
- * checkOrgMember will check to see if the given user is a repo org member
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param user - the users to check auth on
- */
-async function checkOrgMember(octokit, context, user) {
-    try {
-        if (context.payload.repository === undefined) {
-            core_debug(`checkOrgMember error: context payload repository undefined`);
-            return false;
-        }
-        await octokit.orgs.checkMembershipForUser({
-            org: context.payload.repository.owner.login,
-            username: user,
-        });
-        return true;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        if (status === 404 || status === 302) {
-            core_debug(`${user} is not an org member: ${message}`);
-            return false;
-        }
-        warning(`encountered unexpected error: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * checkCollaborator checks to see if the given user is a repo collaborator
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param user - the users to check auth on
- */
-async function checkCollaborator(octokit, context, user) {
-    try {
-        await octokit.repos.checkCollaborator({
-            ...context.repo,
-            username: user,
-        });
-        return true;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        if (status === 404) {
-            core_debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
-            return false;
-        }
-        warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * checkIssueComments will check to see if the given user
- * has commented on the given issue
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param user - the users to check auth on
- */
-async function checkIssueComments(octokit, context, issueNum, user) {
-    try {
-        const comments = await octokit.issues.listComments({
-            ...context.repo,
-            issue_number: issueNum,
-        });
-        for (const e of comments.data) {
-            if (e.user?.login === user) {
-                return true;
-            }
-        }
-        return false;
-    }
-    catch (e) {
-        const { status, message } = getErrorDetails(e);
-        warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
-        return false;
-    }
-}
-/**
- * getOrgCollabCommentUsers will return an array of users who are org members,
- * repo collaborators, or have commented previously
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param args - the users to check auth on
- */
-async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
-    const toReturn = [];
-    try {
-        await Promise.all(args.map(async (arg) => {
-            const isOrgMember = await checkOrgMember(octokit, context, arg);
-            const isCollaborator = await checkCollaborator(octokit, context, arg);
-            const hasCommented = await checkIssueComments(octokit, context, issueNum, arg);
-            if (isOrgMember || isCollaborator || hasCommented) {
-                toReturn.push(arg);
-            }
-        }));
-    }
-    catch (e) {
-        throw new Error(`could not get authorized user: ${e}`);
-    }
-    return toReturn;
-}
-/**
- * checkCommenterAuth will return true
- * if the user is a org member, a collaborator, or has commented previously
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue or pr number this runtime is associated with
- * @param args - the users to check auth on
- */
-async function checkCommenterAuth(octokit, context, issueNum, user) {
-    let isOrgMember = false;
-    let isCollaborator = false;
-    let hasCommented = false;
-    try {
-        isOrgMember = await checkOrgMember(octokit, context, user);
-    }
-    catch (e) {
-        throw new Error(`error in checking org member: ${e}`);
-    }
-    try {
-        isCollaborator = await checkCollaborator(octokit, context, user);
-    }
-    catch (e) {
-        throw new Error(`could not check collaborator: ${e}`);
-    }
-    try {
-        hasCommented = await checkIssueComments(octokit, context, issueNum, user);
-    }
-    catch (e) {
-        throw new Error(`could not check issue comments: ${e}`);
-    }
-    if (isOrgMember || isCollaborator || hasCommented) {
-        return true;
-    }
-    return false;
-}
-/**
- * When the repository has OWNERS files, use them to authorize the action,
- * otherwise fall back to allowing organization members and collaborators.
- * On a pull request the OWNERS covering each changed file are used: the user
- * must hold the role for at least one changed file (an approver's /approve
- * then counts for the files they cover; the approve plugin decides whether the
- * whole PR is approved). On an issue the root OWNERS file is used.
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param role - the role to check
- * @param username - the user to authorize
- */
-async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
-    core_debug('Checking if the user is authorized to interact with prow');
-    const hasOwners = context.payload.issue?.pull_request !== undefined
-        ? await assertPullRequestOwner(octokit, context, role, username)
-        : await assertRootOwner(octokit, context, role, username);
-    if (!hasOwners) {
-        const isOrgMember = await checkOrgMember(octokit, context, username);
-        const isCollaborator = await checkCollaborator(octokit, context, username);
-        if (!isOrgMember && !isCollaborator) {
-            throw new Error(`${username} is not a org member or collaborator`);
-        }
-    }
-}
-/**
- * Authorize against the root OWNERS file of the default branch.
- * @returns false when the repository has no root OWNERS file
- */
-async function assertRootOwner(octokit, context, role, username) {
-    const contents = await retrieveOwnersFile(octokit, context);
-    if (contents === '') {
-        return false;
-    }
-    const owners = parseOwners('OWNERS', contents);
-    if (!owners[role].includes(username.toLowerCase())) {
-        throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
-    }
-    return true;
-}
-/**
- * Authorize against the OWNERS files covering the pull request's changed files.
- * @returns false when the repository has no OWNERS files at all
- */
-async function assertPullRequestOwner(octokit, context, role, username) {
-    const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
-    if (!tree.hasOwners) {
-        core_debug('No OWNERS files found');
-        return false;
-    }
-    const login = username.toLowerCase();
-    const covered = files.map((file) => {
-        const owners = perFile.get(file);
-        if (owners === undefined) {
-            throw new Error(`no OWNERS file covers ${file}`);
-        }
-        return { file, owners };
-    });
-    if (role === 'approvers') {
-        if (!covered.some(({ owners }) => owners.approvers.has(login))) {
-            throw new Error(`${username} is not an approver for any changed file`);
-        }
-    }
-    else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
-        throw new Error(`${username} is not a reviewer or approver for any changed file`);
-    }
-    return true;
-}
-/**
- * Retrieve the contents of the OWNERS file at the root of the repository.
- * If the file does not exist, returns an empty string.
- */
-async function retrieveOwnersFile(octokit, context) {
-    core_debug(`Looking for an OWNERS file at the root of the repository`);
-    let data;
-    try {
-        const response = await octokit.repos.getContent({
-            ...context.repo,
-            path: 'OWNERS',
-        });
-        data = response.data;
-    }
-    catch (e) {
-        if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-            core_debug('No OWNERS file found');
-            return '';
-        }
-        throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
-    }
-    if (!data.content || !data.encoding) {
-        throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
-    }
-    const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
-    core_debug(`OWNERS file contents: ${decoded}`);
-    return decoded;
-}
-
-;// CONCATENATED MODULE: ./lib/utils/comments.js
-/**
- * createComment comments on the specified issue or pull request
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param issueNum - the issue associated with this runtime
- * @param message - the comment message body
- */
-async function createComment(octokit, context, issueNum, message) {
-    try {
-        await octokit.issues.createComment({
-            ...context.repo,
-            issue_number: issueNum,
-            body: message,
-        });
-    }
-    catch (e) {
-        throw new Error(`could not add comment: ${e}`);
-    }
-}
-
-;// CONCATENATED MODULE: ./lib/labels/lgtm.js
-
-
-
-
-
-
-
-/**
- * /lgtm will add the lgtm label.
- * /lgtm cancel and /remove-lgtm remove it.
- * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
- * Note - this label is used to indicate automatic merging
- * if the user has configured a cron job to perform automatic merging
- *
- * @param context - the github actions event context
- */
-async function lgtm(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    const commenterId = context.payload.comment?.user?.login;
-    const isAuthor = commenterId === context.payload.issue?.user?.login;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    const cancel = hasCommand('/remove-lgtm', commentBody)
-        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
-    if (cancel) {
-        if (!isAuthor) {
-            await assertReviewer(octokit, context, issueNumber, commenterId);
-        }
-        try {
-            await cancelLabel(octokit, context, issueNumber, 'lgtm');
-        }
-        catch (e) {
-            throw new Error(`could not remove latest review: ${e}`);
-        }
-        return;
-    }
-    if (isAuthor) {
-        await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
-    }
-    await assertReviewer(octokit, context, issueNumber, commenterId);
-    await labelIssue(octokit, context, issueNumber, ['lgtm']);
-}
-async function assertReviewer(octokit, context, issueNumber, commenterId) {
-    try {
-        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
-    }
-    catch (e) {
-        await refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
-    }
-}
-// refuse logs and replies with msg, then fails the run with cause (or msg)
-async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    error(msg);
-    try {
-        await createComment(octokit, context, issueNumber, msg);
-    }
-    catch (commentE) {
-        error(`Could not comment with an auth error: ${commentE}`);
-    }
-    throw cause;
-}
-
-;// CONCATENATED MODULE: ./lib/labels/remove.js
-
-
-
-
-
-
-/**
- * /remove will remove a label based on the command argument
- *
- * @param context - the github actions event context
- */
-async function remove(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    const commenterId = context.payload.comment?.user?.login;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    // Only users who:
-    // - are collaborators
-    let isAuthUser = false;
-    try {
-        isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    }
-    catch (e) {
-        throw new Error(`could not check commenter auth: ${e}`);
-    }
-    if (!isAuthUser) {
-        throw new Error(`commenter is not authorized to remove a label. Must be repo collaborator`);
-    }
-    let toRemove = getCommandArgs('/remove', commentBody);
-    let currentLabels = [];
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`remove: found labels for issue ${currentLabels}`);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    toRemove = toRemove.filter((e) => {
-        return currentLabels.includes(e);
-    });
-    // no arguments after command provided
-    if (toRemove.length === 0) {
-        throw new Error(`remove: command args missing from body`);
-    }
-    await removeLabels(octokit, context, issueNumber, toRemove);
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
-
-
-
-
-
-/**
- * blunderbussSettings resolves the `blunderbuss` configuration with Prow's
- * defaults: two reviewers, approvers count, drafts wait for ready_for_review.
- *
- * @param config - the merged prow configuration
- */
-function blunderbussSettings(config) {
-    const raw = config.blunderbuss;
-    return {
-        request_count: raw.request_count ?? 2,
-        max_request_count: raw.max_request_count,
-        exclude_approvers: raw.exclude_approvers ?? false,
-        ignore_drafts: raw.ignore_drafts ?? true,
-        ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
-    };
-}
-/**
- * pickReviewers chooses `count` logins. Like Prow, a reviewer is weighted by
- * the number of changed files they cover: candidates are tiered by that count
- * and the request is filled from the highest tier down, drawing at random
- * within the tier that would overflow it.
- *
- * @param coverage - login to the number of changed files the login covers
- * @param count - how many reviewers to pick
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-function pickReviewers(coverage, count, rng = Math.random) {
-    const tiers = new Map();
-    for (const [login, files] of coverage) {
-        tiers.set(files, [...(tiers.get(files) ?? []), login]);
-    }
-    const picked = [];
-    for (const files of [...tiers.keys()].sort((a, b) => b - a)) {
-        const remaining = count - picked.length;
-        if (remaining <= 0) {
-            break;
-        }
-        const tier = [...tiers.get(files)].sort();
-        picked.push(...(tier.length <= remaining ? tier : sample(tier, remaining, rng)));
-    }
-    return picked;
-}
-function sample(items, count, rng) {
-    const pool = [...items];
-    const drawn = [];
-    while (drawn.length < count && pool.length > 0) {
-        const [item] = pool.splice(Math.floor(rng() * pool.length), 1);
-        drawn.push(item);
-    }
-    return drawn;
-}
-/**
- * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
- * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
- * requests reviews from the OWNERS reviewers covering the changed files.
- *
- * @param context - the github context of the current action event
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-async function blunderbuss(context = github_context, rng = Math.random) {
-    const action = context.payload.action;
-    if (action !== 'opened' && action !== 'ready_for_review') {
-        core_debug(`blunderbuss: skipping ${action} action`);
-        return;
-    }
-    const pullNumber = context.payload.pull_request?.number;
-    if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
-    }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
-    if (action === 'ready_for_review' && !settings.ignore_drafts) {
-        core_debug(`blunderbuss: skipping ${action} action`);
-        return;
-    }
-    await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
-}
-/**
- * autoCc is the `/auto-cc` comment command: it runs the blunderbuss selection
- * on the pull request regardless of its draft state or author.
- *
- * @param context - the github context of the current action event
- * @param rng - a source of numbers in [0, 1), injectable for tests
- */
-async function autoCc(context = github_context, rng = Math.random) {
-    const issue = context.payload.issue;
-    if (issue?.pull_request === undefined) {
-        core_debug('blunderbuss: /auto-cc only applies to pull requests');
-        return;
-    }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
-    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
-    await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
-}
-async function requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit, rng }) {
-    const pull = await loadPullRequestOwners(octokit, context, pullNumber);
-    if (!explicit) {
-        if (settings.ignore_drafts && pull.draft) {
-            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
-            return;
-        }
-        if (settings.ignore_authors.includes(pull.author)) {
-            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
-            return;
-        }
-    }
-    const excluded = new Set([pull.author, ...pull.requestedReviewers, ...pull.assignees]);
-    const coverage = new Map();
-    for (const owners of pull.perFile.values()) {
-        if (owners === undefined) {
-            continue;
-        }
-        const logins = new Set([...owners.reviewers, ...(settings.exclude_approvers ? [] : owners.approvers)]);
-        for (const login of logins) {
-            if (!excluded.has(login)) {
-                coverage.set(login, (coverage.get(login) ?? 0) + 1);
-            }
-        }
-    }
-    if (coverage.size === 0) {
-        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
-        return;
-    }
-    let count = settings.request_count;
-    if (settings.max_request_count !== undefined) {
-        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
-        if (count <= 0) {
-            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
-            return;
-        }
-    }
-    const reviewers = pickReviewers(coverage, count, rng);
-    try {
-        await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
-    }
-    catch (e) {
-        throw new Error(`could not request reviewers: ${e}`);
-    }
-    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
-
-
-
-
-
-
-
-const triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
-const graceActions = new Set(['opened', 'reopened']);
-/** github actions minutes are billed, so a rule may not park the runner for longer */
-const maxGracePeriodMs = 30_000;
-const durationUnits = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
-const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy;
-/**
- * parseDuration reads a Go style duration such as `5s`, `2m30s` or `500ms`
- * and returns milliseconds; an empty or `0` value is zero.
- *
- * @param text - the configured `grace_period_duration`
- */
-function parseDuration(text) {
-    const value = (text ?? '').trim();
-    if (value === '' || value === '0') {
-        return 0;
-    }
-    let ms = 0;
-    let consumed = 0;
-    durationPart.lastIndex = 0;
-    for (let match = durationPart.exec(value); match !== null; match = durationPart.exec(value)) {
-        ms += Number.parseFloat(match[1]) * durationUnits[match[2]];
-        consumed = durationPart.lastIndex;
-    }
-    if (consumed !== value.length) {
-        throw new Error(`invalid grace_period_duration '${text}': expected a duration such as 5s, 2m or 500ms`);
-    }
-    return Math.round(ms);
-}
-/**
- * applicableRules narrows the configured rules to the ones that concern this
- * object and, on a `labeled`/`unlabeled` event, this label. Unlike Prow, a
- * change to the `missing_label` itself also re-evaluates the rule, so a
- * `needs-*` label removed by hand while nothing matches comes back.
- *
- * @param config - the merged prow configuration
- * @param isPullRequest - whether the object is a pull request
- * @param changedLabel - the label that was added or removed, if any
- */
-function applicableRules(config, isPullRequest, changedLabel) {
-    return config.require_matching_label.filter((rule) => {
-        if ((isPullRequest ? rule.prs : rule.issues) !== true) {
-            return false;
-        }
-        if (changedLabel === undefined) {
-            return true;
-        }
-        return new RegExp(rule.regexp).test(changedLabel) || requireMatchingLabel_sameLabel(rule.missing_label, changedLabel);
-    });
-}
-/**
- * evaluate decides what a rule wants done given the labels on the object.
- *
- * @param rule - the rule to apply
- * @param labels - the labels currently on the issue or pull request
- */
-function requireMatchingLabel_evaluate(rule, labels) {
-    const pattern = new RegExp(rule.regexp);
-    const hasMatch = labels.some(label => pattern.test(label));
-    const hasMissing = labels.some(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
-    if (hasMatch && hasMissing) {
-        return 'remove';
-    }
-    if (!hasMatch && !hasMissing) {
-        return 'add';
-    }
-    return 'none';
-}
-/**
- * requireMatchingLabel is the `issues` / `pull_request` event handler: on
- * `opened`, `reopened`, `labeled` and `unlabeled` it applies every
- * configured `require_matching_label` rule that concerns the object.
- *
- * @param context - the github context of the current action event
- */
-async function requireMatchingLabel(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !triggerActions.has(action)) {
-        core_debug(`require-matching-label: skipping ${action} action`);
-        return;
-    }
-    const changedLabel = action === 'labeled' || action === 'unlabeled'
-        ? context.payload.label?.name
-        : undefined;
-    await enforce(context, changedLabel, graceActions.has(action));
-}
-/**
- * checkRequiredLabels is the `/check-required-labels` comment command: it
- * re-evaluates every applicable rule on an open issue or pull request at once.
- *
- * @param context - the github context of the current action event
- */
-async function checkRequiredLabels(context = github_context) {
-    if (context.payload.issue?.state !== 'open') {
-        core_debug('require-matching-label: the issue is not open, nothing to check');
-        return;
-    }
-    await enforce(context, undefined, false);
-}
-async function enforce(context, changedLabel, withGracePeriod) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const config = await loadProwConfig(octokit, context);
-    if (config.require_matching_label.length === 0) {
-        core_debug('require-matching-label: no rules configured');
-        return;
-    }
-    const { issueNumber, isPullRequest } = subject(context);
-    const rules = applicableRules(config, isPullRequest, changedLabel);
-    if (rules.length === 0) {
-        core_debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
-        return;
-    }
-    const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
-    if (withGracePeriod && graceMs > 0) {
-        core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep(graceMs);
-    }
-    const labels = await getCurrentLabels(octokit, context, issueNumber);
-    const errors = [];
-    for (const rule of rules) {
-        try {
-            await apply(octokit, context, issueNumber, rule, labels);
-        }
-        catch (e) {
-            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : e}`);
-        }
-    }
-    if (errors.length > 0) {
-        throw new Error(`require-matching-label ${errors.join('; ')}`);
-    }
-}
-function subject(context) {
-    const { payload } = context;
-    if (payload.pull_request !== undefined) {
-        return { issueNumber: payload.pull_request.number, isPullRequest: true };
-    }
-    if (payload.issue !== undefined) {
-        return { issueNumber: payload.issue.number, isPullRequest: payload.issue.pull_request !== undefined };
-    }
-    throw new Error(`github context payload missing issue or pull request: ${JSON.stringify(payload)}`);
-}
-async function apply(octokit, context, issueNumber, rule, labels) {
-    const verdict = requireMatchingLabel_evaluate(rule, labels);
-    switch (verdict) {
-        case 'add':
-            await labelIssue(octokit, context, issueNumber, [rule.missing_label]);
-            if (rule.missing_comment !== undefined) {
-                await postMissingComment(octokit, context, issueNumber, rule);
-            }
-            return;
-        case 'remove': {
-            const present = labels.filter(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
-            await removeLabels(octokit, context, issueNumber, present);
-            if (rule.missing_comment !== undefined) {
-                await deleteMissingComments(octokit, context, issueNumber, rule);
-            }
-            return;
-        }
-        default:
-            core_debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
-    }
-}
-// the marker is an invisible HTML comment that lets a later run find and delete the bot's own comment
-function markerFor(rule) {
-    return `<!-- prow-github-actions/require-matching-label: ${rule.missing_label} -->`;
-}
-async function postMissingComment(octokit, context, issueNumber, rule) {
-    const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule);
-    if (existing.length > 0) {
-        core_debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
-        return;
-    }
-    await createComment(octokit, context, issueNumber, `${rule.missing_comment}\n\n${markerFor(rule)}`);
-}
-async function deleteMissingComments(octokit, context, issueNumber, rule) {
-    for (const comment of await botCommentsWithMarker(octokit, context, issueNumber, rule)) {
-        try {
-            await octokit.issues.deleteComment({ ...context.repo, comment_id: comment.id });
-        }
-        catch (e) {
-            throw new Error(`could not delete comment ${comment.id}: ${e}`);
-        }
-    }
-}
-async function botCommentsWithMarker(octokit, context, issueNumber, rule) {
-    const marker = markerFor(rule);
-    let comments;
-    try {
-        comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNumber, per_page: 100 });
-    }
-    catch (e) {
-        throw new Error(`could not list comments: ${e}`);
-    }
-    return comments.filter(comment => isBot(comment) && (comment.body ?? '').includes(marker));
-}
-function isBot(comment) {
-    return comment.user?.type === 'Bot' || comment.user?.login === 'github-actions[bot]';
-}
-function requireMatchingLabel_sameLabel(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approve.js
@@ -44085,6 +43513,1102 @@ async function evaluateOnOwnersRepo(context, pullNumber) {
         return;
     }
     await evaluateApproval(octokit, context, pullNumber);
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
+
+
+
+
+
+/**
+ * blunderbussSettings resolves the `blunderbuss` configuration with Prow's
+ * defaults: two reviewers, approvers count, drafts wait for ready_for_review.
+ *
+ * @param config - the merged prow configuration
+ */
+function blunderbussSettings(config) {
+    const raw = config.blunderbuss;
+    return {
+        request_count: raw.request_count ?? 2,
+        max_request_count: raw.max_request_count,
+        exclude_approvers: raw.exclude_approvers ?? false,
+        ignore_drafts: raw.ignore_drafts ?? true,
+        ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
+    };
+}
+/**
+ * pickReviewers chooses `count` logins. Like Prow, a reviewer is weighted by
+ * the number of changed files they cover: candidates are tiered by that count
+ * and the request is filled from the highest tier down, drawing at random
+ * within the tier that would overflow it.
+ *
+ * @param coverage - login to the number of changed files the login covers
+ * @param count - how many reviewers to pick
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+function pickReviewers(coverage, count, rng = Math.random) {
+    const tiers = new Map();
+    for (const [login, files] of coverage) {
+        tiers.set(files, [...(tiers.get(files) ?? []), login]);
+    }
+    const picked = [];
+    for (const files of [...tiers.keys()].sort((a, b) => b - a)) {
+        const remaining = count - picked.length;
+        if (remaining <= 0) {
+            break;
+        }
+        const tier = [...tiers.get(files)].sort();
+        picked.push(...(tier.length <= remaining ? tier : sample(tier, remaining, rng)));
+    }
+    return picked;
+}
+function sample(items, count, rng) {
+    const pool = [...items];
+    const drawn = [];
+    while (drawn.length < count && pool.length > 0) {
+        const [item] = pool.splice(Math.floor(rng() * pool.length), 1);
+        drawn.push(item);
+    }
+    return drawn;
+}
+/**
+ * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
+ * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
+ * requests reviews from the OWNERS reviewers covering the changed files.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function blunderbuss(context = github_context, rng = Math.random) {
+    const action = context.payload.action;
+    if (action !== 'opened' && action !== 'ready_for_review') {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    if (action === 'ready_for_review' && !settings.ignore_drafts) {
+        core_debug(`blunderbuss: skipping ${action} action`);
+        return;
+    }
+    await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
+}
+/**
+ * autoCc is the `/auto-cc` comment command: it runs the blunderbuss selection
+ * on the pull request regardless of its draft state or author.
+ *
+ * @param context - the github context of the current action event
+ * @param rng - a source of numbers in [0, 1), injectable for tests
+ */
+async function autoCc(context = github_context, rng = Math.random) {
+    const issue = context.payload.issue;
+    if (issue?.pull_request === undefined) {
+        core_debug('blunderbuss: /auto-cc only applies to pull requests');
+        return;
+    }
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const settings = blunderbussSettings(await loadProwConfig(octokit, context));
+    await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
+}
+/**
+ * requestOwnersReviewers runs the blunderbuss selection on one pull request
+ * and requests the picked reviewers; a no-op when nobody is left to pick.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ * @param settings - the resolved blunderbuss configuration
+ * @param options - see RequestReviewersOptions
+ */
+async function requestOwnersReviewers(octokit, context, pullNumber, settings, options) {
+    const { explicit, rng } = options;
+    const pull = await loadPullRequestOwners(octokit, context, pullNumber);
+    if (!explicit) {
+        if (settings.ignore_drafts && pull.draft) {
+            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
+            return;
+        }
+        if (settings.ignore_authors.includes(pull.author)) {
+            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
+            return;
+        }
+    }
+    const excluded = new Set([pull.author, ...pull.requestedReviewers, ...pull.assignees]);
+    const coverage = new Map();
+    for (const owners of pull.perFile.values()) {
+        if (owners === undefined) {
+            continue;
+        }
+        const logins = new Set([...owners.reviewers, ...(settings.exclude_approvers ? [] : owners.approvers)]);
+        for (const login of logins) {
+            if (!excluded.has(login)) {
+                coverage.set(login, (coverage.get(login) ?? 0) + 1);
+            }
+        }
+    }
+    if (coverage.size === 0) {
+        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
+        return;
+    }
+    let count = settings.request_count;
+    if (settings.max_request_count !== undefined) {
+        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
+        if (count <= 0) {
+            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
+            return;
+        }
+    }
+    const reviewers = pickReviewers(coverage, count, rng);
+    try {
+        await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
+    }
+    catch (e) {
+        throw new Error(`could not request reviewers: ${e}`);
+    }
+    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
+
+
+
+
+
+const triggerActions = new Set(['opened', 'reopened', 'synchronize']);
+/**
+ * ownersLabel is the `pull_request` handler modelled on Prow's owners-label
+ * plugin: on `opened`, `reopened` and `synchronize` it adds the `labels:`
+ * declared by the OWNERS files covering the changed files. Labels the
+ * repository does not have are logged and skipped; nothing is ever removed.
+ *
+ * @param context - the github context of the current action event
+ */
+async function ownersLabel(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !triggerActions.has(action)) {
+        core_debug(`owners-label: skipping ${action} action`);
+        return;
+    }
+    const pullNumber = context.payload.pull_request?.number;
+    if (pullNumber === undefined) {
+        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
+    }
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await applyOwnersLabels(octokit, context, pullNumber);
+}
+/**
+ * applyOwnersLabels adds the `labels:` of the OWNERS files covering the
+ * pull request's changed files that the pull request does not carry yet.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param pullNumber - the pull request
+ */
+async function applyOwnersLabels(octokit, context, pullNumber) {
+    const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber);
+    const declared = new Set();
+    for (const owners of perFile.values()) {
+        owners?.labels.forEach(label => declared.add(label));
+    }
+    if (declared.size === 0) {
+        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
+        return;
+    }
+    const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
+    const missing = [...declared].filter(label => !current.has(lower(label)));
+    if (missing.length === 0) {
+        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
+        return;
+    }
+    let known;
+    try {
+        known = new Set((await repoLabelNames(octokit, context)).map(lower));
+    }
+    catch (e) {
+        throw new Error(`could not list the repository labels: ${e}`);
+    }
+    const toAdd = missing.filter((label) => {
+        if (known.has(lower(label))) {
+            return true;
+        }
+        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
+        return false;
+    });
+    if (toAdd.length === 0) {
+        return;
+    }
+    await labelIssue(octokit, context, pullNumber, toAdd);
+}
+function lower(label) {
+    return label.toLowerCase();
+}
+
+;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
+
+
+
+
+
+
+
+
+
+const requireMatchingLabel_triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
+const graceActions = new Set(['opened', 'reopened']);
+/** github actions minutes are billed, so a rule may not park the runner for longer */
+const maxGracePeriodMs = 30_000;
+/**
+ * applicableRules narrows the configured rules to the ones that concern this
+ * object and, on a `labeled`/`unlabeled` event, this label. Unlike Prow, a
+ * change to the `missing_label` itself also re-evaluates the rule, so a
+ * `needs-*` label removed by hand while nothing matches comes back.
+ *
+ * @param config - the merged prow configuration
+ * @param isPullRequest - whether the object is a pull request
+ * @param changedLabel - the label that was added or removed, if any
+ */
+function applicableRules(config, isPullRequest, changedLabel) {
+    return config.require_matching_label.filter((rule) => {
+        if ((isPullRequest ? rule.prs : rule.issues) !== true) {
+            return false;
+        }
+        if (changedLabel === undefined) {
+            return true;
+        }
+        return new RegExp(rule.regexp).test(changedLabel) || requireMatchingLabel_sameLabel(rule.missing_label, changedLabel);
+    });
+}
+/**
+ * evaluate decides what a rule wants done given the labels on the object.
+ *
+ * @param rule - the rule to apply
+ * @param labels - the labels currently on the issue or pull request
+ */
+function requireMatchingLabel_evaluate(rule, labels) {
+    const pattern = new RegExp(rule.regexp);
+    const hasMatch = labels.some(label => pattern.test(label));
+    const hasMissing = labels.some(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
+    if (hasMatch && hasMissing) {
+        return 'remove';
+    }
+    if (!hasMatch && !hasMissing) {
+        return 'add';
+    }
+    return 'none';
+}
+/**
+ * requireMatchingLabel is the `issues` / `pull_request` event handler: on
+ * `opened`, `reopened`, `labeled` and `unlabeled` it applies every
+ * configured `require_matching_label` rule that concerns the object.
+ *
+ * @param context - the github context of the current action event
+ */
+async function requireMatchingLabel(context = github_context) {
+    const action = context.payload.action;
+    if (action === undefined || !requireMatchingLabel_triggerActions.has(action)) {
+        core_debug(`require-matching-label: skipping ${action} action`);
+        return;
+    }
+    const changedLabel = action === 'labeled' || action === 'unlabeled'
+        ? context.payload.label?.name
+        : undefined;
+    await enforce(context, changedLabel, graceActions.has(action));
+}
+/**
+ * checkRequiredLabels is the `/check-required-labels` comment command: it
+ * re-evaluates every applicable rule on an open issue or pull request at once.
+ *
+ * @param context - the github context of the current action event
+ */
+async function checkRequiredLabels(context = github_context) {
+    if (context.payload.issue?.state !== 'open') {
+        core_debug('require-matching-label: the issue is not open, nothing to check');
+        return;
+    }
+    await enforce(context, undefined, false);
+}
+async function enforce(context, changedLabel, withGracePeriod) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod });
+}
+/**
+ * enforceRequiredLabels applies the configured rules to one issue or pull
+ * request: nothing is read when no rule is configured or applies.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param target - the issue or pull request
+ * @param options - see EnforceOptions
+ */
+async function enforceRequiredLabels(octokit, context, target, options = {}) {
+    const { changedLabel, withGracePeriod = false } = options;
+    const config = await loadProwConfig(octokit, context);
+    if (config.require_matching_label.length === 0) {
+        core_debug('require-matching-label: no rules configured');
+        return;
+    }
+    const { issueNumber, isPullRequest } = target;
+    const rules = applicableRules(config, isPullRequest, changedLabel);
+    if (rules.length === 0) {
+        core_debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
+        return;
+    }
+    const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
+    if (withGracePeriod && graceMs > 0) {
+        core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
+        await sleep(graceMs);
+    }
+    const labels = await getCurrentLabels(octokit, context, issueNumber);
+    const errors = [];
+    for (const rule of rules) {
+        try {
+            await apply(octokit, context, issueNumber, rule, labels);
+        }
+        catch (e) {
+            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : e}`);
+        }
+    }
+    if (errors.length > 0) {
+        throw new Error(`require-matching-label ${errors.join('; ')}`);
+    }
+}
+function subject(context) {
+    const { payload } = context;
+    if (payload.pull_request !== undefined) {
+        return { issueNumber: payload.pull_request.number, isPullRequest: true };
+    }
+    if (payload.issue !== undefined) {
+        return { issueNumber: payload.issue.number, isPullRequest: payload.issue.pull_request !== undefined };
+    }
+    throw new Error(`github context payload missing issue or pull request: ${JSON.stringify(payload)}`);
+}
+async function apply(octokit, context, issueNumber, rule, labels) {
+    const verdict = requireMatchingLabel_evaluate(rule, labels);
+    switch (verdict) {
+        case 'add':
+            await labelIssue(octokit, context, issueNumber, [rule.missing_label]);
+            if (rule.missing_comment !== undefined) {
+                await postMissingComment(octokit, context, issueNumber, rule);
+            }
+            return;
+        case 'remove': {
+            const present = labels.filter(label => requireMatchingLabel_sameLabel(label, rule.missing_label));
+            await removeLabels(octokit, context, issueNumber, present);
+            if (rule.missing_comment !== undefined) {
+                await deleteMissingComments(octokit, context, issueNumber, rule);
+            }
+            return;
+        }
+        default:
+            core_debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
+    }
+}
+// the marker is an invisible HTML comment that lets a later run find and delete the bot's own comment
+function markerFor(rule) {
+    return `<!-- prow-github-actions/require-matching-label: ${rule.missing_label} -->`;
+}
+async function postMissingComment(octokit, context, issueNumber, rule) {
+    const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule);
+    if (existing.length > 0) {
+        core_debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
+        return;
+    }
+    await createComment(octokit, context, issueNumber, `${rule.missing_comment}\n\n${markerFor(rule)}`);
+}
+async function deleteMissingComments(octokit, context, issueNumber, rule) {
+    for (const comment of await botCommentsWithMarker(octokit, context, issueNumber, rule)) {
+        try {
+            await octokit.issues.deleteComment({ ...context.repo, comment_id: comment.id });
+        }
+        catch (e) {
+            throw new Error(`could not delete comment ${comment.id}: ${e}`);
+        }
+    }
+}
+async function botCommentsWithMarker(octokit, context, issueNumber, rule) {
+    const marker = markerFor(rule);
+    let comments;
+    try {
+        comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNumber, per_page: 100 });
+    }
+    catch (e) {
+        throw new Error(`could not list comments: ${e}`);
+    }
+    return comments.filter(comment => requireMatchingLabel_isBot(comment) && (comment.body ?? '').includes(marker));
+}
+function requireMatchingLabel_isBot(comment) {
+    return comment.user?.type === 'Bot' || comment.user?.login === 'github-actions[bot]';
+}
+function requireMatchingLabel_sameLabel(a, b) {
+    return a.toLowerCase() === b.toLowerCase();
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/sweep.js
+
+
+
+
+
+
+
+
+
+
+
+/** pull requests evaluated at once; keeps a busy repository within the api's secondary rate limits */
+const sweepConcurrency = 3;
+const pageSize = 100;
+/**
+ * sweep is the scheduled job of the `pull_request` install mode: for every
+ * open pull request updated within `sweep.lookback` it does what the
+ * `pull_request` and `pull_request_review` handlers would have done with a
+ * write token, in their order: the `require_matching_label` rules, the OWNERS
+ * labels, blunderbuss on a fresh pull request nobody reviews yet, the
+ * approval, then the merge path (lgtm binding, mergeability, merge). Each
+ * pull request is evaluated sequentially, a few pull requests at a time; a
+ * failure on one is collected and the rest still run. The run fails at the
+ * end listing the failures.
+ *
+ * @param context - the github actions event context
+ * @param now - the current time, injectable for tests
+ */
+async function sweep(context = github_context, now = new Date()) {
+    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const config = await loadProwConfig(octokit, context);
+    const lookbackMs = resolveSweepLookback(config.sweep);
+    const since = new Date(now.getTime() - lookbackMs);
+    const candidates = await recentlyUpdatedPulls(octokit, context, since);
+    info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`);
+    const result = { candidates: candidates.map(pr => pr.number), merged: [], failures: [] };
+    if (candidates.length === 0) {
+        return result;
+    }
+    const plugins = {
+        hasOwners: await repoHasOwners(octokit, context),
+        tide: await loadTide(octokit, context),
+        lgtm: lgtmSettings(config),
+        config,
+        since,
+    };
+    await forEachLimited(candidates, sweepConcurrency, async (pr) => {
+        const outcome = await sweepPullRequest(octokit, context, pr, plugins);
+        if (outcome.merged) {
+            result.merged.push(pr.number);
+        }
+        if (outcome.errors.length > 0) {
+            result.failures.push({ number: pr.number, message: outcome.errors.join('; ') });
+        }
+    });
+    if (result.failures.length > 0) {
+        const list = result.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+        throw new Error(`sweep: ${result.failures.length} pull request(s) failed: ${list}`);
+    }
+    return result;
+}
+async function sweepPullRequest(octokit, context, pr, plugins) {
+    const outcome = { merged: false, errors: [] };
+    const ownersSteps = [
+        ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
+        ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
+        ['approve', () => evaluateApproval(octokit, context, pr.number)],
+    ];
+    const steps = [
+        ['require-matching-label', () => enforceRequiredLabels(octokit, context, { issueNumber: pr.number, isPullRequest: true })],
+        ...(plugins.hasOwners ? ownersSteps : []),
+        ['tide', async () => {
+                const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm);
+                if (verdict.result === 'merged') {
+                    outcome.merged = true;
+                }
+                else if (verdict.result === 'failed') {
+                    throw new Error(verdict.message);
+                }
+            }],
+    ];
+    for (const [name, step] of steps) {
+        try {
+            await step();
+        }
+        catch (e) {
+            outcome.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+    info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
+    return outcome;
+}
+async function requestReviewersIfFresh(octokit, context, pr, plugins) {
+    if (new Date(pr.created_at) < plugins.since) {
+        core_debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`);
+        return;
+    }
+    if (pr.draft === true || (pr.requested_reviewers ?? []).length > 0) {
+        core_debug(`sweep: #${pr.number} is a draft or already has requested reviewers`);
+        return;
+    }
+    const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 });
+    if (reviews.length > 0) {
+        core_debug(`sweep: #${pr.number} already has reviews`);
+        return;
+    }
+    await requestOwnersReviewers(octokit, context, pr.number, blunderbussSettings(plugins.config), { explicit: false, rng: Math.random });
+}
+async function recentlyUpdatedPulls(octokit, context, since) {
+    const candidates = [];
+    for (let page = 1;; page++) {
+        let items;
+        try {
+            items = (await octokit.pulls.list({ ...context.repo, state: 'open', sort: 'updated', direction: 'desc', per_page: pageSize, page })).data;
+        }
+        catch (e) {
+            throw new Error(`sweep: could not list the open pull requests: ${e}`);
+        }
+        candidates.push(...items.filter(pr => new Date(pr.updated_at) >= since));
+        const exhausted = items.length < pageSize || new Date(items[items.length - 1].updated_at) < since;
+        if (exhausted) {
+            return candidates;
+        }
+    }
+}
+async function forEachLimited(items, limit, fn) {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            await fn(items[next++]);
+        }
+    });
+    await Promise.all(workers);
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
+
+
+
+
+
+/**
+ * This Method handles any cron job events.
+ * A user should define which of the jobs they want to run in their workflow yaml
+ *
+ * @param context - the github context of the current action event
+ */
+async function handleCronJobs(context = github_context) {
+    const runConfig = getInput('jobs', { required: false })
+        .split(/\s+/)
+        .filter(command => command !== '')
+        .map(command => command.toLowerCase());
+    if (runConfig.length === 0) {
+        runConfig.push('');
+    }
+    await Promise.all(runConfig.map(async (command) => {
+        switch (command) {
+            case 'lgtm':
+                core_debug('running cronLgtm job');
+                return await cronLgtm(1, context).catch(async (e) => {
+                    return e;
+                });
+            case 'label-sync':
+                core_debug('running label-sync job');
+                return await labelSync(context).catch(async (e) => {
+                    return e;
+                });
+            case 'sweep':
+                core_debug('running sweep job');
+                return await sweep(context).catch(async (e) => {
+                    return e;
+                });
+            case '':
+                return new Error(`please provide a list of space delimited commands / jobs to run. None found`);
+            default:
+                return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
+        }
+    }))
+        .then((results) => {
+        // Check to see if any of the promises failed
+        for (const result of results) {
+            if (result instanceof Error) {
+                throw new TypeError(`error handling issue comment: ${result}`);
+            }
+        }
+    })
+        .catch((e) => {
+        setFailed(`${e}`);
+    });
+}
+
+;// CONCATENATED MODULE: ./lib/labels/fixed.js
+
+
+
+
+// Prow's help plugin: label names contain spaces so they bypass the label configuration
+const fixedLabelCommands = [
+    { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
+    { command: '/good-first-issue', add: ['good first issue', 'help wanted'], remove: ['good first issue'] },
+];
+/**
+ * addFixedLabels labels the issue with the command's fixed labels
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function addFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    await labelIssue(octokit, context, fixed_requireIssueNumber(context), cmd.add);
+}
+/**
+ * removeFixedLabels removes the command's fixed labels that are on the issue
+ *
+ * @param context - the github actions event context
+ * @param cmd - the command definition
+ */
+async function removeFixedLabels(context, cmd) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = fixed_requireIssueNumber(context);
+    let currentLabels = [];
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)));
+    if (present.length === 0) {
+        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
+        return;
+    }
+    await removeLabels(octokit, context, issueNumber, present);
+}
+function fixed_requireIssueNumber(context) {
+    const issueNumber = context.payload.issue?.number;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    return issueNumber;
+}
+
+;// CONCATENATED MODULE: ./lib/utils/auth.js
+
+
+
+
+function getErrorDetails(error) {
+    if (typeof error === 'object' && error !== null) {
+        const status = 'status' in error ? error.status : 'unknown';
+        const message = 'message' in error && typeof error.message === 'string'
+            ? error.message
+            : String(error);
+        return { status, message };
+    }
+    return {
+        status: 'unknown',
+        message: String(error),
+    };
+}
+/**
+ * checkOrgMember will check to see if the given user is a repo org member
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the users to check auth on
+ */
+async function checkOrgMember(octokit, context, user) {
+    try {
+        if (context.payload.repository === undefined) {
+            core_debug(`checkOrgMember error: context payload repository undefined`);
+            return false;
+        }
+        await octokit.orgs.checkMembershipForUser({
+            org: context.payload.repository.owner.login,
+            username: user,
+        });
+        return true;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        if (status === 404 || status === 302) {
+            core_debug(`${user} is not an org member: ${message}`);
+            return false;
+        }
+        warning(`encountered unexpected error: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * checkCollaborator checks to see if the given user is a repo collaborator
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the users to check auth on
+ */
+async function checkCollaborator(octokit, context, user) {
+    try {
+        await octokit.repos.checkCollaborator({
+            ...context.repo,
+            username: user,
+        });
+        return true;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        if (status === 404) {
+            core_debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
+            return false;
+        }
+        warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * checkIssueComments will check to see if the given user
+ * has commented on the given issue
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param user - the users to check auth on
+ */
+async function checkIssueComments(octokit, context, issueNum, user) {
+    try {
+        const comments = await octokit.issues.listComments({
+            ...context.repo,
+            issue_number: issueNum,
+        });
+        for (const e of comments.data) {
+            if (e.user?.login === user) {
+                return true;
+            }
+        }
+        return false;
+    }
+    catch (e) {
+        const { status, message } = getErrorDetails(e);
+        warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
+        return false;
+    }
+}
+/**
+ * getOrgCollabCommentUsers will return an array of users who are org members,
+ * repo collaborators, or have commented previously
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param args - the users to check auth on
+ */
+async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
+    const toReturn = [];
+    try {
+        await Promise.all(args.map(async (arg) => {
+            const isOrgMember = await checkOrgMember(octokit, context, arg);
+            const isCollaborator = await checkCollaborator(octokit, context, arg);
+            const hasCommented = await checkIssueComments(octokit, context, issueNum, arg);
+            if (isOrgMember || isCollaborator || hasCommented) {
+                toReturn.push(arg);
+            }
+        }));
+    }
+    catch (e) {
+        throw new Error(`could not get authorized user: ${e}`);
+    }
+    return toReturn;
+}
+/**
+ * checkCommenterAuth will return true
+ * if the user is a org member, a collaborator, or has commented previously
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pr number this runtime is associated with
+ * @param args - the users to check auth on
+ */
+async function checkCommenterAuth(octokit, context, issueNum, user) {
+    let isOrgMember = false;
+    let isCollaborator = false;
+    let hasCommented = false;
+    try {
+        isOrgMember = await checkOrgMember(octokit, context, user);
+    }
+    catch (e) {
+        throw new Error(`error in checking org member: ${e}`);
+    }
+    try {
+        isCollaborator = await checkCollaborator(octokit, context, user);
+    }
+    catch (e) {
+        throw new Error(`could not check collaborator: ${e}`);
+    }
+    try {
+        hasCommented = await checkIssueComments(octokit, context, issueNum, user);
+    }
+    catch (e) {
+        throw new Error(`could not check issue comments: ${e}`);
+    }
+    if (isOrgMember || isCollaborator || hasCommented) {
+        return true;
+    }
+    return false;
+}
+/**
+ * When the repository has OWNERS files, use them to authorize the action,
+ * otherwise fall back to allowing organization members and collaborators.
+ * On a pull request the OWNERS covering each changed file are used: the user
+ * must hold the role for at least one changed file (an approver's /approve
+ * then counts for the files they cover; the approve plugin decides whether the
+ * whole PR is approved). On an issue the root OWNERS file is used.
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param role - the role to check
+ * @param username - the user to authorize
+ */
+async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
+    core_debug('Checking if the user is authorized to interact with prow');
+    const hasOwners = context.payload.issue?.pull_request !== undefined
+        ? await assertPullRequestOwner(octokit, context, role, username)
+        : await assertRootOwner(octokit, context, role, username);
+    if (!hasOwners) {
+        const isOrgMember = await checkOrgMember(octokit, context, username);
+        const isCollaborator = await checkCollaborator(octokit, context, username);
+        if (!isOrgMember && !isCollaborator) {
+            throw new Error(`${username} is not a org member or collaborator`);
+        }
+    }
+}
+/**
+ * Authorize against the root OWNERS file of the default branch.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function assertRootOwner(octokit, context, role, username) {
+    const contents = await retrieveOwnersFile(octokit, context);
+    if (contents === '') {
+        return false;
+    }
+    const owners = parseOwners('OWNERS', contents);
+    if (!owners[role].includes(username.toLowerCase())) {
+        throw new Error(`${username} is not included in the ${role} role in the OWNERS file`);
+    }
+    return true;
+}
+/**
+ * Authorize against the OWNERS files covering the pull request's changed files.
+ * @returns false when the repository has no OWNERS files at all
+ */
+async function assertPullRequestOwner(octokit, context, role, username) {
+    const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
+    if (!tree.hasOwners) {
+        core_debug('No OWNERS files found');
+        return false;
+    }
+    const login = username.toLowerCase();
+    const covered = files.map((file) => {
+        const owners = perFile.get(file);
+        if (owners === undefined) {
+            throw new Error(`no OWNERS file covers ${file}`);
+        }
+        return { file, owners };
+    });
+    if (role === 'approvers') {
+        if (!covered.some(({ owners }) => owners.approvers.has(login))) {
+            throw new Error(`${username} is not an approver for any changed file`);
+        }
+    }
+    else if (!covered.some(({ owners }) => owners.reviewers.has(login) || owners.approvers.has(login))) {
+        throw new Error(`${username} is not a reviewer or approver for any changed file`);
+    }
+    return true;
+}
+/**
+ * Retrieve the contents of the OWNERS file at the root of the repository.
+ * If the file does not exist, returns an empty string.
+ */
+async function retrieveOwnersFile(octokit, context) {
+    core_debug(`Looking for an OWNERS file at the root of the repository`);
+    let data;
+    try {
+        const response = await octokit.repos.getContent({
+            ...context.repo,
+            path: 'OWNERS',
+        });
+        data = response.data;
+    }
+    catch (e) {
+        if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
+            core_debug('No OWNERS file found');
+            return '';
+        }
+        throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
+    }
+    if (!data.content || !data.encoding) {
+        throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
+    }
+    const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
+    core_debug(`OWNERS file contents: ${decoded}`);
+    return decoded;
+}
+
+;// CONCATENATED MODULE: ./lib/labels/lgtm.js
+
+
+
+
+
+
+
+
+
+
+/**
+ * /lgtm will add the lgtm label. On a pull request the label is first bound
+ * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
+ * the label is applied only once the status is recorded, so no unbound
+ * label is ever left behind.
+ * /lgtm cancel and /remove-lgtm remove it and void the binding.
+ * Like Prow, the author cannot lgtm their own PR but may cancel an lgtm on it.
+ * Note - this label is used to indicate automatic merging
+ * if the user has configured a cron job to perform automatic merging
+ *
+ * @param context - the github actions event context
+ */
+async function lgtm(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterId = context.payload.comment?.user?.login;
+    const isAuthor = commenterId === context.payload.issue?.user?.login;
+    const isPullRequest = context.payload.issue?.pull_request !== undefined;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    const cancel = hasCommand('/remove-lgtm', commentBody)
+        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
+    if (cancel) {
+        if (!isAuthor) {
+            await assertReviewer(octokit, context, issueNumber, commenterId);
+        }
+        await cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequest);
+        return;
+    }
+    if (isAuthor) {
+        await refuse(octokit, context, issueNumber, 'you cannot LGTM your own PR.');
+    }
+    await assertReviewer(octokit, context, issueNumber, commenterId);
+    if (isPullRequest && (await bindsToCommit(octokit, context))) {
+        const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
+        try {
+            await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url);
+        }
+        catch (e) {
+            await refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e);
+        }
+    }
+    await labelIssue(octokit, context, issueNumber, [lgtmLabel]);
+}
+async function bindsToCommit(octokit, context) {
+    return lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit;
+}
+async function cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequest) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not remove latest review: could not get labels from issue: ${e}`);
+    }
+    if (!currentLabels.includes(lgtmLabel)) {
+        core_debug(`could not find ${lgtmLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, [lgtmLabel]);
+    }
+    catch (e) {
+        throw new Error(`could not remove latest review: ${e}`);
+    }
+    if (isPullRequest && (await bindsToCommit(octokit, context))) {
+        const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
+        await unbindLgtm(octokit, context, headSha, `lgtm cancelled by ${commenterId}`);
+    }
+}
+async function assertReviewer(octokit, context, issueNumber, commenterId) {
+    try {
+        await assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', commenterId);
+    }
+    catch (e) {
+        await refuse(octokit, context, issueNumber, `Cannot apply the lgtm label because ${e}`, e);
+    }
+}
+// refuse logs and replies with msg, then fails the run with cause (or msg)
+async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
+    error(msg);
+    try {
+        await createComment(octokit, context, issueNumber, msg);
+    }
+    catch (commentE) {
+        error(`Could not comment with an auth error: ${commentE}`);
+    }
+    throw cause;
+}
+
+;// CONCATENATED MODULE: ./lib/labels/remove.js
+
+
+
+
+
+
+/**
+ * /remove will remove a label based on the command argument
+ *
+ * @param context - the github actions event context
+ */
+async function remove(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    const commenterId = context.payload.comment?.user?.login;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    // Only users who:
+    // - are collaborators
+    let isAuthUser = false;
+    try {
+        isAuthUser = await checkCollaborator(octokit, context, commenterId);
+    }
+    catch (e) {
+        throw new Error(`could not check commenter auth: ${e}`);
+    }
+    if (!isAuthUser) {
+        throw new Error(`commenter is not authorized to remove a label. Must be repo collaborator`);
+    }
+    let toRemove = getCommandArgs('/remove', commentBody);
+    let currentLabels = [];
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+        core_debug(`remove: found labels for issue ${currentLabels}`);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    toRemove = toRemove.filter((e) => {
+        return currentLabels.includes(e);
+    });
+    // no arguments after command provided
+    if (toRemove.length === 0) {
+        throw new Error(`remove: command args missing from body`);
+    }
+    await removeLabels(octokit, context, issueNumber, toRemove);
 }
 
 ;// CONCATENATED MODULE: ./lib/issueComment/approve.js
@@ -45044,7 +45568,7 @@ async function handleIssueComment(context = github_context) {
     }
     if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
         const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody);
-        failures.push(...await sweep(context, alreadyChecked));
+        failures.push(...await handleIssueComment_sweep(context, alreadyChecked));
     }
     if (failures.length > 0) {
         setFailed(failures.join('; '));
@@ -45052,7 +45576,7 @@ async function handleIssueComment(context = github_context) {
 }
 // The bot's own label writes fire no `labeled`/`unlabeled` event, so what those events would
 // trigger runs here, after the commands: the needs-* re-check, then the merge gate.
-async function sweep(context, alreadyChecked) {
+async function handleIssueComment_sweep(context, alreadyChecked) {
     const failures = [];
     const steps = [
         ...(alreadyChecked ? [] : [() => checkRequiredLabels(context)]),
@@ -45092,6 +45616,28 @@ function normalizeError(error) {
 
 ;// CONCATENATED MODULE: ./lib/utils/events.js
 
+const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review']);
+/**
+ * skipReadOnlyForkRun reports, with a notice, whether this run cannot write:
+ * GitHub gives `pull_request` and `pull_request_review` runs for a pull
+ * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
+ * same-repository pull requests get a write token). The `sweep` job covers
+ * those pull requests instead.
+ *
+ * @param context - the github context of the current action event
+ */
+function skipReadOnlyForkRun(context) {
+    if (!readOnlyForkEvents.has(context.eventName)) {
+        return false;
+    }
+    const head = context.payload.pull_request?.head?.repo?.full_name;
+    const base = context.payload.repository?.full_name;
+    if (typeof head !== 'string' || typeof base !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+        return false;
+    }
+    notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`);
+    return true;
+}
 /**
  * Runs every registered handler for an event, one after the other in
  * registration order, and fails the run once with the collected rejections.
@@ -45154,71 +45700,6 @@ async function handleCheckSuite(context = github_context) {
     await runEventHandlers(context.eventName, checkSuiteHandlers, context);
 }
 
-;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
-
-
-
-
-
-const ownersLabel_triggerActions = new Set(['opened', 'reopened', 'synchronize']);
-/**
- * ownersLabel is the `pull_request` handler modelled on Prow's owners-label
- * plugin: on `opened`, `reopened` and `synchronize` it adds the `labels:`
- * declared by the OWNERS files covering the changed files. Labels the
- * repository does not have are logged and skipped; nothing is ever removed.
- *
- * @param context - the github context of the current action event
- */
-async function ownersLabel(context = github_context) {
-    const action = context.payload.action;
-    if (action === undefined || !ownersLabel_triggerActions.has(action)) {
-        core_debug(`owners-label: skipping ${action} action`);
-        return;
-    }
-    const pullNumber = context.payload.pull_request?.number;
-    if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
-    }
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const { perFile } = await loadPullRequestOwners(octokit, context, pullNumber);
-    const declared = new Set();
-    for (const owners of perFile.values()) {
-        owners?.labels.forEach(label => declared.add(label));
-    }
-    if (declared.size === 0) {
-        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
-        return;
-    }
-    const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
-    const missing = [...declared].filter(label => !current.has(lower(label)));
-    if (missing.length === 0) {
-        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
-        return;
-    }
-    let known;
-    try {
-        known = new Set((await repoLabelNames(octokit, context)).map(lower));
-    }
-    catch (e) {
-        throw new Error(`could not list the repository labels: ${e}`);
-    }
-    const toAdd = missing.filter((label) => {
-        if (known.has(lower(label))) {
-            return true;
-        }
-        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
-        return false;
-    });
-    if (toAdd.length === 0) {
-        return;
-    }
-    await labelIssue(octokit, context, pullNumber, toAdd);
-}
-function lower(label) {
-    return label.toLowerCase();
-}
-
 ;// CONCATENATED MODULE: ./lib/pullReq/onPrLgtm.js
 
 
@@ -45258,17 +45739,23 @@ async function onPrLgtm(context) {
 
 
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; approve before tide so the label it applies is seen */
-const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, approveOnPullRequest, tideOnPullRequest];
+
+/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them */
+const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, tideOnPullRequest];
 /**
  * This method handles any pull-request configuration for configured workflows:
  * the registered handlers and the `jobs` input. The `lgtm` job only acts on
  * `synchronize` (new commits); every other activity type is logged and skipped.
  * An empty `jobs` input is only an error when no handler is registered either.
+ * A `pull_request` run for a fork pull request has a read-only token and
+ * returns before any handler; the `sweep` job covers it.
  *
  * @param context - the github context of the current action event
  */
 async function handlePullReq(context = github_context) {
+    if (skipReadOnlyForkRun(context)) {
+        return;
+    }
     const action = context.payload.action;
     const runConfig = getInput('jobs', { required: false })
         .split(/\s+/)
@@ -45317,11 +45804,16 @@ async function handlePullReq(context = github_context) {
 /** handlers that run on every `pull_request_review` event, in this order: approve first so tide sees the label */
 const pullRequestReviewHandlers = [approveOnReview, tideOnReview];
 /**
- * Dispatches a `pull_request_review` event to the registered handlers.
+ * Dispatches a `pull_request_review` event to the registered handlers. A
+ * review on a fork pull request comes with a read-only token and returns
+ * before any handler; the `sweep` job covers it.
  *
  * @param context - the github context of the current action event
  */
 async function handlePullReqReview(context = github_context) {
+    if (skipReadOnlyForkRun(context)) {
+        return;
+    }
     await runEventHandlers('pull_request_review', pullRequestReviewHandlers, context);
 }
 

@@ -4,7 +4,7 @@ The `jobs` input is space or newline delimited and case-insensitive.
 
 Jobs | Runs on | Description
 --- | --- | ---
-`lgtm` | `synchronize` only | Removes the `lgtm` label (if present) when new commits are pushed, so updated code must be reviewed again before [automatic merging](./automatic-merging.md). The `approved` label is **not** removed: [approval is sticky](./commands.md#approve).
+`lgtm` | `synchronize` only | Removes the `lgtm` label (if present) when new commits are pushed, so updated code must be reviewed again before [automatic merging](./automatic-merging.md). Defense in depth since `lgtm` is [bound to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit): a pushed head has no `prow/lgtm` status, so every merge path strips a stale `lgtm` on its own, `synchronize` subscribed or not (and even where the event's token is read-only, as on fork PRs under `pull_request`). The `approved` label is **not** removed: [approval is sticky](./commands.md#approve).
 
 `lgtm` is the only PR job. Every other activity type (`opened`, `reopened`, `labeled`,
 `unlabeled`, `ready_for_review`, `edited`, `closed`, ...) is logged at debug level and
@@ -27,6 +27,7 @@ on: pull_request
 
 permissions:
   pull-requests: write
+  statuses: write
 
 jobs:
   execute:
@@ -58,6 +59,7 @@ on: pull_request_target
 
 permissions:
   pull-requests: write
+  statuses: write
 
 jobs:
   execute:

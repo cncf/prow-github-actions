@@ -158,6 +158,20 @@ describe('dist/index.js', () => {
     expect(gh.requests).toEqual([])
   })
 
+  it.each([
+    ['pull_request', { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }],
+    ['pull_request_review', pullReqReviewSubmittedEvent],
+  ])('%s for a fork pull request exits 0 with a notice and no api call: the token is read-only', async (eventName, payload) => {
+    const fork = { ...payload, pull_request: { ...payload.pull_request, head: { ...payload.pull_request.head, repo: { full_name: 'octocat/Hello-World' } } } }
+
+    const result = await runBundle({ eventName, payload: fork, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain(`::notice::fork pull request under ${eventName}: the token is read-only; the sweep job handles it`)
+    expect(gh.requests).toEqual([])
+  })
+
   it('issues labeled with no require_matching_label configured only reads the configuration', async () => {
     const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
 
@@ -931,20 +945,27 @@ describe('dist/index.js', () => {
   describe('event-driven merging', () => {
     const pullRead = `GET ${repo}/pulls/1`
     const merge = `PUT ${repo}/pulls/1/merge`
+    // the fixtures' head commit: the payload's and the api's agree, as they do on GitHub
+    const head = pullReqOpenedEvent.pull_request.head.sha
+    const short = head.slice(0, 7)
+    const bind = `POST ${repo}/statuses/${head}`
+    const bindingRead = `GET ${repo}/commits/${head}/status?per_page=100`
+    const bound = [{ context: 'prow/lgtm', state: 'success' }]
 
     function mergeablePr(state: string, labels = ['lgtm']) {
-      return openPr(labels, { number: 1, mergeable: state === 'unknown' ? null : true, mergeable_state: state })
+      return openPr(labels, { number: 1, mergeable: state === 'unknown' ? null : true, mergeable_state: state, head: { sha: head } })
     }
 
-    function labeledLgtm() {
-      return { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }
+    function labeledLgtm(sender: Record<string, unknown> = pullReqOpenedEvent.sender) {
+      return { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' }, sender }
     }
 
     function runPullRequest(payload: unknown, inputs: Record<string, string> = {}) {
       return runBundle({ eventName: 'pull_request', payload, inputs: { ...token, 'merge-method': 'squash', ...inputs }, apiUrl: gh.url })
     }
 
-    it('pull_request labeled lgtm: squash-merges a clean pr', async () => {
+    it('pull_request labeled lgtm by a human: binds the label to the head, then squash-merges the clean pr', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
@@ -952,11 +973,126 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`lgtm: bound the hand-applied label on #1 to ${short}`)
       expect(result.stdout).toContain('merged pr #1')
+      const binds = gh.requestsMatching('POST', /\/statuses\//)
+      expect(binds).toHaveLength(1)
+      expect(binds[0].body).toEqual({ state: 'success', context: 'prow/lgtm', description: `lgtm by Codertocat at ${short}`, target_url: pullReqOpenedEvent.pull_request.html_url })
       const merges = gh.requestsMatching('PUT', /\/pulls\/1\/merge$/)
       expect(merges).toHaveLength(1)
-      expect(merges[0].body).toEqual({ merge_method: 'squash' })
-      expectRequests(configReads(), [ownersProbe, pullRead, merge])
+      expect(merges[0].body).toEqual({ merge_method: 'squash', sha: head })
+      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, merge])
+    })
+
+    describe('headline: an lgtm that is not bound to the head never merges', () => {
+      const strip = [
+        `DELETE ${repo}/issues/1/labels/lgtm`,
+        bind,
+        `GET ${repo}/issues/1/comments?per_page=100`,
+        `POST ${repo}/issues/1/comments`,
+      ]
+
+      function routeStrip(sha = head) {
+        gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
+        gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+        gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+        gh.commitStatuses(repo, sha, [])
+      }
+
+      function expectStripped(sha = head) {
+        const pendings = gh.requestsMatching('POST', /\/statuses\//)
+        expect(pendings).toHaveLength(1)
+        expect(pendings[0].body).toEqual({ state: 'pending', context: 'prow/lgtm', description: `lgtm removed: not bound to ${sha.slice(0, 7)}` })
+        expect(gh.requestsMatching('DELETE', /\/labels\/lgtm$/)).toHaveLength(1)
+        const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+        expect(comments).toHaveLength(1)
+        const body = (comments[0].body as { body: string }).body
+        expect(body).toContain(`\`lgtm\` is not bound to the current head commit (\`${sha.slice(0, 7)}\`)`)
+        expect(body).toContain(`<!-- prow-github-actions/lgtm-stale: ${sha.slice(0, 7)} -->`)
+        expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      }
+
+      it('pull_request labeled lgtm by a bot (no binding recorded) on a clean pr: stripped with one comment, not merged', async () => {
+        routeStrip()
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+        const result = await runPullRequest(labeledLgtm({ login: 'some-app[bot]', type: 'Bot' }))
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${short}`)
+        expectStripped()
+        expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, ...strip])
+      })
+
+      it('pull_request labeled lgtm by a human when the status cannot be written: the run fails, and tide still strips the unbound label', async () => {
+        // the first route wins in the fake: the refusal goes in before routeStrip's accepting status route
+        gh.route('POST', `${repo}/statuses/${head}`, { status: 403, body: { message: 'Resource not accessible by integration' } })
+        routeStrip()
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+
+        const result = await runPullRequest(labeledLgtm())
+
+        expect(result.status, result.stdout).toBe(1)
+        expect(result.errors.some(e => e.includes('cannot bind lgtm to the commit: grant `statuses: write` to the workflow'))).toBe(true)
+        expect(gh.requestsMatching('DELETE', /\/labels\/lgtm$/)).toHaveLength(1)
+        expect(gh.requestsMatching('PUT', /./)).toEqual([])
+      })
+
+      it('schedule jobs: lgtm on a clean lgtm pr whose head has no binding: stripped, not merged; the cron path is covered too', async () => {
+        const sha = 'def0123456789abcdef0123456789abcdef01234'
+        gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
+        gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+          const page = new URL(req.path, gh.url).searchParams.get('page')
+          return { status: 200, body: page === '1' ? [openPr(['lgtm'], { number: 1, head: { sha } })] : [] }
+        })
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm'], { number: 1, mergeable: true, mergeable_state: 'clean', head: { sha } }) })
+        gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+        routeStrip(sha)
+
+        const result = await runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${sha.slice(0, 7)}`)
+        expectStripped(sha)
+        expectRequests(configReads(), [
+          `GET ${repo}`,
+          ownersProbe,
+          `GET ${repo}/pulls?state=open&page=1`,
+          pullRead,
+          `GET ${repo}/commits/${sha}/status?per_page=100`,
+          `DELETE ${repo}/issues/1/labels/lgtm`,
+          `POST ${repo}/statuses/${sha}`,
+          `GET ${repo}/issues/1/comments?per_page=100`,
+          `POST ${repo}/issues/1/comments`,
+          `GET ${repo}/pulls?state=open&page=2`,
+        ])
+      })
+
+      it('headline 2: the same pr with prow/lgtm success on its head merges, on the event and on the cron path', async () => {
+        gh.commitStatuses(repo, head, bound)
+        gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
+        gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+          const page = new URL(req.path, gh.url).searchParams.get('page')
+          return { status: 200, body: page === '1' ? [mergeablePr('clean')] : [] }
+        })
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+        const event = await runPullRequest(labeledLgtm({ login: 'some-app[bot]', type: 'Bot' }))
+        expect(event.status, event.stdout).toBe(0)
+        expect(event.stdout).toContain('merged pr #1')
+        expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, merge])
+
+        gh.requests.length = 0
+        const cron = await runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+        expect(cron.status, cron.stdout).toBe(0)
+        expect(cron.stdout).toContain('merged pr #1')
+        expectRequests(configReads(), [`GET ${repo}`, ownersProbe, `GET ${repo}/pulls?state=open&page=1`, pullRead, bindingRead, merge, `GET ${repo}/pulls?state=open&page=2`])
+        expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+      })
     })
 
     it('issue_comment /lgtm on a clean pr: labels, then squash-merges from tide.merge_method in the same run', async () => {
@@ -966,6 +1102,7 @@ describe('dist/index.js', () => {
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
       gh.route('GET', `${repo}/labels`, repoLabels('lgtm'))
       gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.commitStatuses(repo, 'headsha', bound)
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
       const result = await runBundle({
@@ -979,14 +1116,16 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('merged pr #1')
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['lgtm'] })
-      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'squash' })
-      // the command authorizes and labels; the sweep then loads the configuration (no needs-* rule: no label read), and tide reads the pr and merges
+      expect(gh.requestsMatching('POST', /\/statuses\/headsha$/)[0].body).toEqual({ state: 'success', context: 'prow/lgtm', description: 'lgtm by Codertocat at headsha', target_url: prCommentEvent('/lgtm').comment.html_url })
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'squash', sha: 'headsha' })
+      // the command authorizes, reads the configuration for the lgtm section, binds the head it already read, then labels;
+      // the sweep then finds the configuration memoized (no needs-* rule: no label read), and tide reads the pr, its binding, and merges
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
       const post = calls.indexOf(`POST ${repo}/issues/1/labels`)
-      expect(calls.slice(0, post).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`, labelsRead].sort())
       const reads = configReads({ repo: '.github/prow.yaml' })
-      expect(calls.slice(post + 1, post + 1 + reads.length).sort()).toEqual([...reads].sort())
-      expect(calls.slice(post + 1 + reads.length)).toEqual([ownersProbe, pullRead, merge])
+      expect(calls.slice(0, post - 2).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`, ...reads].sort())
+      expect(calls.slice(post - 2, post)).toEqual([`POST ${repo}/statuses/headsha`, labelsRead])
+      expect(calls.slice(post + 1)).toEqual([ownersProbe, pullRead, `GET ${repo}/commits/headsha/status?per_page=100`, merge])
     })
 
     it('issue_comment /kind cleanup on a pr carrying needs-kind: labels, then clears needs-kind in the same run', async () => {
@@ -1021,7 +1160,8 @@ describe('dist/index.js', () => {
       ])
     })
 
-    it('pull_request labeled lgtm on a repository with OWNERS files: approved is required too', async () => {
+    it('pull_request labeled lgtm on a repository with OWNERS files: approved is required too, and the gate stops before the binding read', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'o' }] } })
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
@@ -1032,10 +1172,11 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('skipping pr #1: missing approved')
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expectRequests(configReads(), [ownersProbe, pullRead])
+      expectRequests(configReads(), [bind, ownersProbe, pullRead])
     })
 
     it('pull_request labeled lgtm: tide.merge_method wins over the input', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_method: rebase\n') })
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
@@ -1043,11 +1184,26 @@ describe('dist/index.js', () => {
       const result = await runPullRequest(labeledLgtm())
 
       expect(result.status, result.stdout).toBe(0)
-      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'rebase' })
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'rebase', sha: head })
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, ownersProbe, pullRead, bindingRead, merge])
+    })
+
+    it('pull_request labeled lgtm with lgtm.bind_to_commit false: no status is written or read (legacy label-only merging)', async () => {
+      gh.commitStatuses(repo, head, [])
+      gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('lgtm:\n  bind_to_commit: false\n') })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runPullRequest(labeledLgtm())
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('merged pr #1')
       expectRequests(configReads({ repo: '.github/prow.yaml' }), [ownersProbe, pullRead, merge])
     })
 
     it.each(['blocked', 'behind', 'dirty', 'unstable'])('pull_request labeled lgtm: does not merge a %s pr', async (state) => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr(state) })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
@@ -1057,11 +1213,12 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain(`skipping pr #1: not mergeable (${state})`)
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expectRequests(configReads(), [ownersProbe, pullRead])
+      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead])
     })
 
     // GitHub answers unknown right after a push; the bundle really waits 1 s here before the second read
     it('pull_request labeled lgtm: re-reads an unknown state and merges once it is clean', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.routeSequence('GET', `${repo}/pulls/1`, [
         { status: 200, body: mergeablePr('unknown') },
         { status: 200, body: mergeablePr('clean') },
@@ -1072,10 +1229,11 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectRequests(configReads(), [ownersProbe, pullRead, pullRead, merge])
+      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, pullRead, merge])
     })
 
     it('pull_request labeled lgtm: a refused merge fails the run', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 405, body: { message: 'Pull Request is not mergeable' } })
 
@@ -1085,10 +1243,11 @@ describe('dist/index.js', () => {
       expect(result.errors.some(e => e.includes('could not merge pr #1: Pull Request is not mergeable'))).toBe(true)
       expect(result.errors.some(e => e.includes('error handling pull_request event: could not merge pull request(s) #1'))).toBe(true)
       // the refusal triggers a re-read to tell a concurrent merge from a real failure
-      expectRequests(configReads(), [ownersProbe, pullRead, merge, pullRead])
+      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, merge, pullRead])
     })
 
-    it('pull_request labeled lgtm: merge_on_events false leaves the pr to the cron', async () => {
+    it('pull_request labeled lgtm: merge_on_events false binds the label and leaves the merge to the cron', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`, { status: 200, body: yamlFile('tide:\n  merge_on_events: false\n') })
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
 
@@ -1096,10 +1255,11 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectRequests(configReads({ repo: '.github/prow.yaml' }), [])
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind])
     })
 
     it('pull_request_review submitted: evaluates the reviewed pr', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
@@ -1107,12 +1267,13 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge' })
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge', sha: head })
       // approve probes the tree first and finds no OWNERS files; tide reuses the answer
-      expectRequests([ownersProbe, ...configReads()], [pullRead, merge])
+      expectRequests([ownersProbe, ...configReads()], [pullRead, bindingRead, merge])
     })
 
     it('check_suite completed: evaluates the pull requests the payload names', async () => {
+      gh.commitStatuses(repo, head, bound)
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
@@ -1125,16 +1286,17 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectRequests(configReads(), [ownersProbe, pullRead, merge])
+      expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, merge])
     })
 
     it('check_suite completed without pull_requests: finds the pr by head sha', async () => {
       const sha = checkSuiteCompletedEvent.check_suite.head_sha
+      gh.commitStatuses(repo, sha, bound)
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
         const page = new URL(req.path, gh.url).searchParams.get('page')
         return { status: 200, body: page === '1' ? [{ number: 1, head: { sha } }, { number: 2, head: { sha: 'other' } }] : [] }
       })
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...mergeablePr('clean'), head: { sha } } })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
       const result = await runBundle({ eventName: 'check_suite', payload: checkSuiteCompletedEvent, inputs: token, apiUrl: gh.url })
@@ -1146,6 +1308,7 @@ describe('dist/index.js', () => {
         `GET ${repo}/pulls?state=open&per_page=100&page=1`,
         `GET ${repo}/pulls?state=open&per_page=100&page=2`,
         pullRead,
+        `GET ${repo}/commits/${sha}/status?per_page=100`,
         merge,
       ])
     })
@@ -1174,6 +1337,7 @@ describe('dist/index.js', () => {
       gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
       gh.route('PATCH', `${repo}/issues/comments/900`, { status: 200, body: {} })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+      gh.commitStatuses(repo, pullReqListPulls[0].head.sha, [{ context: 'prow/lgtm', state: 'success' }])
     }
 
     // one evaluation of a pull request touching sdk/ only: the OWNERS reads, the two blobs on its path, comments and reviews
@@ -1239,11 +1403,12 @@ describe('dist/index.js', () => {
       expect(patches).toHaveLength(1)
       expect((patches[0].body as { body: string }).body).toContain('This PR is **APPROVED**')
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect(calls.slice(-5)).toEqual([
+      expect(calls.slice(-6)).toEqual([
         labelsRead,
         `POST ${repo}/issues/1/labels`,
         `PATCH ${repo}/issues/comments/900`,
         `GET ${repo}/pulls/1`,
+        `GET ${repo}/commits/${pullReqListPulls[0].head.sha}/status?per_page=100`,
         `PUT ${repo}/pulls/1/merge`,
       ])
       expect(gh.requestsMatching('GET', /\/git\/trees\/master/)).toHaveLength(1)
@@ -1276,26 +1441,32 @@ describe('dist/index.js', () => {
     it('pull_request_review on a repository without OWNERS files: only the tree probe and tide', async () => {
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), number: 1, mergeable: true, mergeable_state: 'clean' } })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+      gh.commitStatuses(repo, pullReqListPulls[0].head.sha, [{ context: 'prow/lgtm', state: 'success' }])
 
       const result = await runBundle({ eventName: 'pull_request_review', payload: pullReqReviewSubmittedEvent, inputs: token, apiUrl: gh.url })
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       // approve probes the tree before tide reads the configuration
-      expectRequests([ownersProbe, ...configReads()], [`GET ${repo}/pulls/1`, `PUT ${repo}/pulls/1/merge`])
+      expectRequests([ownersProbe, ...configReads()], [`GET ${repo}/pulls/1`, `GET ${repo}/commits/${pullReqListPulls[0].head.sha}/status?per_page=100`, `PUT ${repo}/pulls/1/merge`])
     })
   })
 
   describe('schedule lgtm job', () => {
     // a bare schedule payload names no default branch, so the gate reads the repository before probing its tree
     const gateReads = [`GET ${repo}`, ownersProbe]
+    const head = pullReqListPulls[0].head.sha
+    // a listed pr that passes the gate is re-read through the shared merge path: its mergeability, then its lgtm binding
+    const evaluation = [`GET ${repo}/pulls/2`, `GET ${repo}/commits/${head}/status?per_page=100`]
 
-    function routePulls(pr: unknown, merge: { status: number, body: unknown } = { status: 200, body: { merged: true } }) {
+    function routePulls(pr: Record<string, unknown>, merge: { status: number, body: unknown } = { status: 200, body: { merged: true } }, state = 'clean') {
       gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
         const page = new URL(req.path, gh.url).searchParams.get('page')
         return { status: 200, body: page === '1' ? [pr] : [] }
       })
+      gh.route('GET', `${repo}/pulls/2`, { status: 200, body: { ...pr, mergeable: true, mergeable_state: state } })
+      gh.commitStatuses(repo, head, [{ context: 'prow/lgtm', state: 'success' }])
       gh.route('PUT', `${repo}/pulls/2/merge`, merge)
     }
 
@@ -1318,10 +1489,11 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
       expect(merges).toHaveLength(1)
-      expect(merges[0].body).toEqual({ merge_method: 'squash' })
+      expect(merges[0].body).toEqual({ merge_method: 'squash', sha: head })
       expectRequests(configReads(), [
         ...gateReads,
         `GET ${repo}/pulls?state=open&page=1`,
+        ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
@@ -1337,10 +1509,11 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
       expect(merges).toHaveLength(1)
-      expect(merges[0].body).toEqual({ merge_method: 'rebase' })
+      expect(merges[0].body).toEqual({ merge_method: 'rebase', sha: head })
       expectRequests(configReads({ repo: '.github/prow.yaml' }), [
         ...gateReads,
         `GET ${repo}/pulls?state=open&page=1`,
+        ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
@@ -1386,12 +1559,139 @@ describe('dist/index.js', () => {
       expect(result.errors.some(e => e.includes('could not merge pr #2'))).toBe(true)
       expect(result.errors.some(e => e.includes('1 pull request(s) could not be merged: #2 (Pull Request is not mergeable)'))).toBe(true)
       expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
+      // the refusal triggers a re-read to tell a concurrent merge from a real failure
       expectRequests(configReads(), [
         ...gateReads,
         `GET ${repo}/pulls?state=open&page=1`,
+        ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
+        `GET ${repo}/pulls/2`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
+    })
+
+    it.each(['blocked', 'unstable'])('skips a %s pr instead of sending a merge GitHub would refuse', async (state) => {
+      routePulls(openPr(['lgtm']), undefined, state)
+
+      const result = await runCron()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`skipping pr #2: not mergeable (${state})`)
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+    })
+  })
+
+  describe('schedule sweep job', () => {
+    const listPage = (page: number) => `GET ${repo}/pulls?state=open&sort=updated&direction=desc&per_page=100&page=${page}`
+    const bound = [{ context: 'prow/lgtm', state: 'success' }]
+
+    function runSweep() {
+      return runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'sweep' }, apiUrl: gh.url })
+    }
+
+    function forkPr(number: number, labels: string[], overrides: Record<string, unknown> = {}) {
+      const stamp = new Date().toISOString()
+      return openPr(labels, {
+        number,
+        created_at: stamp,
+        updated_at: stamp,
+        requested_reviewers: [],
+        assignees: [],
+        draft: false,
+        mergeable: true,
+        mergeable_state: 'clean',
+        user: { login: 'dave' },
+        head: { sha: `sha${number}`, repo: { full_name: 'dave/Hello-World' } },
+        base: { sha: 'basesha' },
+        ...overrides,
+      })
+    }
+
+    function routeList(prs: unknown[]) {
+      gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
+      gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+        const page = new URL(req.path, gh.url).searchParams.get('page')
+        return { status: 200, body: page === '1' ? prs : [] }
+      })
+    }
+
+    it('on a repository without OWNERS files: a recently updated fork pr with a bound lgtm is merged, one updated long ago is not read', async () => {
+      const fresh = forkPr(1, ['lgtm'])
+      const old = forkPr(2, ['lgtm'], { updated_at: '2011-01-26T19:01:12Z' })
+      routeList([fresh, old])
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: fresh })
+      gh.commitStatuses(repo, 'sha1', bound)
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('sweep: 1 candidate updated since')
+      expect(result.stdout).toContain('sweep: #1 merged')
+      expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge', sha: 'sha1' })
+      // the configuration, the window's page, then the OWNERS probe once; per candidate: the pr, its binding, the merge
+      expectRequests(configReads(), [
+        listPage(1),
+        `GET ${repo}`,
+        ownersProbe,
+        `GET ${repo}/pulls/1`,
+        `GET ${repo}/commits/sha1/status?per_page=100`,
+        `PUT ${repo}/pulls/1/merge`,
+      ])
+    })
+
+    it('on a repository with OWNERS files: a new fork pr gets needs-kind, the OWNERS labels, reviewers and the approval notifier', async () => {
+      const ownersFiles: Record<string, string> = { 'OWNERS': 'approvers:\n- alice\n', 'sdk/OWNERS': 'reviewers:\n- bob\n- carol\nlabels:\n- area/sdk\n' }
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', {
+        status: 200,
+        body: yamlFile('require_matching_label:\n  - regexp: ^kind/\n    missing_label: needs-kind\n    prs: true\n'),
+      })
+      const pr = forkPr(1, [])
+      routeList([pr])
+      gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })) } })
+      routeOwners(ownersFiles, ['sdk/x.go'], pr)
+      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
+      gh.route('GET', `${repo}/labels`, repoLabels('needs-kind', 'area/sdk', 'approved', 'lgtm'))
+      gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+      gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('sweep: #1 evaluated')
+      expect(result.stdout).toContain('skipping pr #1: missing lgtm')
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['needs-kind'] }, { labels: ['area/sdk'] }])
+      const reviewers = gh.requestsMatching('POST', /requested_reviewers$/)
+      expect(reviewers).toHaveLength(1)
+      expect((reviewers[0].body as { reviewers: string[] }).reviewers).toHaveLength(2)
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect((comments[0].body as { body: string }).body).toContain('[APPROVALNOTIFIER] This PR is **NOT APPROVED**')
+      expect(gh.requestsMatching('PUT', /./)).toEqual([])
+    })
+
+    it('one pull request failing does not stop the next; the run fails listing it', async () => {
+      const one = forkPr(1, ['lgtm'])
+      const two = forkPr(2, ['lgtm'])
+      routeList([one, two])
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: one })
+      gh.route('GET', `${repo}/pulls/2`, { status: 200, body: two })
+      gh.commitStatuses(repo, 'sha1', bound)
+      gh.commitStatuses(repo, 'sha2', bound)
+      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 405, body: { message: 'Pull Request is not mergeable' } })
+      gh.route('PUT', `${repo}/pulls/2/merge`, { status: 200, body: { merged: true } })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('sweep: 1 pull request(s) failed: #1 (tide: Pull Request is not mergeable)'))).toBe(true)
+      expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
     })
   })
 

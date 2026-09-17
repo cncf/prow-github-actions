@@ -19,7 +19,7 @@ on:
         required: false
         default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels
       jobs:
-        description: The jobs to run on schedule, workflow_dispatch, push and pull_request; 'lgtm' merges on the schedule and removes lgtm on new commits, 'label-sync' creates the labels prow.yaml describes.
+        description: The jobs to run on schedule, workflow_dispatch, push and pull_request; 'lgtm' merges on the schedule and removes lgtm on new commits, 'sweep' evaluates the pull requests updated recently (for fork pull requests under pull_request), 'label-sync' creates the labels prow.yaml describes.
         type: string
         required: false
         default: lgtm
@@ -50,11 +50,13 @@ jobs:
   prow:
     runs-on: ubuntu-latest
     # everything the action can need across all events: tide merges (contents: write),
-    # labels, comments, assignees and reviews on issues and pull requests
+    # labels, comments, assignees and reviews on issues and pull requests, and the
+    # prow/lgtm commit status that binds lgtm to the reviewed commit (statuses: write)
     permissions:
       contents: write
       issues: write
       pull-requests: write
+      statuses: write
     steps:
       # job.workflow_sha is the commit of this workflow file (the reusable one, not the
       # caller's). It is empty on GitHub Enterprise Server, where actions/checkout would
