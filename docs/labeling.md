@@ -139,6 +139,19 @@ Command | Adds | `/remove-` form removes
 Removal matches label names case-insensitively, like the prefixed label
 commands: `/remove-help` removes a label spelled `Help Wanted` as it appears on the issue.
 
+## Built-in labels
+
+The labels the action's own commands apply need no configuration and are created by the
+[`label-sync` job](./cron-jobs.md#label-sync) with kubernetes/test-infra's colors:
+
+Label | Applied by | Meaning
+--- | --- | ---
+`lgtm` | `/lgtm` | ready to merge, [bound to the reviewed commit](./automatic-merging.md#lgtm-is-bound-to-a-commit)
+`approved` | the [approve plugin](./commands.md#approve) | every changed file is covered by an approver
+`do-not-merge/hold` (or `hold.label`), legacy `hold` | `/hold` | blocks the merge
+`help wanted`, `good first issue` | `/help`, `/good-first-issue` | see above
+`ok-to-test` | `/ok-to-test` | a maintainer trusts the pull request: its GitHub Actions runs held for approval are approved, now and on every later push ([trigger](./commands.md#trigger)). Remove it by hand to stop that
+
 ## Removing labels
 
 Every label command has a `/remove-` form that takes the same values and only

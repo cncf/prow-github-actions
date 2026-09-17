@@ -58,6 +58,7 @@ const complete: RepoLabel[] = [
   { name: 'lifecycle/frozen', color: 'd3e2f0', description: 'Indicates that an issue or PR should not be auto-closed due to staleness.' },
   { name: 'lifecycle/rotten', color: '604460', description: 'Denotes an issue or PR that has aged beyond stale and will be auto-closed.' },
   { name: 'lifecycle/stale', color: '795548', description: 'Denotes an issue or PR has remained open with no activity and has become stale.' },
+  { name: 'ok-to-test', color: '15dd18', description: 'Indicates a non-member PR verified by an org member that is safe to test.' },
   { name: 'stage/alpha', color: 'cccccc' },
   { name: 'stage/beta', color: 'cccccc' },
   { name: 'stage/stable', color: 'cccccc' },

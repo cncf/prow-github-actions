@@ -31,6 +31,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 # One run per comment (commands are never collapsed); per event+action for everything else,
 # so a pending `synchronize` run can only be superseded by a newer `synchronize` run.

@@ -4,8 +4,8 @@ You have a GitHub organization (or one repository) and you want the way
 kubernetes/kubernetes *interacts with people*: `/lgtm` and `/approve` chat-ops, OWNERS-driven
 review flow, label families and `needs-*` rules, and pull requests that merge themselves once
 they pass review. This guide is the one path to that. It covers Prow's **repository
-interactions** only; Prow's CI side (`/test`, `/retest`, ProwJobs) is out of scope — CI stays
-in your own workflows. Every step links to the reference pages; [installing](./installing.md)
+interactions** only; Prow's CI side (ProwJobs) is out of scope — CI stays in your own workflows,
+though `/retest` and `/test` re-run their GitHub Actions runs. Every step links to the reference pages; [installing](./installing.md)
 is the reference for the mechanics (inputs, secrets, upgrading, the direct action form).
 
 ## What you get, and what you don't
@@ -34,7 +34,8 @@ code on `main` does today.
 | `welcome` plugin | ✗ | |
 | `size` plugin | ✗ | Use [`actions/labeler`](https://github.com/actions/labeler) or similar |
 | `wip` plugin | ✗ | No `WIP` title check; a **draft** PR never merges (`mergeable_state` `draft` is skipped) and blunderbuss waits for `ready_for_review` |
-| `/test`, `/retest`, `/override`, `/skip` | ✗ | CI is your workflow's job, not the bot's |
+| `trigger` plugin: `/retest`, `/test all`, `/test <workflow>`, `/test ?`, `/ok-to-test` | ✓ | GitHub Actions runs only: re-runs the repository's own workflow runs on the head commit and approves the runs GitHub holds for a first-time contributor's fork; the `ok-to-test` label keeps approving on push and in the sweep. Other CI systems are not touched. Needs `actions: write`. [commands](./commands.md#trigger) |
+| `/override`, `/skip` | ✗ | |
 | `cherrypicker` (`/cherry-pick`) | ✗ | |
 | `OWNERS_ALIASES` | ✗ | Not read |
 | OWNERS `filters` | ✗ | Accepted but ignored (debug-logged) |
@@ -115,6 +116,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 # One run per comment (commands are never collapsed); per event+action for everything else,
 # so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
@@ -216,6 +218,8 @@ lines.
 | `/lgtm` as the PR author | refused with the comment "you cannot LGTM your own PR."; the run is marked failed |
 | `/approve` and `/lgtm` on **two lines** of one comment from a second account that is an OWNERS reviewer/approver | a green `prow/lgtm` check on the head, `lgtm` applied, `approved` once coverage is complete, merged seconds later (we observed 3 s) |
 | push a commit to the PR, then re-run *Actions → Prow* on `schedule` or wait for the next check suite | `lgtm` removed with the comment "`lgtm` is not bound to the current head commit"; nothing merges until a new `/lgtm` |
+| `/ok-to-test` from a maintainer on a first-time contributor's fork PR | the held workflow runs start, `ok-to-test` applied, a 🚀 on the comment; the next push starts its runs without a click |
+| `/retest` on a PR with a failed workflow run | a 🚀 reaction on the comment and the failed jobs of that run re-running under *Actions*; the Prow run itself is never re-run |
 | `/approve /lgtm` on **one line** | nothing beyond `/approve` with the argument `/lgtm`, which is ignored: a command must start a line ([commands](./commands.md#command-syntax)) |
 
 ## Rulesets, tokens and other day-one surprises

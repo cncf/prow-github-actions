@@ -23,6 +23,7 @@ import { meow } from './meow'
 import { milestone } from './milestone'
 import { reopen } from './reopen'
 import { retitle } from './retitle'
+import { okToTest, retest, test } from './trigger'
 import { unassign } from './unassign'
 import { uncc } from './uncc'
 
@@ -44,6 +45,9 @@ const handlers: Record<string, (context: Context) => Promise<void>> = {
   '/meow': context => meow(context),
   '/check-required-labels': context => checkRequiredLabels(context),
   '/auto-cc': context => autoCc(context),
+  '/retest': context => retest(context),
+  '/test': context => test(context),
+  '/ok-to-test': context => okToTest(context),
 }
 
 // Prow-style spellings that are handled by the canonical command's module
@@ -66,7 +70,7 @@ function isDynamicLabelCommand(command: string): boolean {
 }
 
 // only a command that may have written a label needs the post-command sweep; the rest stay free of extra calls
-const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove'])
+const labelWritingHandlers = new Set(['/lgtm', '/approve', '/hold', '/remove', '/ok-to-test'])
 
 function changesLabels(command: string): boolean {
   return labelWritingHandlers.has(command)

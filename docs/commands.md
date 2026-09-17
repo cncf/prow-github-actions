@@ -33,6 +33,11 @@ Commands | Policy | Description
 `/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 `/check-required-labels` | anyone | re-evaluates every [`require_matching_label`](./configuration.md#require_matching_label) rule on the open issue / PR at once: adds the missing `needs-*` labels, removes the satisfied ones. No `/remove-` form
+`/retest` | same as `/lgtm`, PRs only | re-runs the failed jobs of every GitHub Actions workflow run on the head commit that ended in `failure`, `cancelled` or `timed_out`; runs in progress are left alone. Reacts 🚀 on the comment; comments only when nothing failed. Needs `actions: write`. [trigger](#trigger)
+`/test all` | same as `/lgtm`, PRs only | re-runs every completed GitHub Actions workflow run on the head commit, whatever its conclusion. [trigger](#trigger)
+`/test <workflow>` | same as `/lgtm`, PRs only | re-runs the completed run(s) whose workflow name or file matches (`ci`, `CI`, `ci.yml`; case-insensitive); several `/test` lines are unioned. No match: comments the list of runs
+`/test ?`, `/test` | same as `/lgtm`, PRs only | comments a `workflow` / `status` / `conclusion` table of the runs on the head commit
+`/ok-to-test` | same as `/lgtm`, **not the PR author**, PRs only | approves the GitHub Actions workflow runs waiting for approval on the head commit (a first-time contributor's fork) and adds the `ok-to-test` label; while the label stays, pending runs are approved again on every push and by the [sweep](./cron-jobs.md#sweep). Needs `actions: write`. [trigger](#trigger)
 `/auto-cc` | anyone, PRs only | runs [blunderbuss](./configuration.md#blunderbuss): requests review from `request_count` [OWNERS](#owners) reviewers of the changed files, ignoring `ignore_drafts` and `ignore_authors`. No arguments, no `/remove-` form
 
 Label Commands | Policy | Description
@@ -65,7 +70,7 @@ Label Commands | Policy | Description
 `/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
-Every label-writing command that ran (`/lgtm`, `/approve`, `/hold`, `/remove` and the label commands below) is followed by a re-check of the [`require_matching_label`](./configuration.md#require_matching_label) rules (`/kind cleanup` clears `needs-kind` in the same run) and, on an open PR, by the merge gate; see [events](./events.md#the-bots-writes-fire-no-events) for why.
+Every label-writing command that ran (`/lgtm`, `/approve`, `/hold`, `/remove`, `/ok-to-test` and the label commands below) is followed by a re-check of the [`require_matching_label`](./configuration.md#require_matching_label) rules (`/kind cleanup` clears `needs-kind` in the same run) and, on an open PR, by the merge gate; see [events](./events.md#the-bots-writes-fire-no-events) for why.
 
 Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved`, `do-not-merge/*` and a configured `hold.label` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 
@@ -75,7 +80,7 @@ Failure behaviour differs per command:
 
 - `/close`, `/reopen` and `/retitle` silently do nothing.
 - `/lock`, `/remove` and `/milestone` fail the run.
-- `/lgtm` and `/approve` reply with a comment and fail the run.
+- `/lgtm`, `/approve`, `/retest`, `/test` and `/ok-to-test` reply with a comment and fail the run.
 
 ## `/lgtm` and the reviewed commit
 
@@ -88,6 +93,51 @@ head pushed after the `/lgtm` has none, so the label is stripped with one explan
 instead of merging. `/lgtm cancel` sets the status to `pending`. On an issue `/lgtm` only
 labels. Details, the configuration flag and the upgrade note:
 [automatic merging](./automatic-merging.md#lgtm-is-bound-to-a-commit).
+
+## trigger
+
+Modelled on Prow's [`trigger`](https://github.com/kubernetes-sigs/prow/tree/main/pkg/plugins/trigger)
+plugin, for the repository's own **GitHub Actions workflow runs**. Checks from other CI systems
+are neither listed nor re-run.
+
+Command | Does | Runs it acts on
+--- | --- | ---
+`/retest` | `POST .../runs/{id}/rerun-failed-jobs` | completed runs with conclusion `failure`, `cancelled` or `timed_out`
+`/test all` | `POST .../runs/{id}/rerun` | every completed run
+`/test <workflow>` | `POST .../runs/{id}/rerun` | completed runs whose `name` or workflow file basename matches, case-insensitively
+`/test ?`, `/test` | a comment | none; lists `workflow`, `status`, `conclusion`
+`/ok-to-test` | `POST .../runs/{id}/approve`, then the `ok-to-test` label | runs with `status` or `conclusion` `action_required` (awaiting approval)
+
+- **Who may**: whoever may `/lgtm` (an OWNERS reviewer or approver of a changed file, otherwise an org
+  member or collaborator). For `/retest` and `/test` the pull request author is not excluded: an
+  org-member author may retest their own PR. `/ok-to-test` refuses the author (`you cannot approve the
+  workflow runs of your own pull request`): it is the trust decision. Refusals reply with a comment and
+  fail the run, like `/lgtm`.
+- **What counts as a run**: every workflow run on the pull request's **head commit**
+  (`GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>`), **except the workflow this very command
+  runs in** (the run whose name is `GITHUB_WORKFLOW`, the caller's workflow): re-running it would re-run
+  the command.
+- **Feedback**: on success a single 🚀 reaction on the triggering comment, no comment. A comment is
+  posted only when nothing happened: `No failed GitHub Actions workflow runs on <sha7>: N in progress,
+  M successful. Checks from other CI systems cannot be re-run here.`, or `... are already being re-run.`
+  when every candidate answered 409 (not completed, or already re-running; those are skipped).
+- **`ok-to-test` is the trust marker.** GitHub holds the workflow runs of a first-time contributor's public
+  fork until a maintainer approves them. `/ok-to-test` approves the ones waiting on the head, then applies
+  the `ok-to-test` label ([built-in](./labeling.md#built-in-labels), created by `label-sync`; it must
+  exist). While the pull request carries the label, the runs waiting on every later head are approved
+  too: by the `pull_request` `synchronize`/`reopened` handler when the token can write (`pull_request_target`,
+  or a same-repository PR) and by the [`sweep`](./cron-jobs.md#sweep) otherwise ([events](./events.md#which-events-each-feature-needs)).
+  Removing the label by hand stops the auto-approval; nothing re-adds it. Nothing pending on the head
+  still earns the rocket when the label was just added; with the label already present it comments
+  `No workflow runs waiting for approval on <sha7>.` instead. The post-command
+  [`needs-*` re-check and merge gate](./events.md#the-bots-writes-fire-no-events) follow, as after
+  any label write.
+- **Permissions**: the run endpoints need **`actions: write`** (the templates and the reusable workflow
+  grant it). A 403 fails the run with `cannot re-run workflows: grant actions: write to the workflow` (`cannot approve
+  workflow runs: ...` for `/ok-to-test`).
+  The reaction needs `issues: write` / `pull-requests: write`; a failed reaction is only a warning.
+- On an issue every trigger command replies `/retest only applies to pull requests.` and does nothing.
+- `/override`, `/skip` and `/retest-required` are not supported.
 
 ## Enabling `/meow`
 

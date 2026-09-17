@@ -4,6 +4,7 @@ import type { EventHandler } from '../utils/events'
 import * as core from '@actions/core'
 
 import * as github from '@actions/github'
+import { okToTestOnPullRequest } from '../issueComment/trigger'
 import { approveOnPullRequest } from '../plugins/approve'
 import { blunderbuss } from '../plugins/blunderbuss'
 import { lgtmOnPullRequest } from '../plugins/lgtmBinding'
@@ -13,8 +14,8 @@ import { tideOnPullRequest } from '../plugins/tide'
 import { runEventHandlers, skipReadOnlyForkRun } from '../utils/events'
 import { onPrLgtm } from './onPrLgtm'
 
-/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them */
-export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, tideOnPullRequest]
+/** handlers that run on every `pull_request` / `pull_request_target` event, in this order, next to the `jobs` input; lgtm binds a hand-applied label and approve applies its label before tide reads them; ok-to-test approves the pending runs of a trusted pull request */
+export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, okToTestOnPullRequest, tideOnPullRequest]
 
 /**
  * This method handles any pull-request configuration for configured workflows:

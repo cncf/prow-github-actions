@@ -26,6 +26,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 # One run per comment (commands are never collapsed); per event+action for everything else,
 # so a pending `synchronize` run can only be superseded by a newer `synchronize` run.
@@ -40,7 +41,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
     uses: ./.github/workflows/prow.yml
     with:
-      prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc /meow /lifecycle /help /triage /check-required-labels
+      prow-commands: /assign /unassign /approve /retitle /area /kind /priority /label /remove /lgtm /close /reopen /lock /milestone /hold /cc /uncc /meow /lifecycle /help /triage /check-required-labels /retest /test /ok-to-test
 
   # fork pull requests (read-only token under pull_request) updated within sweep.lookback, plus the lgtm backstop
   sweep:

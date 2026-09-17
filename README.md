@@ -41,6 +41,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 concurrency:
   group: prow-${{ github.event_name }}-${{ github.event.action }}-${{ github.event.comment.id || github.event.pull_request.number || github.event.issue.number || github.run_id }}
@@ -58,7 +59,8 @@ jobs:
       jobs: label-sync
 ```
 
-With no configuration at all this gives you every built-in `/command`, reviewers from OWNERS
+With no configuration at all this gives you every built-in `/command` (`/retest` and `/test` re-run
+the pull request's GitHub Actions runs, `/ok-to-test` approves a first-time contributor's held runs), reviewers from OWNERS
 files, fork-safe automatic merging on `lgtm` (plus `approved` when the repository has
 [OWNERS files](./docs/commands.md#owners)) where `lgtm` is
 [bound to the reviewed commit](./docs/automatic-merging.md#lgtm-is-bound-to-a-commit) and never
@@ -88,6 +90,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
   contents: read
 
 jobs:
@@ -96,7 +99,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v3
         with:
-          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /meow
+          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 

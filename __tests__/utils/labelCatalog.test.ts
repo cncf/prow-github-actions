@@ -20,7 +20,7 @@ const registryDefaults = [
   'status/in-review',
 ]
 
-const actionManaged = ['approved', 'do-not-merge/hold', 'good first issue', 'help wanted', 'hold', 'lgtm']
+const actionManaged = ['approved', 'do-not-merge/hold', 'good first issue', 'help wanted', 'hold', 'lgtm', 'ok-to-test']
 
 function names(config: ProwConfig): string[] {
   return desiredLabels(config).map(label => label.name)

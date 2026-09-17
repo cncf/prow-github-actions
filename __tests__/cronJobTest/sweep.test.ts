@@ -389,6 +389,54 @@ describe('sweep on a repository with OWNERS files', () => {
   })
 })
 
+describe('sweep and the ok-to-test label', () => {
+  function serveRuns(runs: unknown[], approved: number[]) {
+    server.use(
+      http.get(`${repo}/actions/runs`, utils.mockResponse(200, { total_count: runs.length, workflow_runs: runs })),
+      http.post(`${repo}/actions/runs/:id/approve`, ({ params }) => {
+        approved.push(Number(params.id))
+        return new Response(null, { status: 201 })
+      }),
+    )
+  }
+
+  it('approves the pending runs on the head of a pull request carrying ok-to-test', async () => {
+    servePulls([{ number: 1, labels: ['ok-to-test'], head: 'forksha' }])
+    const approved: number[] = []
+    serveRuns([
+      { id: 8, name: 'CI', path: '.github/workflows/ci.yml', head_sha: 'forksha', status: 'action_required', conclusion: 'action_required' },
+      { id: 2, name: 'Docs', path: '.github/workflows/docs.yml', head_sha: 'forksha', status: 'completed', conclusion: 'success' },
+    ], approved)
+    const info = vi.spyOn(core, 'info')
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1], failures: [] })
+    expect(approved).toEqual([8])
+    expect(info).toHaveBeenCalledWith('trigger: #1 approved 1 run(s) on forksha')
+  })
+
+  it('makes no Actions call for a pull request without the label', async () => {
+    servePulls([{ number: 1 }])
+    const runs = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/actions/runs`, utils.mockResponse(200, { total_count: 0, workflow_runs: [] }, runs)))
+
+    await expect(sweep(context)).resolves.toMatchObject({ failures: [] })
+    await expect(runs.notCalled()).resolves.toBe('not called')
+  })
+
+  it('a refused approval is recorded under the ok-to-test step and the merge path still runs', async () => {
+    servePulls([{ number: 1, labels: ['ok-to-test', 'lgtm'] }])
+    const merge = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/actions/runs`, utils.mockResponse(200, { total_count: 1, workflow_runs: [{ id: 8, name: 'CI', path: 'ci.yml', status: 'action_required', conclusion: 'action_required' }] })),
+      http.post(`${repo}/actions/runs/:id/approve`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+      http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, merge)),
+    )
+
+    await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (ok-to-test: cannot approve workflow runs: grant `actions: write` to the workflow)')
+    await expect(merge.called()).resolves.toBe('called')
+  })
+})
+
 describe('handleCronJobs', () => {
   it('jobs: sweep lgtm runs both', async () => {
     servePulls([{ number: 1, labels: ['lgtm'] }])

@@ -2,6 +2,7 @@ import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { okToTestOnPullRequest } from '../../src/issueComment/trigger'
 import { approveOnPullRequest } from '../../src/plugins/approve'
 import { blunderbuss } from '../../src/plugins/blunderbuss'
 import { lgtmOnPullRequest } from '../../src/plugins/lgtmBinding'
@@ -28,8 +29,8 @@ beforeEach(() => {
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-it('registers require-matching-label, owners-label, blunderbuss, lgtm, approve and tide, in that order', () => {
-  expect(registeredHandlers).toEqual([requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, tideOnPullRequest])
+it('registers require-matching-label, owners-label, blunderbuss, lgtm, approve, ok-to-test and tide, in that order', () => {
+  expect(registeredHandlers).toEqual([requireMatchingLabel, ownersLabel, blunderbuss, lgtmOnPullRequest, approveOnPullRequest, okToTestOnPullRequest, tideOnPullRequest])
 })
 
 // the lgtm PR job only acts on new commits; the fixture is an `opened` event
@@ -194,4 +195,43 @@ it('fails the run when a registered pull_request handler rejects', async () => {
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
   await expect(handlePullReq(runContext)).resolves.toBeUndefined()
   expect(setFailed).toHaveBeenCalledWith('error handling pull_request event: plugin boom')
+})
+
+it.each(['synchronize', 'reopened'])('ok-to-test approves the pending runs of a labeled pull request on %s', async (action) => {
+  utils.setupActionsEnv('/assign')
+  const event = structuredClone(prOpenedEvent)
+  event.action = action
+  event.pull_request.labels.push({ name: 'ok-to-test' } as never)
+  pullRequestHandlers.push(okToTestOnPullRequest)
+  const approved: number[] = []
+  server.use(
+    http.get(`${utils.api}/repos/Codertocat/Hello-World/actions/runs`, ({ request }) => {
+      expect(new URL(request.url).searchParams.get('head_sha')).toBe('ec26c3e57ca3a959ca5aad62de7213c562f8c821')
+      return new Response(JSON.stringify({ total_count: 2, workflow_runs: [
+        { id: 8, name: 'CI', path: '.github/workflows/ci.yml', status: 'action_required', conclusion: 'action_required' },
+        { id: 2, name: 'Docs', path: '.github/workflows/docs.yml', status: 'completed', conclusion: 'success' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }),
+    http.post(`${utils.api}/repos/Codertocat/Hello-World/actions/runs/:id/approve`, ({ params }) => {
+      approved.push(Number(params.id))
+      return new Response(null, { status: 201 })
+    }),
+  )
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  await expect(handlePullReq(new utils.MockContext(event))).resolves.toBeUndefined()
+
+  expect(approved).toEqual([8])
+  expect(setFailed).not.toHaveBeenCalled()
+})
+
+it.each(['synchronize', 'opened', 'labeled'])('ok-to-test makes no Actions call without the label on %s', async (action) => {
+  utils.setupActionsEnv('/assign')
+  pullRequestHandlers.push(okToTestOnPullRequest)
+  const runs = new utils.ObserveRequest()
+  server.use(http.get(`${utils.api}/repos/Codertocat/Hello-World/actions/runs`, utils.mockResponse(200, { total_count: 0, workflow_runs: [] }, runs)))
+
+  await expect(handlePullReq(new utils.MockContext({ ...prOpenedEvent, action }))).resolves.toBeUndefined()
+
+  await expect(runs.notCalled()).resolves.toBe('not called')
 })

@@ -1,5 +1,6 @@
 import type { LabelValue, ProwConfig } from './config'
 
+import { okToTestLabel } from '../issueComment/trigger'
 import { legacyHoldLabel } from '../labels/hold'
 import { prefixedLabelCommands, sectionFor } from '../labels/prefixed'
 import { resolveHoldLabel } from './config'
@@ -16,6 +17,7 @@ export const builtinLabelDefaults: Record<string, Omit<LabelValue, 'name'>> = {
   'do-not-merge/hold': { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' },
   'help wanted': { color: '006b75', description: 'Denotes an issue that needs help from a contributor. Must meet "help wanted" guidelines.' },
   'good first issue': { color: '7057ff', description: 'Denotes an issue ready for a new contributor, according to the "help wanted" guidelines.' },
+  'ok-to-test': { color: '15dd18', description: 'Indicates a non-member PR verified by an org member that is safe to test.' },
   'lifecycle/frozen': { color: 'd3e2f0', description: 'Indicates that an issue or PR should not be auto-closed due to staleness.' },
   'lifecycle/stale': { color: '795548', description: 'Denotes an issue or PR has remained open with no activity and has become stale.' },
   'lifecycle/rotten': { color: '604460', description: 'Denotes an issue or PR that has aged beyond stale and will be auto-closed.' },
@@ -29,7 +31,7 @@ const needsLabelColor = 'ededed'
  * sections (prefixed `<key>/<value>`, the `/label` allowlist verbatim), the
  * built-in `/lifecycle`, `/stage` and `/status` values where the yaml has no
  * section, the labels the action's own commands apply (`hold.label` and
- * the legacy `hold`), and every `require_matching_label` missing label. Names are unique
+ * the legacy `hold`, `ok-to-test`), and every `require_matching_label` missing label. Names are unique
  * case-insensitively (first definition wins) and sorted.
  *
  * @param config - the merged prow configuration
@@ -52,7 +54,7 @@ export function desiredLabels(config: ProwConfig): LabelValue[] {
   }
 
   const holdLabels = [resolveHoldLabel(config.hold), legacyHoldLabel]
-  for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue']) {
+  for (const name of ['lgtm', 'approved', ...holdLabels, 'help wanted', 'good first issue', okToTestLabel]) {
     labels.push({ name })
   }
   for (const rule of config.require_matching_label) {
