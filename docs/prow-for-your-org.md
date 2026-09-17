@@ -17,7 +17,7 @@ code on `main` does today.
 | --- | --- | --- |
 | `approve` plugin: `/approve`, `/approve cancel`, `/approve no-issue` | ✓ | With OWNERS files: aggregated coverage approval, `approved` label, `[APPROVALNOTIFIER]` comment, no bot review. Without: membership check plus a bot `Approve` review. [commands](./commands.md#approve) |
 | `lgtm` plugin: `/lgtm`, `/lgtm cancel`, `/remove-lgtm` | ✓ | Refused for the PR author; bound to the reviewed commit with a `prow/lgtm` status and removed on push; never set by a GitHub review. [commands](./commands.md) |
-| `tide`: merge when the gate passes | ✓ | Event-driven plus a cron backstop; one merge path checks the gate, the `lgtm` binding (a stale `lgtm` never merges) and `mergeable_state`; `merge`, `squash` or `rebase`. [automatic merging](./automatic-merging.md) |
+| `tide`: merge when the gate passes | ✓ | Event-driven plus a cron backstop; one merge path checks the gate, the `lgtm` binding (a stale `lgtm` never merges) and `mergeable_state`; `merge`, `squash` or `rebase`. On a branch that requires a merge queue tide enqueues instead; GitHub's queue batches and merges ([merge queues](./automatic-merging.md#merge-queues)). [automatic merging](./automatic-merging.md) |
 | `blunderbuss`: reviewers requested on open | ✓ | `/auto-cc` reruns it on demand; drafts wait for `ready_for_review` by default. [configuration](./configuration.md#blunderbuss) |
 | `owners-label`: labels from OWNERS files | ✓ | Applies the **union** of `labels:` along the OWNERS walk (Prow: deepest file only). [labeling](./labeling.md#labels-from-owners-files) |
 | `require-matching-label`: `needs-*` labels | ✓ | `/check-required-labels` re-evaluates every rule; a human removing `needs-*` gets it re-added. [configuration](./configuration.md#require_matching_label) |
@@ -233,6 +233,7 @@ lines.
 | zizmor (`dangerous-triggers`) or a hash-pin org policy rejects `pull_request_target` | `pull_request` gives fork PRs a read-only token | use the [`pull_request` template](./installing.md#without-pull_request_target): fork PRs are handled by the scheduled `sweep` within minutes, comments stay instant |
 | Cron slots are delayed or dropped under GitHub load (observed: two slots dropped, one 16 min late) | merges land on events within seconds; the cron is only the backstop for missed events | keep the events subscribed; shorten the cron only if you accept the gap |
 | You want cron-only merging | — | set `tide.merge_on_events: false` ([automatic merging](./automatic-merging.md#merge_on_events)) |
+| The branch requires a merge queue | tide enqueues the PR instead of merging; the queue runs the required checks on a temporary branch, and a workflow not subscribed to `merge_group` never reports, so the entry is dropped and re-added forever | add `merge_group` next to `pull_request` in every workflow with a required check ([merge queues](./automatic-merging.md#merge-queues)) |
 
 ## How this differs from Prow
 

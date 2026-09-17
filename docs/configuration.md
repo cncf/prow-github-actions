@@ -91,6 +91,7 @@ tide:
   missing_labels: [do-not-merge/*, needs-rebase, hold]
   merge_method: merge
   merge_on_events: true
+  merge_queue: auto
 
 # the label /hold applies; this is the default
 hold:
@@ -266,10 +267,11 @@ Field | Default | Meaning
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match a label on the PR
 `merge_method` | the `merge-method` input, else `merge` | `merge`, `squash` or `rebase`; wins over the input
 `merge_on_events` | `true` | `false`: the `pull_request`, `pull_request_review` and `check_suite` handlers merge nothing; only the cron does ([event-driven merging](./automatic-merging.md#event-driven-merging))
+`merge_queue` | `auto` | `auto`: when the base branch requires a GitHub merge queue, a PR that passes the gate is enqueued (one GraphQL query, then `enqueuePullRequest`) instead of merged, and the bot's entry is dequeued when the gate breaks; `off`: never call GraphQL, always `PUT /merge` (a 405 on a queue branch) ([merge queues](./automatic-merging.md#merge-queues))
 
 Entries are label names compared case-insensitively; `*` matches any run of characters,
-`/` included. An empty name, an unknown `merge_method` or a non-boolean `merge_on_events`
-fails the run.
+`/` included. An empty name, an unknown `merge_method`, a non-boolean `merge_on_events` or a
+`merge_queue` other than `auto`/`off` fails the run.
 
 The `labels` default is decided per run: when `tide.labels` is not configured, one recursive
 listing of the default branch tree (`GET /git/trees/{default_branch}`, memoized for the run)

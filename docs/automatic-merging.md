@@ -13,6 +13,8 @@ event-driven | `issue_comment` (after a command), `pull_request`, `pull_request_
 Every path evaluates a pull request the same way, in this order: label gate → `lgtm` binding →
 `mergeable_state` (`clean` and `has_hooks` merge, everything else is skipped with the state as
 the reason). Only the first step is free: a PR that fails the gate costs one read and nothing more.
+On a branch that **requires a merge queue** the last step becomes "enqueue" and GitHub merges
+([merge queues](#merge-queues)).
 
 ## Event-driven merging
 
@@ -213,6 +215,95 @@ The companion `lgtm` PR job removes the `lgtm` label from a PR that gets updated
 `synchronize`; the [binding](#lgtm-is-bound-to-a-commit) makes the same guarantee without the
 event. See [PR jobs](./pr-jobs.md) for the full workflow.
 
+## Merge queues
+
+A branch protection rule or ruleset with **Require merge queue** refuses every direct merge:
+`PUT /pulls/{n}/merge` answers `405 Changes must be made through the merge queue.` Prow's tide
+*is* a merge queue; with GitHub's in place its job collapses to **decide eligibility, then
+enqueue**. The [merge gate](#the-merge-gate) plus the [`lgtm` binding](#lgtm-is-bound-to-a-commit)
+is the ticket into the queue; GitHub batches, re-tests against the up-to-date base and merges.
+
+```yaml
+tide:
+  merge_queue: auto # the default; off: never look, always PUT /merge
+```
+
+Step | Without a queue | With a required queue (`merge_queue: auto`)
+--- | --- | ---
+label gate, `lgtm` binding | unchanged | unchanged
+detect | — | one GraphQL query per gate-passing PR: `isMergeQueueEnabled`, `isInMergeQueue`, `mergeQueueEntry { state position enqueuer }`
+already queued | — | `skipping pr #<n>: in the merge queue (position P, STATE)`; no call
+`mergeable_state` | `clean`, `has_hooks` merge; the rest skip | only `dirty` (conflicts) and `draft` skip; `blocked`, `behind`, `unstable`, `unknown` after the retries are **left to the queue** (debug-logged)
+act | `PUT /pulls/{n}/merge` pinned to the head `sha` | `enqueuePullRequest(pullRequestId, expectedHeadOid: <the bound head>)`; logs `enqueued pr #<n> (position P)`
+outcome | `merged` | `enqueued`, a success everywhere `merged` is: events, the cron and the sweep summaries
+merge method | `tide.merge_method` | **the queue's** configured method; `tide.merge_method` and the `merge-method` input are ignored there (debug-logged once)
+
+`expectedHeadOid` is the same guarantee the REST `sha` gave: the commit the binding was verified
+on. A push between the check and the enqueue is refused by GitHub and logged as
+`skipping pr #<n>: head moved`; GitHub also removes a queued PR whose head moves afterwards.
+
+An enqueue GitHub refuses is classified by its message; the exact texts are not documented:
+
+Message says | Result | Log
+--- | --- | ---
+the head OID does not match | skipped | `skipping pr #<n>: head moved`
+already in the queue | skipped | `skipping pr #<n>: already in the merge queue`
+not mergeable / required checks | skipped | `skipping pr #<n>: not ready for the merge queue: <GitHub's message>`
+permission / resource not accessible | **failed** | `cannot add pr #<n> to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues)`
+anything else | **failed** | the raw message
+
+### Leaving the queue when the gate breaks
+
+An entry the **bot** put in the queue is removed when the PR stops passing the gate on an event:
+`/lgtm cancel`, `/remove-lgtm`, `/hold`, `/approve cancel`, a `CHANGES_REQUESTED` review that
+drops `approved`, a human removing a gate label, a stale `lgtm` being stripped. Each reaches the
+same evaluation in the same run; the skip reads `skipping pr #<n>: missing lgtm (dequeued)` and
+`dequeued pr #<n>: missing lgtm` is logged.
+
+Rule | Why
+--- | ---
+only the bot's own entry (`enqueuer` is `github-actions` or ends with `[bot]`) | a human who clicked *Merge when ready* did so deliberately; never fight them
+only on events, never on `schedule` | the cron and the sweep would otherwise cost one GraphQL query per open PR that fails the gate
+a refused dequeue is a warning | the label, not the queue, is the gate
+
+With a custom `token` the enqueuer is that user, so its entries look human to a run on another
+token; keep one token for the bot.
+
+### CI must subscribe to `merge_group`
+
+The queue tests a temporary branch, not the PR. GitHub: "You **must** use the `merge_group`
+event to trigger your GitHub Actions workflow when a pull request is added to a merge queue.
+[...] Otherwise, status checks will not be triggered when you add a pull request to a merge
+queue. The merge will fail as the required status check will not be reported."
+([Managing a merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)).
+Every workflow that reports a **required** check needs:
+
+```yaml
+on: [pull_request, merge_group]
+```
+
+Without it the queue stalls forever: tide enqueues, the entry waits for a check that never
+runs, GitHub removes it, the next event enqueues again.
+
+### Token
+
+The bot enqueues with `GITHUB_TOKEN` granted `contents: write` and `pull-requests: write` (the
+template already has both). If your queue refuses the bot with the permission message above,
+pass a `token` that can ([installing](./installing.md#inputs-and-secrets)). Whether every
+ruleset configuration lets `GITHUB_TOKEN` enqueue is being verified live; the message tells you.
+
+### `merge_queue: off`
+
+`off` restores the pre-queue behaviour byte for byte: no GraphQL call, `PUT /merge` always. On a
+queue-required branch that means the 405 above on every evaluation, forever, and the run fails
+each time; use it only where the GraphQL API is unreachable.
+
+### What is not handled
+
+The `pull_request` `enqueued` and `dequeued` activity types exist and are not handled: nothing
+needs them yet. `check_suite` for the queue's temporary branches names no pull request in its
+payload, so it evaluates nothing. Upgrading: nothing to do, the setting is additive.
+
 ## The merge gate
 
 The gate is Prow's [tide](https://docs.prow.k8s.io/docs/components/core/tide/) query,
@@ -231,6 +322,7 @@ Key | Default | Rule
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match any label on the PR
 `merge_method` | see below | `merge`, `squash` or `rebase`
 `merge_on_events` | `true` | `false` leaves merging to the cron; see [above](#merge_on_events)
+`merge_queue` | `auto` | `off` never enqueues; see [merge queues](#merge-queues)
 
 A configured list **replaces** the default list, it does not extend it: `missing_labels: [needs-rebase]`
 lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively; `*` matches any run of
