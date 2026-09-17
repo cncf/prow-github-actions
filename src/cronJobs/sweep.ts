@@ -11,7 +11,7 @@ import { blunderbussSettings, requestOwnersReviewers } from '../plugins/blunderb
 import { lgtmSettings } from '../plugins/lgtmBinding'
 import { applyOwnersLabels } from '../plugins/ownersLabel'
 import { enforceRequiredLabels } from '../plugins/requireMatchingLabel'
-import { evaluateMerge, loadTide } from '../plugins/tide'
+import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig, resolveSweepLookback } from '../utils/config'
 import { newOctokit } from '../utils/octokit'
 import { repoHasOwners } from '../utils/owners'
@@ -26,6 +26,8 @@ export interface SweepFailure {
 export interface SweepResult {
   candidates: number[]
   merged: number[]
+  /** handed to the base branch's merge queue */
+  enqueued: number[]
   failures: SweepFailure[]
 }
 
@@ -57,7 +59,7 @@ export async function sweep(context: Context = github.context, now: Date = new D
   const candidates = await recentlyUpdatedPulls(octokit, context, since)
   core.info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`)
 
-  const result: SweepResult = { candidates: candidates.map(pr => pr.number), merged: [], failures: [] }
+  const result: SweepResult = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] }
   if (candidates.length === 0) {
     return result
   }
@@ -72,8 +74,11 @@ export async function sweep(context: Context = github.context, now: Date = new D
 
   await forEachLimited(candidates, sweepConcurrency, async (pr) => {
     const outcome = await sweepPullRequest(octokit, context, pr, plugins)
-    if (outcome.merged) {
+    if (outcome.result === 'merged') {
       result.merged.push(pr.number)
+    }
+    else if (outcome.result === 'enqueued') {
+      result.enqueued.push(pr.number)
     }
     if (outcome.errors.length > 0) {
       result.failures.push({ number: pr.number, message: outcome.errors.join('; ') })
@@ -96,14 +101,14 @@ interface SweepPlugins {
 }
 
 interface PullOutcome {
-  merged: boolean
+  result: 'merged' | 'enqueued' | 'evaluated'
   errors: string[]
 }
 
 type Step = [name: string, run: () => Promise<void>]
 
 async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<PullOutcome> {
-  const outcome: PullOutcome = { merged: false, errors: [] }
+  const outcome: PullOutcome = { result: 'evaluated', errors: [] }
   const ownersSteps: Step[] = [
     ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
     ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
@@ -115,11 +120,11 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
     ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
     ['tide', async () => {
       const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm)
-      if (verdict.result === 'merged') {
-        outcome.merged = true
-      }
-      else if (verdict.result === 'failed') {
+      if (verdict.result === 'failed') {
         throw new Error(verdict.message)
+      }
+      if (successfulResults.has(verdict.result)) {
+        outcome.result = verdict.result as 'merged' | 'enqueued'
       }
     }],
   ]
@@ -133,7 +138,7 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
     }
   }
 
-  core.info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`)
+  core.info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`)
   return outcome
 }
 

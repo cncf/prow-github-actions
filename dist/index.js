@@ -40824,6 +40824,7 @@ function parseDuration(text, field = 'grace_period_duration') {
 
 
 const mergeMethods = ['merge', 'squash', 'rebase'];
+const mergeQueueModes = ['auto', 'off'];
 const colorPattern = /^[0-9a-f]{6}$/i;
 const defaultHoldLabel = 'do-not-merge/hold';
 const defaultTideLabels = ['lgtm'];
@@ -41138,11 +41139,15 @@ function normalizeTide(source, raw) {
     if (raw.merge_on_events !== undefined && typeof raw.merge_on_events !== 'boolean') {
         throw new Error(`${source}: tide.merge_on_events must be a boolean`);
     }
+    if (raw.merge_queue !== undefined && !mergeQueueModes.includes(raw.merge_queue)) {
+        throw new Error(`${source}: tide.merge_queue must be one of ${mergeQueueModes.join(', ')}`);
+    }
     return stripUndefined({
         labels: raw.labels,
         missing_labels: raw.missing_labels,
         merge_method: raw.merge_method,
         merge_on_events: raw.merge_on_events,
+        merge_queue: raw.merge_queue,
     });
 }
 function normalizeHold(source, raw) {
@@ -41259,7 +41264,7 @@ function mergeProwConfig(base, over) {
  * `missing_labels` the do-not-merge family, `needs-rebase` and `hold`. A
  * configured list replaces the default one, it does not extend it. The merge
  * method is `tide.merge_method`, else the `merge-method` action input, else
- * `merge`. `merge_on_events` defaults to true.
+ * `merge`. `merge_on_events` defaults to true, `merge_queue` to `auto`.
  *
  * @param tide - the merged tide section
  * @param inputMergeMethod - the `merge-method` action input, if any
@@ -41271,6 +41276,7 @@ function resolveTide(tide, inputMergeMethod = '', options = {}) {
         missing_labels: tide.missing_labels ?? defaultTideMissingLabels,
         merge_method: tide.merge_method ?? toMergeMethod(inputMergeMethod),
         merge_on_events: tide.merge_on_events ?? true,
+        merge_queue: tide.merge_queue ?? 'auto',
     };
 }
 function toMergeMethod(input) {
@@ -43209,6 +43215,146 @@ function meetsMergeGate(labels, tide) {
     return { ok: true };
 }
 
+;// CONCATENATED MODULE: ./lib/utils/mergeQueue.js
+
+const queueStateQuery = `query MergeQueueState($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      id
+      headRefOid
+      isMergeQueueEnabled
+      isInMergeQueue
+      mergeQueueEntry { state position enqueuer { login } }
+    }
+  }
+}`;
+const enqueueMutation = `mutation EnqueuePullRequest($pullRequestId: ID!, $expectedHeadOid: GitObjectID!) {
+  enqueuePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid }) {
+    mergeQueueEntry { state position }
+  }
+}`;
+const dequeueMutation = `mutation DequeuePullRequest($id: ID!) {
+  dequeuePullRequest(input: { id: $id }) {
+    mergeQueueEntry { state position }
+  }
+}`;
+let warnedUnavailable = false;
+function resetMergeQueueWarnings() {
+    warnedUnavailable = false;
+}
+/**
+ * queueState reads, in one GraphQL query, whether the pull request's base
+ * branch requires a merge queue and whether the pull request is in it. Any
+ * GraphQL failure (a GHES without the fields, a token that may not read the
+ * queue) is a warning, once per run, and `undefined`: the caller falls back
+ * to the REST merge so existing users are never broken.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param number - the pull request number
+ */
+async function queueState(octokit, context, number) {
+    let data;
+    try {
+        data = await octokit.graphql(queueStateQuery, { ...context.repo, number });
+    }
+    catch (e) {
+        if (!warnedUnavailable) {
+            warnedUnavailable = true;
+            warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`);
+        }
+        return undefined;
+    }
+    const pr = data.repository?.pullRequest;
+    if (pr == null) {
+        return undefined;
+    }
+    const entry = pr.mergeQueueEntry;
+    return {
+        pullRequestId: pr.id,
+        headOid: pr.headRefOid,
+        enabled: pr.isMergeQueueEnabled,
+        inQueue: pr.isInMergeQueue,
+        ...(entry === null ? {} : { entry: { state: entry.state, position: entry.position, ...(entry.enqueuer === null ? {} : { enqueuer: entry.enqueuer.login }) } }),
+    };
+}
+/**
+ * enqueue adds the pull request to its base branch's merge queue, pinned to
+ * `expectedHeadOid`: GitHub refuses when the head moved since. A refusal is
+ * returned classified by its message, never thrown.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param state - the queue state read moments ago
+ * @param expectedHeadOid - the head commit the enqueue must apply to
+ */
+async function enqueue(octokit, context, state, expectedHeadOid) {
+    try {
+        const data = await octokit.graphql(enqueueMutation, { pullRequestId: state.pullRequestId, expectedHeadOid });
+        const position = data.enqueuePullRequest?.mergeQueueEntry?.position;
+        return position === undefined ? { ok: true } : { ok: true, position };
+    }
+    catch (e) {
+        const message = errorMessage(e);
+        return { ok: false, message, kind: classify(message) };
+    }
+}
+/**
+ * dequeue removes the pull request from the merge queue. The mutation takes
+ * the pull request's node id, not the entry's. A refusal is a warning.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param state - the queue state read moments ago
+ * @param number - the pull request number, for the log
+ */
+async function dequeue(octokit, context, state, number) {
+    try {
+        await octokit.graphql(dequeueMutation, { id: state.pullRequestId });
+        return true;
+    }
+    catch (e) {
+        warning(`could not dequeue pr #${number}: ${errorMessage(e)}`);
+        return false;
+    }
+}
+const botLoginPattern = /^github-actions$|\[bot\]$/i;
+/**
+ * enqueuedByBot reports whether the queue entry was made by an automation
+ * (`github-actions` or any `[bot]`), which the gate may undo; a human who
+ * enqueued deliberately is never fought.
+ *
+ * @param entry - the merge queue entry, if any
+ */
+function enqueuedByBot(entry) {
+    return entry?.enqueuer !== undefined && botLoginPattern.test(entry.enqueuer);
+}
+function classify(message) {
+    const lower = message.toLowerCase();
+    if (/expected head|head oid|head_oid/.test(lower)) {
+        return 'head_moved';
+    }
+    if (lower.includes('already')) {
+        return 'already_queued';
+    }
+    if (/not mergeable|required|checks|not ready/.test(lower)) {
+        return 'not_ready';
+    }
+    if (/permission|resource not accessible|forbidden/.test(lower)) {
+        return 'forbidden';
+    }
+    return 'other';
+}
+function errorMessage(e) {
+    if (typeof e === 'object' && e !== null && 'errors' in e && Array.isArray(e.errors)) {
+        const messages = e.errors.map((error) => error.message).filter((m) => typeof m === 'string');
+        if (messages.length > 0) {
+            return messages.join('; ');
+        }
+    }
+    return e instanceof Error ? e.message : String(e);
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
 /**
  * Lists the numbers of the open pull requests whose head is the given commit,
@@ -43257,11 +43403,16 @@ function sleep(ms) {
 
 
 
+
+/** the verdicts that count as success: the pull request is merged, or handed to GitHub's merge queue */
+const successfulResults = new Set(['merged', 'enqueued']);
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
 // `unknown`, so poll with backoff (7 s in total) before giving up on this event
 const unknownRetryDelaysMs = [1000, 2000, 4000];
 // `has_hooks` is `clean` with a pending non-required pre-receive hook
 const mergeableStates = new Set(['clean', 'has_hooks']);
+// in a merge queue only conflicts and drafts are ours to refuse; required checks, `behind` and `unstable` are the queue's
+const queueRefusedStates = new Set(['dirty', 'draft']);
 // `synchronize` is left out on purpose: a push removes lgtm (the lgtm PR job) and must not merge
 const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_for_review', 'edited']);
 const reviewActions = new Set(['submitted', 'dismissed']);
@@ -43331,6 +43482,11 @@ async function mergeOnce(octokit, context, number, tide, sha) {
  * A refused merge is logged as an error and reported as `failed` with
  * GitHub's message; the caller decides whether that fails the run.
  *
+ * When the base branch requires a merge queue (`tide.merge_queue: auto`),
+ * the gate is the ticket: a pull request that passes is enqueued, pinned to
+ * the verified head, and the queue does the rest; one that stops passing
+ * while the bot's own entry waits is dequeued.
+ *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
@@ -43345,7 +43501,12 @@ async function evaluateMerge(octokit, context, number, tide, lgtm = defaultLgtmS
         reason = `lgtm not bound to ${shortSha(first.sha)}`;
     }
     if (reason !== undefined) {
-        return skip(number, reason);
+        const dequeued = await dequeueIfOurs(octokit, context, number, tide, reason);
+        return skip(number, dequeued ? `${reason} (dequeued)` : reason);
+    }
+    const queue = tide.merge_queue === 'auto' ? await queueState(octokit, context, number) : undefined;
+    if (queue?.enabled === true) {
+        return evaluateInQueue(octokit, context, number, tide, first, queue);
     }
     const pr = await fetchMergeability(octokit, context, number, {
         retryIf: candidate => blockedReason(candidate, tide) === undefined,
@@ -43373,6 +43534,75 @@ async function evaluateMerge(octokit, context, number, tide, lgtm = defaultLgtmS
     }
     error(`could not merge pr #${number}: ${outcome.message}`);
     return outcome;
+}
+let warnedMergeMethodIgnored = false;
+function resetTideWarnings() {
+    warnedMergeMethodIgnored = false;
+}
+async function evaluateInQueue(octokit, context, number, tide, first, queue) {
+    if (queue.inQueue) {
+        const entry = queue.entry;
+        return skip(number, entry === undefined ? 'in the merge queue' : `in the merge queue (position ${entry.position}, ${entry.state})`);
+    }
+    const pr = await fetchMergeability(octokit, context, number, {
+        retryIf: candidate => blockedReason(candidate, tide) === undefined,
+        initial: first,
+    });
+    const reason = blockedReason(pr, tide) ?? (queueRefusedStates.has(pr.state) ? `not mergeable (${pr.state})` : undefined);
+    if (reason !== undefined) {
+        return skip(number, reason);
+    }
+    if (pr.sha !== first.sha) {
+        return skip(number, 'head moved during evaluation');
+    }
+    if (!mergeableStates.has(pr.state)) {
+        core_debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`);
+    }
+    if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || getInput('merge-method', { required: false }) !== '')) {
+        warnedMergeMethodIgnored = true;
+        core_debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`);
+    }
+    // the gate is the ticket; the queue does the rest
+    const outcome = await enqueue(octokit, context, queue, first.sha);
+    if (outcome.ok) {
+        info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`);
+        return outcome.position === undefined ? { result: 'enqueued' } : { result: 'enqueued', position: outcome.position };
+    }
+    switch (outcome.kind) {
+        case 'head_moved':
+            return skip(number, 'head moved');
+        case 'already_queued':
+            return skip(number, 'already in the merge queue');
+        case 'not_ready':
+            return skip(number, `not ready for the merge queue: ${outcome.message}`);
+        case 'forbidden': {
+            const message = `cannot add pr #${number} to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues): ${outcome.message}`;
+            error(message);
+            return { result: 'failed', message };
+        }
+        default:
+            error(`could not enqueue pr #${number}: ${outcome.message}`);
+            return { result: 'failed', message: outcome.message };
+    }
+}
+// a scheduled run would cost one GraphQL query per open pull request, so the cron and the sweep never dequeue
+async function dequeueIfOurs(octokit, context, number, tide, reason) {
+    if (tide.merge_queue !== 'auto' || context.eventName === 'schedule') {
+        return false;
+    }
+    const queue = await queueState(octokit, context, number);
+    if (queue === undefined || !queue.inQueue) {
+        return false;
+    }
+    if (!enqueuedByBot(queue.entry)) {
+        core_debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`);
+        return false;
+    }
+    if (!(await dequeue(octokit, context, queue, number))) {
+        return false;
+    }
+    info(`dequeued pr #${number}: ${reason}`);
+    return true;
 }
 /**
  * tryMergePullRequest is evaluateMerge without the reason or message.
@@ -43639,14 +43869,15 @@ async function getOpenPrs(octokit, context = github_context, page) {
  * Evaluates a PR that passes the tide merge gate on its listed labels
  * through the shared merge path; a PR that does not is skipped with the
  * reason logged and costs no further call. A refused merge is recorded in
- * failures instead of aborting the run.
+ * failures instead of aborting the run. On a branch that requires a merge
+ * queue the PR is enqueued instead; that counts as done.
  *
  * @param pr - the PR to try and merge
  * @param octokit - a hydrated github api client
  * @param context - the github actions event context
  * @param policy - the resolved tide and lgtm configuration
  * @param failures - collects PRs whose merge the api refused
- * @returns whether the PR was merged
+ * @returns whether the PR was merged or enqueued
  */
 async function tryMergePr(pr, octokit, context = github_context, policy, failures) {
     const gate = meetsMergeGate(pr.labels.map(e => e.name), policy.tide);
@@ -43658,7 +43889,7 @@ async function tryMergePr(pr, octokit, context = github_context, policy, failure
     if (verdict.result === 'failed') {
         failures.push({ number: pr.number, message: verdict.message });
     }
-    return verdict.result === 'merged';
+    return successfulResults.has(verdict.result);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approve.js
@@ -44515,7 +44746,7 @@ async function sweep(context = github_context, now = new Date()) {
     const since = new Date(now.getTime() - lookbackMs);
     const candidates = await recentlyUpdatedPulls(octokit, context, since);
     info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`);
-    const result = { candidates: candidates.map(pr => pr.number), merged: [], failures: [] };
+    const result = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] };
     if (candidates.length === 0) {
         return result;
     }
@@ -44528,8 +44759,11 @@ async function sweep(context = github_context, now = new Date()) {
     };
     await forEachLimited(candidates, sweepConcurrency, async (pr) => {
         const outcome = await sweepPullRequest(octokit, context, pr, plugins);
-        if (outcome.merged) {
+        if (outcome.result === 'merged') {
             result.merged.push(pr.number);
+        }
+        else if (outcome.result === 'enqueued') {
+            result.enqueued.push(pr.number);
         }
         if (outcome.errors.length > 0) {
             result.failures.push({ number: pr.number, message: outcome.errors.join('; ') });
@@ -44542,7 +44776,7 @@ async function sweep(context = github_context, now = new Date()) {
     return result;
 }
 async function sweepPullRequest(octokit, context, pr, plugins) {
-    const outcome = { merged: false, errors: [] };
+    const outcome = { result: 'evaluated', errors: [] };
     const ownersSteps = [
         ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
         ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
@@ -44554,11 +44788,11 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
         ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
         ['tide', async () => {
                 const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm);
-                if (verdict.result === 'merged') {
-                    outcome.merged = true;
-                }
-                else if (verdict.result === 'failed') {
+                if (verdict.result === 'failed') {
                     throw new Error(verdict.message);
+                }
+                if (successfulResults.has(verdict.result)) {
+                    outcome.result = verdict.result;
                 }
             }],
     ];
@@ -44570,7 +44804,7 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
             outcome.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
-    info(`sweep: #${pr.number} ${outcome.merged ? 'merged' : 'evaluated'}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
+    info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
     return outcome;
 }
 async function approveIfTrusted(octokit, context, pr) {

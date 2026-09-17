@@ -853,6 +853,8 @@ reviewers:
         http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }] })),
         http.delete(`${repo}/issues/1/labels/lgtm`, utils.mockResponse(200, [], remove)),
         http.post(`${repo}/statuses/headsha`, utils.mockResponse(403, { message: 'Resource not accessible by integration' })),
+        // the cancel breaks the gate, so the post-command sweep asks the merge queue whether it holds the pr
+        utils.mergeQueueGraphql({ enabled: false }).handler,
       )
       const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
       const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
