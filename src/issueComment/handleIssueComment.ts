@@ -23,6 +23,7 @@ import { meow } from './meow'
 import { milestone } from './milestone'
 import { reopen } from './reopen'
 import { retitle } from './retitle'
+import { retest, test } from './trigger'
 import { unassign } from './unassign'
 import { uncc } from './uncc'
 
@@ -44,6 +45,8 @@ const handlers: Record<string, (context: Context) => Promise<void>> = {
   '/meow': context => meow(context),
   '/check-required-labels': context => checkRequiredLabels(context),
   '/auto-cc': context => autoCc(context),
+  '/retest': context => retest(context),
+  '/test': context => test(context),
 }
 
 // Prow-style spellings that are handled by the canonical command's module

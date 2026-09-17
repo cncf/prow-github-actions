@@ -120,6 +120,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
   contents: read
 
 jobs:
@@ -128,7 +129,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v3
         with:
-          prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc
+          prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc /retest /test
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 

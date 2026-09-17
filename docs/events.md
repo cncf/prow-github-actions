@@ -26,6 +26,7 @@ with `pull_request` in place of `pull_request_target` plus the `sweep` on `sched
 Feature | Events
 --- | ---
 [`/commands`](./commands.md) | `issue_comment` `[created]`
+[`/retest`, `/test`](./commands.md#trigger) | `issue_comment` `[created]`, with `actions: write`
 [`require_matching_label`](./configuration.md#require_matching_label) | `issues` and `pull_request` `[opened, reopened, labeled, unlabeled]`
 [`owners-label`](./labeling.md#labels-from-owners-files), [`blunderbuss`](./configuration.md#blunderbuss) | `pull_request` `[opened, reopened, synchronize, ready_for_review]`
 `lgtm` removed on new commits | `pull_request` `[synchronize]`
@@ -59,6 +60,7 @@ permissions:
   issues: write
   pull-requests: write
   statuses: write
+  actions: write
 
 jobs:
   execute:
@@ -112,7 +114,7 @@ Step | Does | Cost
 [`require_matching_label`](./configuration.md#require_matching_label) | every rule that applies, no grace period; removes a stale `needs-*`, adds one the command broke (`/remove-kind`) | nothing without rules; one labels read with rules
 [`tide`](./automatic-merging.md#event-driven-merging) | the merge gate on an open PR: `/lgtm`, `/approve`, `/unhold`, `/remove-*` merge in the same run | one PR read, plus one status read when the PR carries `lgtm` ([binding](./automatic-merging.md#lgtm-is-bound-to-a-commit)); nothing on an issue or a closed PR; off with [`merge_on_events: false`](./automatic-merging.md#merge_on_events)
 
-Commands that cannot write a label (`/assign`, `/cc`, `/close`, `/milestone`, `/check-required-labels`
+Commands that cannot write a label (`/assign`, `/cc`, `/close`, `/milestone`, `/retest`, `/test`, `/check-required-labels`
 on its own, ...) and comments without a configured command make no extra call at all. A
 failure in either step fails the run alongside the command's own error. Labels added by a human
 still fire `labeled`; the [cron](./cron-jobs.md) stays the backstop for events GitHub drops.

@@ -111,6 +111,12 @@ describe('the reusable workflow mirrors action.yml', () => {
     expect(defaults).not.toContain('/meow')
     expect((workflowCall.inputs.jobs as Mapping).default).toBe('lgtm')
   })
+
+  it('enables the trigger commands by default and asks for actions: write to serve them', () => {
+    const defaults = String((workflowCall.inputs['prow-commands'] as Mapping).default).split(/\s+/)
+    expect(defaults).toEqual(expect.arrayContaining(['/retest', '/test']))
+    expect(reusableJob.permissions).toMatchObject({ 'actions': 'write', 'statuses': 'write', 'contents': 'write', 'issues': 'write', 'pull-requests': 'write' })
+  })
 })
 
 function workflowFiles(dir: string): string[] {
@@ -177,6 +183,7 @@ describe.each([
     for (const [scope, level] of Object.entries(reusableJob.permissions!)) {
       expect(caller.permissions?.[scope], `${file}: permissions.${scope}`).toBe(level)
     }
+    expect(caller.permissions?.actions, `${file}: permissions.actions`).toBe('write')
   })
 
   it('never cancels a run in progress', () => {

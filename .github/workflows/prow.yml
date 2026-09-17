@@ -17,7 +17,7 @@ on:
         description: The /commands to enable on issue_comment; the default is every built-in command except /meow. Listing a dynamic /<key> command needs that labels section in prow.yaml.
         type: string
         required: false
-        default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels
+        default: /assign /unassign /cc /uncc /auto-cc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /check-required-labels /retest /test
       jobs:
         description: The jobs to run on schedule, workflow_dispatch, push and pull_request; 'lgtm' merges on the schedule and removes lgtm on new commits, 'sweep' evaluates the pull requests updated recently (for fork pull requests under pull_request), 'label-sync' creates the labels prow.yaml describes.
         type: string
@@ -51,12 +51,14 @@ jobs:
     runs-on: ubuntu-latest
     # everything the action can need across all events: tide merges (contents: write),
     # labels, comments, assignees and reviews on issues and pull requests, and the
-    # prow/lgtm commit status that binds lgtm to the reviewed commit (statuses: write)
+    # prow/lgtm commit status that binds lgtm to the reviewed commit (statuses: write), and
+    # the workflow runs /retest, /test and /ok-to-test re-run or approve (actions: write)
     permissions:
       contents: write
       issues: write
       pull-requests: write
       statuses: write
+      actions: write
     steps:
       # job.workflow_sha is the commit of this workflow file (the reusable one, not the
       # caller's). It is empty on GitHub Enterprise Server, where actions/checkout would

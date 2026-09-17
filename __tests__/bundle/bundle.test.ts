@@ -693,6 +693,50 @@ describe('dist/index.js', () => {
     })
   })
 
+  describe('issue_comment trigger commands on a pull request', () => {
+    const runsOnHead = {
+      total_count: 4,
+      workflow_runs: [
+        { id: 1, name: 'CI', path: '.github/workflows/ci.yml', head_sha: 'headsha', status: 'completed', conclusion: 'failure' },
+        { id: 2, name: 'Lint', path: '.github/workflows/lint.yml', head_sha: 'headsha', status: 'completed', conclusion: 'success' },
+        { id: 3, name: 'Prow', path: '.github/workflows/prow.yml', head_sha: 'headsha', status: 'in_progress', conclusion: null },
+        { id: 4, name: 'E2E', path: '.github/workflows/e2e.yml', head_sha: 'headsha', status: 'action_required', conclusion: 'action_required' },
+      ],
+    }
+
+    function routeTrigger() {
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/actions/runs`, { status: 200, body: runsOnHead })
+      gh.route('POST', /\/actions\/runs\/\d+\/rerun-failed-jobs$/, { status: 201 })
+      gh.route('POST', `${repo}/issues/comments/492700400/reactions`, { status: 201, body: { content: 'rocket' } })
+    }
+
+    const authReads = [...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`]
+    const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
+    const rocket = `POST ${repo}/issues/comments/492700400/reactions`
+
+    it('/retest re-runs the failed jobs of the failed run only and reacts with a rocket; no sweep follows', async () => {
+      routeTrigger()
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: prCommentEvent('/retest'),
+        inputs: { ...token, 'prow-commands': '/retest' },
+        apiUrl: gh.url,
+        env: { GITHUB_WORKFLOW: 'Prow' },
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+      expect(calls.slice(0, authReads.length).sort()).toEqual([...authReads].sort())
+      expect(calls.slice(authReads.length)).toEqual([runsRead, `POST ${repo}/actions/runs/1/rerun-failed-jobs`, rocket])
+      expect(gh.requestsMatching('POST', /\/reactions$/)[0].body).toEqual({ content: 'rocket' })
+    })
+  })
+
   it('issue_comment /remove fails the action when the api returns 500', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'foo' }] } })

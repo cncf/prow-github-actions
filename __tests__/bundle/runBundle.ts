@@ -12,6 +12,7 @@ export interface RunBundleOptions {
   inputs?: Record<string, string>
   apiUrl: string
   repository?: string
+  env?: Record<string, string>
 }
 
 export interface RunBundleResult {
@@ -29,6 +30,7 @@ export async function runBundle(options: RunBundleOptions): Promise<RunBundleRes
     inputs = {},
     apiUrl,
     repository = 'Codertocat/Hello-World',
+    env: extraEnv = {},
   } = options
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prow-bundle-'))
@@ -48,6 +50,7 @@ export async function runBundle(options: RunBundleOptions): Promise<RunBundleRes
     GITHUB_SHA: '0000000000000000000000000000000000000000',
     GITHUB_REF: 'refs/heads/main',
     GITHUB_ACTOR: 'Codertocat',
+    ...extraEnv,
   }
   for (const [name, value] of Object.entries(inputs))
     env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`] = value
