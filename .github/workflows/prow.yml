@@ -2,7 +2,7 @@
 #
 #   jobs:
 #     prow:
-#       uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+#       uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
 #
 # It runs the action at the commit of this very file, so the workflow and the action can
 # never drift and no floating action tag exists inside it. The caller owns the triggers,
@@ -66,7 +66,7 @@ jobs:
       - name: Require the workflow's own commit
         if: job.workflow_sha == ''
         run: |
-          echo "::error::job.workflow_sha is empty; this reusable workflow needs github.com. Use 'uses: cncf/prow-github-actions@v3' directly instead."
+          echo "::error::job.workflow_sha is empty; this reusable workflow needs github.com. Use 'uses: cncf/prow-github-actions@v3.0.0' directly instead."
           exit 1
 
       # Checks out cncf/prow-github-actions at that commit, never the caller's repository

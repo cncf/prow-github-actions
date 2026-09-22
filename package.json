@@ -1,6 +1,6 @@
 {
   "name": "prow-github-actions",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Slash commands, jobs, and chat-ops for Github actions inspired by Kubernetes Prow",
   "author": "John McBride",
   "license": "MIT",

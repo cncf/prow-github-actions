@@ -3,8 +3,8 @@
 # prow.yaml. Docs: https://github.com/cncf/prow-github-actions/blob/main/docs/installing.md#without-pull_request_target
 #
 # Choose this template over prow.yml when your policy forbids pull_request_target (zizmor's
-# dangerous-triggers audit, for instance). Organizations that hash-pin replace `@v3` below with a
-# commit sha and a `# v3.x.y` comment.
+# dangerous-triggers audit, for instance). Organizations that hash-pin replace `@v3.0.0` below with a
+# commit sha and a `# v3.0.0` comment.
 #
 # What changes compared to prow.yml:
 # - pull_request and pull_request_review runs for a fork pull request get a read-only token, so
@@ -54,7 +54,7 @@ concurrency:
 jobs:
   prow:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     # optional; the defaults enable every built-in command and the lgtm job
     # with:
     #   prow-commands: /lgtm /approve /hold /kind /area /priority
@@ -67,12 +67,12 @@ jobs:
   # fork pull requests updated within sweep.lookback (default 1h), plus the lgtm backstop
   sweep:
     if: github.event_name == 'schedule'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     with:
       jobs: sweep lgtm
 
   label-sync:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     with:
       jobs: label-sync
