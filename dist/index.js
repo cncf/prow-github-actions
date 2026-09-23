@@ -41309,6 +41309,7 @@ function stripUndefined(value) {
 const external_node_process_namespaceObject = require("node:process");
 var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
 ;// CONCATENATED MODULE: ./lib/utils/comments.js
+
 /**
  * createComment comments on the specified issue or pull request
  *
@@ -41328,6 +41329,30 @@ async function createComment(octokit, context, issueNum, message) {
     catch (e) {
         throw new Error(`could not add comment: ${e}`);
     }
+}
+/**
+ * createCommentOnce posts `message` with `marker` (an invisible HTML comment)
+ * appended, unless a bot comment carrying the marker already exists: one
+ * explanation per fact, however many runs observe it.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param issueNum - the issue or pull request
+ * @param marker - what identifies this explanation, ex: `<!-- prow-github-actions/x: sha7 -->`
+ * @param message - the comment message body
+ * @returns whether a comment was posted
+ */
+async function createCommentOnce(octokit, context, issueNum, marker, message) {
+    const comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNum, per_page: 100 });
+    if (comments.some(comment => isBotUser(comment.user) && (comment.body ?? '').includes(marker))) {
+        core_debug(`#${issueNum} already carries ${marker}`);
+        return false;
+    }
+    await createComment(octokit, context, issueNum, `${message}\n\n${marker}`);
+    return true;
+}
+function isBotUser(user) {
+    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
@@ -41685,18 +41710,8 @@ async function stripStaleLgtm(octokit, context, number, sha) {
     const short = shortSha(sha);
     await removeLabels(octokit, context, number, [lgtmLabel]);
     await unbindLgtm(octokit, context, sha, `lgtm removed: not bound to ${short}`);
-    const marker = staleMarker(sha);
     try {
-        const comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: number, per_page: 100 });
-        if (comments.some(comment => isBot(comment.user) && (comment.body ?? '').includes(marker))) {
-            core_debug(`lgtm: #${number} was already told about ${short}`);
-            return;
-        }
-        await createComment(octokit, context, number, [
-            `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`,
-            '',
-            marker,
-        ].join('\n'));
+        await createCommentOnce(octokit, context, number, staleMarker(sha), `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`);
     }
     catch (e) {
         warning(`could not comment on pr #${number} about the stale lgtm: ${e}`);
@@ -41715,7 +41730,7 @@ async function lgtmOnPullRequest(context = github_context) {
         return;
     }
     const sender = context.payload.sender;
-    if (isBot(sender)) {
+    if (isBotUser(sender)) {
         core_debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`);
         return;
     }
@@ -41730,9 +41745,6 @@ async function lgtmOnPullRequest(context = github_context) {
     }
     await bindLgtm(octokit, context, sha, String(sender?.login ?? 'unknown'), context.payload.pull_request?.html_url);
     info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`);
-}
-function isBot(user) {
-    return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
 }
 function isForbidden(error) {
     return typeof error === 'object' && error !== null && 'status' in error && error.status === 403;
@@ -43437,6 +43449,7 @@ function sleep(ms) {
 
 
 
+
 /** the verdicts that count as success: the pull request is merged, or handed to GitHub's merge queue */
 const successfulResults = new Set(['merged', 'enqueued']);
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
@@ -43451,6 +43464,8 @@ const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_f
 const reviewActions = new Set(['submitted', 'dismissed']);
 // a suite or status that ended this way cannot have made the pull request more mergeable
 const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending']);
+// the pull requests the scheduled jobs evaluated in this run: `sweep` and `lgtm` both reach the same ones
+const evaluatedThisRun = new Set();
 /**
  * fetchMergeability reads the pull request and, while GitHub reports its
  * mergeability as `unknown`, re-reads it after growing waits. A state that
@@ -43525,8 +43540,15 @@ async function mergeOnce(octokit, context, number, tide, sha) {
  * @param number - the pull request number
  * @param source - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
+ * @param options - see EvaluateOptions
  */
-async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgtmSettings) {
+async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgtmSettings, options = {}) {
+    if (options.once === true) {
+        if (evaluatedThisRun.has(number)) {
+            return skip(number, 'already evaluated in this run');
+        }
+        evaluatedThisRun.add(number);
+    }
     const first = await getPull(octokit, context, number);
     const tide = typeof source === 'function' ? await source(first.base) : source;
     let reason = blockedReason(first, tide);
@@ -43566,12 +43588,65 @@ async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgt
     if (outcome.status === 409) {
         return skip(number, /base branch/i.test(outcome.message) ? 'base branch moved' : 'head moved');
     }
+    if (outcome.status === 403 && first.fork && await explainForkWorkflows(octokit, context, number, first)) {
+        return skip(number, 'fork pull request with workflow changes: the token may not merge it');
+    }
     error(`could not merge pr #${number}: ${outcome.message}`);
     return outcome;
 }
 let warnedMergeMethodIgnored = false;
 function resetTideWarnings() {
     warnedMergeMethodIgnored = false;
+    evaluatedThisRun.clear();
+}
+const workflowsDir = '.github/workflows/';
+/**
+ * explainForkWorkflows diagnoses a 403 on a fork pull request: a GitHub App
+ * token, `GITHUB_TOKEN` included, may not merge one when the merge involves
+ * `.github/workflows/` changes, whether the base carries workflow files the
+ * head lacks or the pull request changes some itself; that needs the
+ * `workflows` permission, which `GITHUB_TOKEN` cannot be granted
+ * (bors-ng/bors-ng#806, observed on cncf/automation#709). When that is the
+ * case it tells the pull request so, once per head, and returns true.
+ */
+async function explainForkWorkflows(octokit, context, number, pr) {
+    let behind;
+    let own;
+    try {
+        const compared = await octokit.repos.compareCommitsWithBasehead({ ...context.repo, basehead: `${pr.sha}...${pr.base}` });
+        behind = workflowFiles((compared.data.files ?? []).map(file => file.filename));
+        const changed = await octokit.paginate(octokit.pulls.listFiles, { ...context.repo, pull_number: number, per_page: 100 });
+        own = workflowFiles(changed.map(file => file.filename));
+    }
+    catch (e) {
+        core_debug(`could not diagnose the 403 on pr #${number}: ${e}`);
+        return false;
+    }
+    if (behind.length === 0 && own.length === 0) {
+        return false;
+    }
+    const what = [
+        ...(behind.length > 0 ? [`(${fileList(behind)}) that the branch does not contain`] : []),
+        ...(own.length > 0 ? [`(${fileList(own)}) that it changes`] : []),
+    ].join(' and ');
+    warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`);
+    try {
+        await createCommentOnce(octokit, context, number, `<!-- prow-github-actions/fork-workflows: ${shortSha(pr.sha)} -->`, [
+            `GitHub does not let the workflow token merge this pull request: it comes from a fork and the merge involves workflow files ${what}.`,
+            `Merging such a change needs the \`workflows\` permission, which \`GITHUB_TOKEN\` cannot have. Rebase onto \`${pr.base}\` (or merge it into this branch) so the branch carries the current workflows; a maintainer can also merge by hand or pass a token with the \`workflows\` scope as the \`token\` secret.`,
+        ].join(' '));
+    }
+    catch (e) {
+        warning(`could not comment on pr #${number} about the workflow files: ${e}`);
+    }
+    return true;
+}
+function workflowFiles(paths) {
+    return [...new Set(paths.filter(path => path.startsWith(workflowsDir)))].sort();
+}
+function fileList(paths) {
+    const shown = paths.slice(0, 5).map(path => `\`${path}\``).join(', ');
+    return paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown;
 }
 async function evaluateInQueue(octokit, context, number, tide, first, queue) {
     if (queue.inQueue) {
@@ -43646,9 +43721,10 @@ async function dequeueIfOurs(octokit, context, number, tide, reason) {
  * @param number - the pull request number
  * @param tide - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
+ * @param options - see EvaluateOptions
  */
-async function tryMergePullRequest(octokit, context, number, tide, lgtm = defaultLgtmSettings) {
-    return (await evaluateMerge(octokit, context, number, tide, lgtm)).result;
+async function tryMergePullRequest(octokit, context, number, tide, lgtm = defaultLgtmSettings, options = {}) {
+    return (await evaluateMerge(octokit, context, number, tide, lgtm, options)).result;
 }
 function skip(number, reason) {
     info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`);
@@ -43685,6 +43761,7 @@ async function getPull(octokit, context, number) {
         state_open: data.state === 'open',
         sha: data.head.sha,
         base: data.base.ref,
+        fork: data.head.repo?.full_name !== undefined && data.head.repo.full_name !== data.base.repo?.full_name,
     };
 }
 async function isMerged(octokit, context, number) {
@@ -43927,7 +44004,7 @@ async function tryMergePr(pr, octokit, context = github_context, policy, failure
         info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
-    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm);
+    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
     if (verdict.result === 'failed') {
         failures.push({ number: pr.number, message: verdict.message });
     }
@@ -44235,7 +44312,7 @@ async function syncLabel(octokit, context, owners, approved) {
     }
 }
 async function upsertNotifier(octokit, context, pullNumber, comments, body) {
-    const existing = comments.find(comment => approve_isBot(comment.user) && (comment.body ?? '').includes(notifierMarker));
+    const existing = comments.find(comment => isBot(comment.user) && (comment.body ?? '').includes(notifierMarker));
     if (existing === undefined) {
         await createComment(octokit, context, pullNumber, body);
         return;
@@ -44251,7 +44328,7 @@ async function upsertNotifier(octokit, context, pullNumber, comments, body) {
         throw new Error(`could not update the approval notifier: ${e}`);
     }
 }
-function approve_isBot(user) {
+function isBot(user) {
     return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
 }
 async function listComments(octokit, context, pullNumber) {
@@ -44828,7 +44905,7 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
         ...(hasOwners ? ownersSteps : []),
         ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
         ['tide', async () => {
-                const verdict = await evaluateMerge(octokit, context, pr.number, tide, plugins.lgtm);
+                const verdict = await evaluateMerge(octokit, context, pr.number, tide, plugins.lgtm, { once: true });
                 if (verdict.result === 'failed') {
                     throw new Error(verdict.message);
                 }

@@ -5,19 +5,13 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
-import { createComment } from '../utils/comments'
+import { createCommentOnce, isBotUser } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
 export interface LgtmSettings {
   bind_to_commit: boolean
-}
-
-interface BotComment {
-  id: number
-  body?: string | null
-  user?: { login?: string, type?: string } | null
 }
 
 export const lgtmLabel = 'lgtm'
@@ -142,18 +136,8 @@ export async function stripStaleLgtm(octokit: Octokit, context: Context, number:
   await removeLabels(octokit, context, number, [lgtmLabel])
   await unbindLgtm(octokit, context, sha, `lgtm removed: not bound to ${short}`)
 
-  const marker = staleMarker(sha)
   try {
-    const comments: BotComment[] = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: number, per_page: 100 })
-    if (comments.some(comment => isBot(comment.user) && (comment.body ?? '').includes(marker))) {
-      core.debug(`lgtm: #${number} was already told about ${short}`)
-      return
-    }
-    await createComment(octokit, context, number, [
-      `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`,
-      '',
-      marker,
-    ].join('\n'))
+    await createCommentOnce(octokit, context, number, staleMarker(sha), `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`)
   }
   catch (e) {
     core.warning(`could not comment on pr #${number} about the stale lgtm: ${e}`)
@@ -174,7 +158,7 @@ export async function lgtmOnPullRequest(context: Context = github.context): Prom
   }
 
   const sender = context.payload.sender
-  if (isBot(sender)) {
+  if (isBotUser(sender)) {
     core.debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`)
     return
   }
@@ -192,10 +176,6 @@ export async function lgtmOnPullRequest(context: Context = github.context): Prom
 
   await bindLgtm(octokit, context, sha, String(sender?.login ?? 'unknown'), context.payload.pull_request?.html_url)
   core.info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`)
-}
-
-function isBot(user: { login?: string, type?: string } | null | undefined): boolean {
-  return user?.type === 'Bot' || user?.login === 'github-actions[bot]'
 }
 
 function isForbidden(error: unknown): boolean {

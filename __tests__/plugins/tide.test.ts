@@ -91,6 +91,7 @@ describe('fetchMergeability', () => {
       state_open: true,
       sha: 'headsha',
       base: 'master',
+      fork: false,
     })
     expect(sleep).not.toHaveBeenCalled()
   })
@@ -318,6 +319,134 @@ describe('tryMergePullRequest', () => {
 
       await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
       expect(info).toHaveBeenCalledWith('pr #1 was merged concurrently')
+    })
+  })
+
+  describe('once per run', () => {
+    it('the scheduled jobs evaluate a pull request once: the second call is skipped without a read', async () => {
+      const gets = servePull(pull(['lgtm']))
+      const merge = observeMerge()
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide, undefined, { once: true })).resolves.toBe('merged')
+      await expect(tryMergePullRequest(octokit, context, 1, tide, undefined, { once: true })).resolves.toBe('skipped')
+      await expect(merge.called()).resolves.toBe('called')
+      expect(gets).toHaveLength(1)
+      expect(info).toHaveBeenCalledWith('skipping pr #1: already evaluated in this run')
+    })
+
+    it('event evaluations never dedupe: two in one run are two merges attempts', async () => {
+      const gets = servePull(pull(['lgtm']))
+      let merges = 0
+      server.use(http.put(`${repo}/pulls/1/merge`, () => {
+        merges++
+        return new Response(JSON.stringify({ merged: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }))
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('merged')
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('merged')
+      expect(merges).toBe(2)
+      expect(gets).toHaveLength(2)
+    })
+
+    it('resetTideWarnings forgets the evaluated pull requests', async () => {
+      servePull(pull(['lgtm']))
+      observeMerge()
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide, undefined, { once: true })).resolves.toBe('merged')
+      utils.setupActionsEnv()
+      await expect(tryMergePullRequest(octokit, context, 1, tide, undefined, { once: true })).resolves.toBe('merged')
+    })
+  })
+
+  // a GitHub App token, GITHUB_TOKEN included, may not merge a fork pull request when the merge involves
+  // .github/workflows/* changes: the `workflows` permission it cannot have (bors-ng/bors-ng#806; cncf/automation#709)
+  describe('a 403 on a fork pull request', () => {
+    const forbidden = { message: 'Resource not accessible by integration' }
+    const marker = '<!-- prow-github-actions/fork-workflows: headsha -->'
+    const reason = 'skipping pr #1: fork pull request with workflow changes: the token may not merge it'
+    const forkPull = (labels: string[] = ['lgtm']) => pull(labels, {
+      head: { sha: 'headsha', repo: { full_name: 'dave/Hello-World' } },
+      base: { ref: 'master', sha: 'basesha', repo: { full_name: 'Codertocat/Hello-World' } },
+    })
+
+    function serveDiff(behind: string[], own: string[], comments: unknown[] = []) {
+      const observe = { compare: new utils.ObserveRequest(), files: new utils.ObserveRequest(), comment: new utils.ObserveRequest() }
+      server.use(
+        http.get(`${repo}/compare/headsha...master`, utils.mockResponse(200, { files: behind.map(filename => ({ filename, status: 'added' })) }, observe.compare)),
+        http.get(`${repo}/pulls/1/files`, utils.mockResponse(200, own.map(filename => ({ filename, status: 'modified' })), observe.files)),
+        http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, comments)),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, observe.comment)),
+      )
+      return observe
+    }
+
+    it('behind on workflow files: explains once with a comment and skips instead of failing', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['.github/workflows/ci.yml', 'README.md', '.github/workflows/release.yml'], ['src/a.go'])
+      const info = vi.spyOn(core, 'info')
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+
+      await expect(diff.compare.called()).resolves.toBe('called')
+      await expect(diff.comment.called()).resolves.toBe('called')
+      const body = (await diff.comment.body()).body as string
+      expect(body).toContain('GitHub does not let the workflow token merge this pull request: it comes from a fork and the merge involves workflow files (`.github/workflows/ci.yml`, `.github/workflows/release.yml`) that the branch does not contain.')
+      expect(body).toContain('Rebase onto `master`')
+      expect(body).toContain('`workflows` scope as the `token` secret')
+      expect(body.endsWith(marker)).toBe(true)
+      expect(info).toHaveBeenCalledWith(reason)
+      expect(warning.mock.calls.filter(call => String(call[0]).includes('fork pull request whose merge involves workflow files'))).toHaveLength(1)
+      expect(error).not.toHaveBeenCalled()
+    })
+
+    it('does not comment again on the same head', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['.github/workflows/ci.yml'], [], [{ id: 5, body: `old\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } }])
+      vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+    })
+
+    it('a fork pull request that itself changes workflow files, listing at most five', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const own = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(name => `.github/workflows/${name}.yml`)
+      const diff = serveDiff([], own)
+      vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      const body = (await diff.comment.body()).body as string
+      expect(body).toContain('workflow files (`.github/workflows/a.yml`, `.github/workflows/b.yml`, `.github/workflows/c.yml`, `.github/workflows/d.yml`, `.github/workflows/e.yml` and 2 more) that it changes.')
+    })
+
+    it('a same-repository pull request keeps the raw failure and never compares', async () => {
+      servePull(pull(['lgtm'], { head: { sha: 'headsha', repo: { full_name: 'Codertocat/Hello-World' } }, base: { ref: 'master', sha: 'basesha', repo: { full_name: 'Codertocat/Hello-World' } } }))
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['.github/workflows/ci.yml'], [])
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(diff.compare.notCalled()).resolves.toBe('not called')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
+    })
+
+    it('a fork 403 with no workflow file anywhere is still a failure', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['README.md'], ['src/a.go'])
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(diff.compare.called()).resolves.toBe('called')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
     })
   })
 })

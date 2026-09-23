@@ -1782,6 +1782,35 @@ describe('dist/index.js', () => {
       expect(result.stdout).toContain(`skipping pr #2: not mergeable (${state})`)
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
     })
+
+    it('a fork pr GitHub refuses with 403 over workflow files it lacks: one explaining comment, skipped, the run succeeds', async () => {
+      routePulls(openPr(['lgtm'], { head: { sha: head, repo: { full_name: 'dave/Hello-World' } } }), { status: 403, body: { message: 'Resource not accessible by integration' } })
+      gh.route('GET', `${repo}/compare/${head}...master`, { status: 200, body: { files: [{ filename: '.github/workflows/prow.yml', status: 'added' }] } })
+      gh.route('GET', `${repo}/pulls/2/files`, { status: 200, body: [{ filename: 'README.md', status: 'modified' }] })
+      gh.route('GET', `${repo}/issues/2/comments`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/2/comments`, { status: 201, body: {} })
+
+      const result = await runCron()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('skipping pr #2: fork pull request with workflow changes: the token may not merge it')
+      const comments = gh.requestsMatching('POST', /\/issues\/2\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect((comments[0].body as { body: string }).body).toContain('workflow files (`.github/workflows/prow.yml`) that the branch does not contain')
+      // the refusal, the re-read, then the diagnosis: what the base has that the head lacks, and what the pr changes
+      expectRequests(configReads(), [
+        ...gateReads,
+        ...evaluation,
+        `PUT ${repo}/pulls/2/merge`,
+        `GET ${repo}/pulls/2`,
+        `GET ${repo}/compare/${head}...master`,
+        `GET ${repo}/pulls/2/files?per_page=100`,
+        `GET ${repo}/issues/2/comments?per_page=100`,
+        `POST ${repo}/issues/2/comments`,
+        `GET ${repo}/pulls?state=open&page=2`,
+      ])
+    })
   })
 
   describe('schedule sweep job', () => {

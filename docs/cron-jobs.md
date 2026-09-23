@@ -3,7 +3,9 @@
 Jobs run from the `jobs` input on `schedule`, `workflow_dispatch` and `push` events
 (`pull_request` and `pull_request_target` run the [PR jobs](./pr-jobs.md)). The input is space or newline
 delimited and case-insensitive (`jobs: sweep lgtm label-sync`). Every listed job runs, in
-parallel; an unknown name fails the run with `could not execute <job>`.
+parallel; an unknown name fails the run with `could not execute <job>`. A pull request both `sweep`
+and `lgtm` reach is evaluated once per run, by whichever gets to it first (`skipping pr #N: already
+evaluated in this run`); event handlers never dedupe.
 
 Jobs | Description | Permissions
 --- | --- | ---

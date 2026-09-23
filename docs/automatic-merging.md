@@ -445,6 +445,29 @@ Steps:
 
 Refer to the [lgtm command](./commands.md) and the [PR jobs](./pr-jobs.md) for further reference.
 
+## Fork pull requests and workflow files
+
+A GitHub App token, `GITHUB_TOKEN` included, may not merge a **fork** pull request when the merge
+involves `.github/workflows/*` changes: the base branch carries workflow files the fork's head does
+not (the head is behind the commit that added them), or the pull request changes workflow files
+itself. GitHub answers `403 Resource not accessible by integration` and demands the `workflows`
+permission, which `GITHUB_TOKEN` cannot be granted (bors-ng/bors-ng#806; observed on
+cncf/automation#709). Branch protection, rulesets and the merge method have nothing to do with it;
+same-repository pull requests are unaffected.
+
+On such a 403 the merge path compares the head with the base (`GET /compare/{head}...{base}`) and
+lists the pull request's files, one call each and only then. When either lists a workflow file, the
+pull request gets one comment per head commit naming the files and the way out, the run logs a
+warning and the pull request is **skipped**, not failed: the `lgtm` cron and the `sweep` stop
+erroring on a pull request the bot cannot merge. A 403 without workflow files anywhere is still a
+failure with GitHub's message.
+
+What to do | Who
+--- | ---
+Rebase onto the base branch (or merge it into the pull request) so the branch carries the current workflows; the next evaluation merges | the author
+Merge by hand | a maintainer
+Pass a token with the `workflows` scope (a PAT or a GitHub App with *Workflows: write*) as the `token` secret ([installing](./installing.md#inputs-and-secrets)) | the repository
+
 ## Known limitations
 The cron job pages through the repository's open PRs, following pages until one comes back empty,
 and reads each PR that passes the label gate (plus its head's status). This _may_ trigger a state

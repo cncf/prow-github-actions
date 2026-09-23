@@ -18,9 +18,12 @@ beforeAll(() =>
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-function serveMergeablePr() {
+function serveMergeablePr(options: { updatedNow?: boolean } = {}) {
   const payload = structuredClone(listPullReqs)
   payload[0].labels[0].name = 'lgtm'
+  if (options.updatedNow === true) {
+    payload[0].updated_at = new Date().toISOString()
+  }
   server.use(
     ...utils.noOrgOrRepoConfigExcept(),
     utils.defaultBranchTree(),
@@ -42,6 +45,15 @@ function serveMergeablePr() {
     ),
   )
   return mergeReq
+}
+
+function countMerges() {
+  let merges = 0
+  server.use(http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`, () => {
+    merges++
+    return new Response(JSON.stringify({ merged: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }))
+  return () => merges
 }
 
 describe('handleCronJobs', () => {
@@ -103,6 +115,20 @@ describe('handleCronJobs', () => {
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('could not execute pr-labeler'),
     )
+  })
+
+  it('jobs: sweep lgtm evaluates a pull request both jobs reach once, whichever runs first', async () => {
+    utils.setupJobsEnv('sweep lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    serveMergeablePr({ updatedNow: true })
+    const merges = countMerges()
+    const info = vi.spyOn(core, 'info')
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.toBeUndefined()
+    expect(merges()).toBe(1)
+    expect(info).toHaveBeenCalledWith('skipping pr #2: already evaluated in this run')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('matches job names case-insensitively', async () => {

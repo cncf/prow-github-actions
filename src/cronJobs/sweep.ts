@@ -114,7 +114,7 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
     ...(hasOwners ? ownersSteps : []),
     ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
     ['tide', async () => {
-      const verdict = await evaluateMerge(octokit, context, pr.number, tide, plugins.lgtm)
+      const verdict = await evaluateMerge(octokit, context, pr.number, tide, plugins.lgtm, { once: true })
       if (verdict.result === 'failed') {
         throw new Error(verdict.message)
       }

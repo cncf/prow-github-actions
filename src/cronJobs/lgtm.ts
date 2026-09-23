@@ -166,7 +166,7 @@ async function tryMergePr(
     return false
   }
 
-  const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm)
+  const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true })
   if (verdict.result === 'failed') {
     failures.push({ number: pr.number, message: verdict.message })
   }
