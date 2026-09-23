@@ -9,8 +9,9 @@ import { mergeProwConfig, parseProwConfig } from '../src/utils/config'
 import { builtinLabelDefaults, desiredLabels } from '../src/utils/labelCatalog'
 
 const root = path.resolve(__dirname, '..')
+const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string }
 const reusableWorkflowPath = '.github/workflows/prow.yml'
-const reusableWorkflowRef = 'cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0'
+const reusableWorkflowRef = `cncf/prow-github-actions/.github/workflows/prow.yml@v${version}`
 const templateDir = 'templates/workflow-templates'
 const templatePath = `${templateDir}/prow.yml`
 const pullRequestTemplatePath = `${templateDir}/prow-pull-request.yml`

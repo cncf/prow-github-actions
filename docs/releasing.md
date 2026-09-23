@@ -37,7 +37,7 @@ For stable releases, `release.yml` additionally moves the floating major tag
 and `uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3` track the
 latest `v3.x.y`. Pre-releases never move the floating tag.
 
-The templates, the README and the docs pin the **exact** release (`@v3.0.0`) on
+The templates, the README and the docs pin the **exact** release (`@v3.0.1`) on
 purpose: organizations that hash-pin can replace it with the release's commit
 sha, and Dependabot bumps it to the next release. The floating `v3` tag keeps
 moving for callers who prefer it ([upgrading](./installing.md#upgrading)).
@@ -62,7 +62,8 @@ that PR is on `main`.
    `.github/workflows/prow*.yml`, for the action and the reusable workflow
    alike. `__tests__/version.test.ts` fails until every reference agrees with
    `package.json`; the floating `@v3` and the `@vX.Y.Z` placeholder are the
-   only other refs it accepts.
+   only other refs it accepts. `docs/releases/` is exempt: past notes keep the
+   version they announced.
 
 3. Write `docs/releases/vX.Y.Z.md`: what changed, breaking changes, upgrade
    steps ([`v3.0.0`](./releases/v3.0.0.md) is the model). `release.yml`
@@ -141,7 +142,7 @@ Releases follow [SemVer](https://semver.org/) with `v`-prefixed tags
 - uses: cncf/prow-github-actions@v3
 
 # or pin to an exact release, what the templates ship
-- uses: cncf/prow-github-actions@v3.0.0
+- uses: cncf/prow-github-actions@v3.0.1
 ```
 
 The same refs work for the reusable workflow,
