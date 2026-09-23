@@ -1,5 +1,5 @@
 # This repository runs the bot through its own reusable workflow; templates/workflow-templates/prow.yml
-# is the same file for consumers, with pull_request_target and @v3. Kept on pull_request here, so
+# is the same file for consumers, with pull_request_target and @v3.0.0. Kept on pull_request here, so
 # fork pull requests are handled by the scheduled sweep like templates/workflow-templates/prow-pull-request.yml.
 name: Prow bot
 on:

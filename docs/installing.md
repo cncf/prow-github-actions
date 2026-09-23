@@ -59,11 +59,11 @@ concurrency:
 jobs:
   prow:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
 
   label-sync:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     with:
       jobs: label-sync
 ```
@@ -105,7 +105,7 @@ flags it; a hash-pinning policy often comes with it). The second template,
 +    if: github.event_name != 'workflow_dispatch' && github.event_name != 'push' && github.event_name != 'schedule'
 +  sweep:
 +    if: github.event_name == 'schedule'
-+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
++    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
 +    with:
 +      jobs: sweep lgtm
 ```
@@ -118,8 +118,8 @@ any, on a comment (`/lgtm`, `/approve`, ...) | the `issue_comment` run, which ha
 
 Caveat: an `lgtm` label applied **by hand** on a fork pull request cannot be
 [bound to the commit](./automatic-merging.md#lgtm-is-bound-to-a-commit) by the read-only run,
-so the sweep strips it with a comment; use `/lgtm`. Organizations that hash-pin replace `@v3`
-in the template with the release's commit sha and a `# v3.x.y` comment; Dependabot keeps it
+so the sweep strips it with a comment; use `/lgtm`. Organizations that hash-pin replace `@v3.0.0`
+in the template with the release's commit sha and a `# v3.0.0` comment; Dependabot keeps it
 current.
 
 ## An organization
@@ -141,7 +141,7 @@ pass a token with read access to it:
 ```yaml
 jobs:
   prow:
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     secrets:
       token: ${{ secrets.PROW_TOKEN }}
 ```
@@ -153,14 +153,13 @@ lookup ([the `config` input](./configuration.md#the-config-input)).
 
 Ref | Behaviour
 --- | ---
-`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y`. Nothing to do.
-`@v3.1.0` | Exact release.
-`@<sha>` | Exact commit, for repositories that pin everything.
+`@v3.0.0` | Exact release, what the templates ship. [Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot)'s `github-actions` ecosystem proposes the next release (it also updates reusable-workflow `uses:` refs).
+`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y`. Nothing to do; you get every fix and every minor change without review.
+`@<sha> # v3.0.0` | Hash pinning; the commit is on the [release page](https://github.com/cncf/prow-github-actions/releases/tag/v3.0.0). Dependabot keeps the comment and the sha in step.
 
 Whatever the ref, the reusable workflow checks out the action at the **same commit as the
 workflow file**, so a caller pinned to a sha runs exactly that action bundle and a floating
-tag moves both together. [Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot)
-updates the `uses:` of reusable workflows like any action.
+tag moves both together.
 
 The reusable workflow needs github.com: it reads the `job.workflow_sha` context, which is not
 available on GitHub Enterprise Server. There, [use the action directly](#using-the-action-directly).
@@ -192,7 +191,7 @@ Secret | Default | Meaning
 ```yaml
 jobs:
   prow:
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
     with:
       prow-commands: /lgtm /approve /hold /kind /area /priority /meow
       merge-method: squash
@@ -220,6 +219,6 @@ Label sections (`/kind`, `/area`, `/priority`, ...) and `needs-*` rules need a `
 
 ## Using the action directly
 
-The action itself is still `uses: cncf/prow-github-actions@v3` with the same inputs; it is the
+The action itself is still `uses: cncf/prow-github-actions@v3.0.0` with the same inputs; it is the
 way on GitHub Enterprise Server and for workflows that mix it with other steps. The
 [events](./events.md#recommended-triggers) page has the direct form of the caller above.

@@ -140,3 +140,12 @@ jobs:
             the SBOM is attached as `prow-github-actions-${{ env.VERSION }}.intoto.jsonl`.
           draft: false
           prerelease: true
+
+      - name: Prepend curated release notes
+        if: ${{ hashFiles(format('docs/releases/v{0}.md', env.VERSION)) != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "v${VERSION}" --json body -q .body > generated-notes.md
+          cat "docs/releases/v${VERSION}.md" generated-notes.md > release-notes.md
+          gh release edit "v${VERSION}" --notes-file release-notes.md

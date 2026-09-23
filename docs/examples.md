@@ -100,7 +100,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3
+      - uses: cncf/prow-github-actions@v3.0.0
         with:
           prow-commands: /approve /lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -127,7 +127,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3
+      - uses: cncf/prow-github-actions@v3.0.0
         with:
           prow-commands: /assign /approve /retitle /area /kind /priority /lgtm /close /reopen /hold /cc /uncc /retest /test /ok-to-test
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -152,7 +152,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3
+      - uses: cncf/prow-github-actions@v3.0.0
         with:
           prow-commands: /triage
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -178,7 +178,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3
+      - uses: cncf/prow-github-actions@v3.0.0
         with:
           prow-commands: /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'

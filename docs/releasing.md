@@ -29,12 +29,18 @@ Both workflows:
    - `prow-github-actions-<version>.spdx.json.bundle` — cosign signature bundle
    - `prow-github-actions-<version>.intoto.jsonl` — SLSA provenance
 
+   `release.yml` then prepends [`docs/releases/vX.Y.Z.md`](./releases/), when
+   the file exists, to the generated notes.
+
 For stable releases, `release.yml` additionally moves the floating major tag
 (`v2`, `v3`, …) to the new release so that `uses: cncf/prow-github-actions@v3`
 and `uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3` track the
-latest `v3.x.y`. Pre-releases never move the floating tag. The next release is
-a major: `v3` is created by `release.yml` on the first `v3.x.y` tag, and until
-then `@main` is the only ref of the reusable workflow that resolves.
+latest `v3.x.y`. Pre-releases never move the floating tag.
+
+The templates, the README and the docs pin the **exact** release (`@v3.0.0`) on
+purpose: organizations that hash-pin can replace it with the release's commit
+sha, and Dependabot bumps it to the next release. The floating `v3` tag keeps
+moving for callers who prefer it ([upgrading](./installing.md#upgrading)).
 
 The [reusable workflow](../.github/workflows/prow.yml) is versioned with the
 action: it checks out `cncf/prow-github-actions` at `job.workflow_sha`, the
@@ -43,22 +49,42 @@ the action bundle that runs. Nothing in it needs updating at release time.
 
 ## Cutting a stable release
 
-1. Make sure `main` is green and the bundled action is up to date:
+Everything but the tag lands through one pull request; the tag is pushed once
+that PR is on `main`.
+
+1. Update the pinned version, `X.Y.Z` being the release:
+
+   ```bash
+   npm version X.Y.Z --no-git-tag-version   # package.json and package-lock.json
+   ```
+
+2. Replace `@vOLD` with `@vX.Y.Z` in `README.md`, `docs/`, `templates/` and
+   `.github/workflows/prow*.yml`, for the action and the reusable workflow
+   alike. `__tests__/version.test.ts` fails until every reference agrees with
+   `package.json`; the floating `@v3` and the `@vX.Y.Z` placeholder are the
+   only other refs it accepts.
+
+3. Write `docs/releases/vX.Y.Z.md`: what changed, breaking changes, upgrade
+   steps ([`v3.0.0`](./releases/v3.0.0.md) is the model). `release.yml`
+   prepends it to GitHub's generated notes; the same test checks the file
+   exists.
+
+4. Build, lint, pack and test, then commit everything including `dist/`:
 
    ```bash
    npm run all          # build + lint + pack + test
-   git add dist/
-   git commit -m "chore: Bump dist for release"
-   git push
+   git add -A
+   git commit -s -m "chore: release vX.Y.Z"
    ```
 
-2. Update the `version` field in `package.json` if needed.
+5. Open the pull request and merge it.
 
-3. Tag and push:
+6. Tag the merge commit on `main` and push the tag:
 
    ```bash
-   git tag v2.1.0
-   git push origin v2.1.0
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
 The `release.yml` workflow takes it from there. Tags with a pre-release
@@ -107,15 +133,15 @@ gh attestation verify prow-github-actions-${VERSION}.spdx.json \
 ## Versioning
 
 Releases follow [SemVer](https://semver.org/) with `v`-prefixed tags
-(`v1.0.0`, `v2.0.0-rc.1`, `v2.0.0`, …). Once it exists, the floating major tag
+(`v1.0.0`, `v2.0.0-rc.1`, `v2.0.0`, `v3.0.0`, …). The floating major tag
 (`v3`) always points at the latest stable `v3.x.y` release:
 
 ```yaml
 # track the latest v3.x.y
 - uses: cncf/prow-github-actions@v3
 
-# or pin to an exact release
-- uses: cncf/prow-github-actions@v3.1.0
+# or pin to an exact release, what the templates ship
+- uses: cncf/prow-github-actions@v3.0.0
 ```
 
 The same refs work for the reusable workflow,

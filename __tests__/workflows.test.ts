@@ -10,7 +10,7 @@ import { builtinLabelDefaults, desiredLabels } from '../src/utils/labelCatalog'
 
 const root = path.resolve(__dirname, '..')
 const reusableWorkflowPath = '.github/workflows/prow.yml'
-const reusableWorkflowRef = 'cncf/prow-github-actions/.github/workflows/prow.yml@v3'
+const reusableWorkflowRef = 'cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0'
 const templateDir = 'templates/workflow-templates'
 const templatePath = `${templateDir}/prow.yml`
 const pullRequestTemplatePath = `${templateDir}/prow-pull-request.yml`
