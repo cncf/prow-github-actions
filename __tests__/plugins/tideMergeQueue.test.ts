@@ -29,6 +29,7 @@ function pull(labels: string[], overrides: Record<string, unknown> = {}) {
     mergeable: true,
     mergeable_state: 'clean',
     labels: labels.map(name => ({ name })),
+    base: { ref: 'master', sha: 'basesha' },
     head: { sha: 'headsha' },
     ...overrides,
   }

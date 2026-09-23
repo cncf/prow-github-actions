@@ -12,7 +12,7 @@ import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
 import * as utils from '../testUtils'
-import { prCommentEvent, prHandlers, repo } from '../utils/ownersFixtures'
+import { baseBranch, blobSha, changedFiles, filesHandler, prCommentEvent, prHandlers, pullHandler, repo, treeHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
@@ -733,6 +733,75 @@ reviewers:
 
       await expect(writes.postComment.notCalled()).resolves.toBe('not called')
       expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('the label(s) approved cannot be applied because the repository doesn\'t have them'))
+    })
+  })
+
+  // cncf/automation#709: the OWNERS files landed on the base branch after the pull request was opened, so
+  // `base.sha` (GitHub's snapshot from the last update) has none while the branch tip does
+  describe('on a pull request opened before the OWNERS files landed on its base branch', () => {
+    const rootOwners = { OWNERS: 'approvers:\n- alice\n' }
+    const empty = (sha: string) => ({ sha, truncated: false, tree: [] })
+    let setFailed: ReturnType<typeof vi.spyOn>
+    let info: ReturnType<typeof vi.spyOn>
+
+    function serve(atBaseSha: Record<string, string>, atTip: Record<string, string>, labels: string[] = ['lgtm']) {
+      const writes = { addLabels: new utils.ObserveRequest(), postComment: new utils.ObserveRequest(), createReview: new utils.ObserveRequest(), merge: new utils.ObserveRequest(), oldTree: new utils.ObserveRequest() }
+      setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      info = vi.spyOn(core, 'info')
+      server.use(
+        pullHandler(undefined, { base: { ref: baseBranch, sha: 'old' }, user: { login: 'some-author' }, labels: labels.map(name => ({ name })) }),
+        filesHandler(changedFiles('src/a.go')),
+        ...(Object.keys(atBaseSha).length === 0
+          ? [http.get(`${repo}/git/trees/old`, utils.mockResponse(200, empty('old'), writes.oldTree))]
+          : treeHandlers(atBaseSha, { sha: 'old', observeTree: writes.oldTree }).slice(1)),
+        ...treeHandlers(atTip, { sha: 'new' }),
+        // the tide gate probes the base branch by name; it is the same tree as the tip
+        http.get(`${repo}/git/trees/${baseBranch}`, utils.mockResponse(200, { sha: 'new', truncated: false, tree: Object.keys(atTip).map(path => ({ path, type: 'blob', sha: blobSha(path) })) })),
+        utils.mergeQueueGraphql({ enabled: false }).handler,
+        utils.lgtmStatus(),
+        utils.repoHasLabels(['approved', 'lgtm']),
+        http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, [{ id: 100, body: '/approve', user: { login: 'alice' }, created_at: '2024-01-01T00:00:01Z' }])),
+        http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [])),
+        http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(204)),
+        http.get(`${repo}/collaborators/alice`, utils.mockResponse(404)),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], writes.addLabels)),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, writes.postComment)),
+        http.post(`${repo}/pulls/1/reviews`, utils.mockResponse(200, {}, writes.createReview)),
+        http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, writes.merge)),
+      )
+      return writes
+    }
+
+    it('/approve by a root approver adds approved and the notifier links the tip; the gate wants approved from the same branch', async () => {
+      const writes = serve({}, rootOwners)
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/approve', 'alice')))
+
+      await expect(writes.addLabels.called()).resolves.toBe('called')
+      expect(await writes.addLabels.body()).toEqual({ labels: ['approved'] })
+      await expect(writes.postComment.called()).resolves.toBe('called')
+      const body = (await writes.postComment.body()).body as string
+      expect(body).toContain('[APPROVALNOTIFIER] This PR is **APPROVED**')
+      expect(body).toContain('~~[OWNERS](https://github.com/Codertocat/Hello-World/blob/new/OWNERS)~~ [alice]')
+      await expect(writes.createReview.notCalled()).resolves.toBe('not called')
+      await expect(writes.oldTree.notCalled()).resolves.toBe('not called')
+      // the pull request is re-read with its labels as served (lgtm only): the gate now asks for approved, consistently
+      expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
+      await expect(writes.merge.notCalled()).resolves.toBe('not called')
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('the inverse, OWNERS removed from the base branch since: the legacy bot review and a [lgtm] gate', async () => {
+      const writes = serve(rootOwners, {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/approve', 'alice')))
+
+      await expect(writes.createReview.called()).resolves.toBe('called')
+      expect(await writes.createReview.body()).toMatchObject({ event: 'APPROVE' })
+      await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
+      await expect(writes.postComment.notCalled()).resolves.toBe('not called')
+      await expect(writes.merge.called()).resolves.toBe('called')
+      expect(setFailed).not.toHaveBeenCalled()
     })
   })
 

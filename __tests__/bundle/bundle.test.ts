@@ -96,13 +96,14 @@ describe('dist/index.js', () => {
     expect(calls.slice(command.length + reads.length)).toEqual(sweep)
   }
 
-  // the pull request, its changed files and the OWNERS files of the base branch, as the OWNERS plugins read them
+  // the pull request, its changed files, the tip of its base branch and the OWNERS files there, as the OWNERS plugins read them
   function routeOwners(ownersFiles: Record<string, string>, files: string[], pull: Record<string, unknown> = {}) {
     gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'Codertocat' }, requested_reviewers: [], assignees: [], ...pull } })
     gh.route('GET', `${repo}/pulls/1/files`, {
       status: 200,
       body: files.map(filename => ({ filename, status: 'modified' })),
     })
+    gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
     gh.route('GET', `${repo}/git/trees/basesha`, {
       status: 200,
       body: {
@@ -122,11 +123,13 @@ describe('dist/index.js', () => {
   const ownersReads = [
     `GET ${repo}/pulls/1`,
     `GET ${repo}/pulls/1/files?per_page=100`,
+    `GET ${repo}/branches/master`,
     `GET ${repo}/git/trees/basesha?recursive=true`,
   ]
 
-  // the tide gate learns whether the repository has OWNERS files from the default branch tree, once per run;
-  // the fake answers 404 (an empty repository) unless a test routes it
+  // the tide gate learns whether the pull request's base branch (master in every fixture) has OWNERS files from
+  // its tree, once per branch per run, after the pull request read that names the branch; the fake answers 404
+  // (an empty repository) unless a test routes it
   const ownersProbe = `GET ${repo}/git/trees/master?recursive=true`
   // tide asks GraphQL once whether the base branch requires a merge queue: once the gate passes, or when it
   // fails on an event (to dequeue the bot's own entry); the fake answers "no queue" unless a test routes it
@@ -592,24 +595,24 @@ describe('dist/index.js', () => {
       expect(body.endsWith(marker)).toBe(true)
       // the OWNERS reads (memoized across the authorization and the evaluation), the config probes, then one evaluation
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect(calls.slice(0, 3)).toEqual(ownersReads)
-      expect(calls.slice(3, 5).sort()).toEqual([
+      expect(calls.slice(0, 4)).toEqual(ownersReads)
+      expect(calls.slice(4, 6).sort()).toEqual([
         `GET ${repo}/git/blobs/${blobSha('OWNERS')}`,
         `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`,
       ])
-      expect(calls.slice(5, 5 + configReads().length).sort()).toEqual(configReads().sort())
-      // then the sweep: tide probes for OWNERS files on the default branch and reads the pr (approved alone is not the gate)
-      expect(calls.slice(5 + configReads().length)).toEqual([
+      expect(calls.slice(6, 6 + configReads().length).sort()).toEqual(configReads().sort())
+      // then the sweep: tide reads the pr and probes its base branch for OWNERS files (approved alone is not the gate)
+      expect(calls.slice(6 + configReads().length)).toEqual([
         `GET ${repo}/issues/1/comments?per_page=100`,
         `GET ${repo}/pulls/1/reviews?per_page=100`,
         labelsRead,
         `POST ${repo}/issues/1/labels`,
         `POST ${repo}/issues/1/comments`,
-        ownersProbe,
         `GET ${repo}/pulls/1`,
+        ownersProbe,
         queueRead,
       ])
-      expect(calls).toHaveLength(5 + configReads().length + 8)
+      expect(calls).toHaveLength(6 + configReads().length + 8)
     })
 
     it('/approve cancel removes approved and edits the notifier to NOT APPROVED; the merge gate then misses approved', async () => {
@@ -675,6 +678,33 @@ describe('dist/index.js', () => {
       expect(body).toContain('please assign **carol**')
     })
 
+    it('a pr opened before the OWNERS files landed on its base (cncf/automation#709): approved is granted from the branch tip, and the gate asks for it', async () => {
+      // the first route wins: base.sha is the OWNERS-less snapshot, the branch has moved on to a tip with OWNERS
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, base: { ref: 'master', sha: 'old' }, labels: [{ name: 'lgtm' }], user: { login: 'some-author' }, requested_reviewers: [], assignees: [] } })
+      gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'new' } } })
+      gh.route('GET', `${repo}/git/trees/old`, { status: 200, body: { sha: 'old', truncated: false, tree: [] } })
+      gh.route('GET', `${repo}/git/trees/new`, { status: 200, body: { sha: 'new', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: blobSha('OWNERS') }] } })
+      gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'new', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: blobSha('OWNERS') }] } })
+      routeApprove(['src/a.go'], {
+        comments: [{ id: 1, body: '/approve', user: { login: 'alice', type: 'User' }, created_at: '2024-01-01T00:00:01Z' }],
+      })
+
+      const result = await runApprove('/approve', 'alice')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+      const body = (gh.requestsMatching('POST', /\/issues\/1\/comments$/)[0].body as { body: string }).body
+      expect(body).toContain('This PR is **APPROVED**')
+      expect(body).toContain(`~~[OWNERS](https://github.com/Codertocat/Hello-World/blob/new/OWNERS)~~ [alice]`)
+      expect(gh.requestsMatching('GET', /\/git\/trees\/old/)).toEqual([])
+      expect(gh.requestsMatching('GET', /\/git\/trees\/new/)).toHaveLength(1)
+      // the gate read the same branch: lgtm alone no longer merges, approved (just granted) is required
+      expect(result.stdout).toContain('skipping pr #1: missing approved')
+      expect(gh.requestsMatching('PUT', /merge$/)).toEqual([])
+    })
+
     it('on a repository without OWNERS files /approve still submits a bot review and touches no label', async () => {
       routeOwners({}, ['src/file1.txt'])
       gh.route('GET', `/orgs/Codertocat/members/bob`, { status: 204 })
@@ -695,7 +725,7 @@ describe('dist/index.js', () => {
         `GET /orgs/Codertocat/members/bob`,
         `GET ${repo}/collaborators/bob`,
         `POST ${repo}/pulls/1/reviews`,
-      ], [ownersProbe, `GET ${repo}/pulls/1`, queueRead])
+      ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
     })
   })
 
@@ -958,9 +988,9 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['area/sdk'] })
       expect(gh.requestsMatching('POST', /requested_reviewers$/)).toEqual([])
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect(calls.slice(0, 3)).toEqual(ownersReads)
-      expect(calls.slice(3, 5).sort()).toEqual(ownersBlobs)
-      expect(calls.slice(5)).toEqual([
+      expect(calls.slice(0, 4)).toEqual(ownersReads)
+      expect(calls.slice(4, 6).sort()).toEqual(ownersBlobs)
+      expect(calls.slice(6)).toEqual([
         `GET ${repo}/issues/1`,
         labelsRead,
         `POST ${repo}/issues/1/labels`,
@@ -1016,7 +1046,7 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     // tide probes for OWNERS files, reads the pull request once and stops at the missing lgtm; the lgtm job does nothing on labeled
-    expectRequests(configReads(), [ownersProbe, `GET ${repo}/pulls/1`, queueRead])
+    expectRequests(configReads(), [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
   })
 
   describe('event-driven merging', () => {
@@ -1058,7 +1088,7 @@ describe('dist/index.js', () => {
       const merges = gh.requestsMatching('PUT', /\/pulls\/1\/merge$/)
       expect(merges).toHaveLength(1)
       expect(merges[0].body).toEqual({ merge_method: 'squash', sha: head })
-      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, queueRead, merge])
+      expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
 
     describe('headline: an lgtm that is not bound to the head never merges', () => {
@@ -1100,7 +1130,7 @@ describe('dist/index.js', () => {
         expect(result.errors).toEqual([])
         expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${short}`)
         expectStripped()
-        expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, ...strip, queueRead])
+        expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, ...strip, queueRead])
       })
 
       it('pull_request labeled lgtm by a human when the status cannot be written: the run fails, and tide still strips the unbound label', async () => {
@@ -1135,9 +1165,8 @@ describe('dist/index.js', () => {
         expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${sha.slice(0, 7)}`)
         expectStripped(sha)
         expectRequests(configReads(), [
-          `GET ${repo}`,
-          ownersProbe,
           `GET ${repo}/pulls?state=open&page=1`,
+          ownersProbe,
           pullRead,
           `GET ${repo}/commits/${sha}/status?per_page=100`,
           `DELETE ${repo}/issues/1/labels/lgtm`,
@@ -1161,13 +1190,13 @@ describe('dist/index.js', () => {
         const event = await runPullRequest(labeledLgtm({ login: 'some-app[bot]', type: 'Bot' }))
         expect(event.status, event.stdout).toBe(0)
         expect(event.stdout).toContain('merged pr #1')
-        expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, queueRead, merge])
+        expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, queueRead, merge])
 
         gh.requests.length = 0
         const cron = await runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
         expect(cron.status, cron.stdout).toBe(0)
         expect(cron.stdout).toContain('merged pr #1')
-        expectRequests(configReads(), [`GET ${repo}`, ownersProbe, `GET ${repo}/pulls?state=open&page=1`, pullRead, bindingRead, queueRead, merge, `GET ${repo}/pulls?state=open&page=2`])
+        expectRequests(configReads(), [`GET ${repo}/pulls?state=open&page=1`, ownersProbe, pullRead, bindingRead, queueRead, merge, `GET ${repo}/pulls?state=open&page=2`])
         expect(gh.requestsMatching('DELETE', /./)).toEqual([])
       })
     })
@@ -1202,7 +1231,7 @@ describe('dist/index.js', () => {
       const reads = configReads({ repo: '.github/prow.yaml' })
       expect(calls.slice(0, post - 2).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`, ...reads].sort())
       expect(calls.slice(post - 2, post)).toEqual([`POST ${repo}/statuses/headsha`, labelsRead])
-      expect(calls.slice(post + 1)).toEqual([ownersProbe, pullRead, `GET ${repo}/commits/headsha/status?per_page=100`, queueRead, merge])
+      expect(calls.slice(post + 1)).toEqual([pullRead, ownersProbe, `GET ${repo}/commits/headsha/status?per_page=100`, queueRead, merge])
     })
 
     it('issue_comment /kind cleanup on a pr carrying needs-kind: labels, then clears needs-kind in the same run', async () => {
@@ -1232,8 +1261,8 @@ describe('dist/index.js', () => {
         `POST ${repo}/issues/1/labels`,
         `GET ${repo}/issues/1`,
         `DELETE ${repo}/issues/1/labels/needs-kind`,
-        ownersProbe,
         pullRead,
+        ownersProbe,
         queueRead,
       ])
     })
@@ -1250,7 +1279,7 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('skipping pr #1: missing approved')
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expectRequests(configReads(), [bind, ownersProbe, pullRead, queueRead])
+      expectRequests(configReads(), [bind, pullRead, ownersProbe, queueRead])
     })
 
     it('pull_request labeled lgtm: tide.merge_method wins over the input', async () => {
@@ -1263,7 +1292,7 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'rebase', sha: head })
-      expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, ownersProbe, pullRead, bindingRead, queueRead, merge])
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
 
     it('pull_request labeled lgtm with lgtm.bind_to_commit false: no status is written or read (legacy label-only merging)', async () => {
@@ -1277,7 +1306,7 @@ describe('dist/index.js', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('merged pr #1')
-      expectRequests(configReads({ repo: '.github/prow.yaml' }), [ownersProbe, pullRead, queueRead, merge])
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [pullRead, ownersProbe, queueRead, merge])
     })
 
     it.each(['blocked', 'behind', 'dirty', 'unstable'])('pull_request labeled lgtm: does not merge a %s pr', async (state) => {
@@ -1291,7 +1320,7 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain(`skipping pr #1: not mergeable (${state})`)
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, queueRead])
+      expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, queueRead])
     })
 
     // GitHub answers unknown right after a push; the bundle really waits 1 s here before the second read
@@ -1307,7 +1336,7 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, queueRead, pullRead, merge])
+      expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, queueRead, pullRead, merge])
     })
 
     it('pull_request labeled lgtm: a refused merge fails the run', async () => {
@@ -1321,7 +1350,7 @@ describe('dist/index.js', () => {
       expect(result.errors.some(e => e.includes('could not merge pr #1: Pull Request is not mergeable'))).toBe(true)
       expect(result.errors.some(e => e.includes('error handling pull_request event: could not merge pull request(s) #1'))).toBe(true)
       // the refusal triggers a re-read to tell a concurrent merge from a real failure
-      expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, queueRead, merge, pullRead])
+      expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, queueRead, merge, pullRead])
     })
 
     it('pull_request labeled lgtm: merge_on_events false binds the label and leaves the merge to the cron', async () => {
@@ -1356,7 +1385,7 @@ describe('dist/index.js', () => {
         expect(enqueues).toHaveLength(1)
         expect((enqueues[0].body as { variables: unknown }).variables).toEqual({ pullRequestId: nodeId, expectedHeadOid: head })
         // the gate passes, so the state is read once, then the pull request's mergeability, then the enqueue
-        expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, graphql, graphql])
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, graphql])
       })
 
       it('tide.merge_queue: off never calls GraphQL and the 405 surfaces as before', async () => {
@@ -1371,7 +1400,7 @@ describe('dist/index.js', () => {
         expect(result.status, result.stdout).toBe(1)
         expect(result.errors.some(e => e.includes('could not merge pr #1: Changes must be made through the merge queue.'))).toBe(true)
         expect(gh.requestsMatching('POST', /^\/graphql$/)).toEqual([])
-        expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, ownersProbe, pullRead, bindingRead, merge, pullRead])
+        expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, pullRead, ownersProbe, bindingRead, merge, pullRead])
       })
 
       it('no queue on the base branch: one state read, then exactly the merge path of before', async () => {
@@ -1384,7 +1413,7 @@ describe('dist/index.js', () => {
 
         expect(result.status, result.stdout).toBe(0)
         expect(result.stdout).toContain('merged pr #1')
-        expectRequests(configReads(), [bind, ownersProbe, pullRead, bindingRead, graphql, merge])
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, merge])
       })
 
       it('pull_request unlabeled lgtm on a pr the bot enqueued: dequeued', async () => {
@@ -1399,7 +1428,7 @@ describe('dist/index.js', () => {
         const dequeues = gh.graphqlCalls('dequeuePullRequest')
         expect(dequeues).toHaveLength(1)
         expect((dequeues[0].body as { variables: unknown }).variables).toEqual({ id: nodeId })
-        expectRequests(configReads(), [ownersProbe, pullRead, graphql, graphql])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
       })
 
       it('pull_request unlabeled lgtm on a pr a human enqueued: left in the queue', async () => {
@@ -1410,7 +1439,7 @@ describe('dist/index.js', () => {
 
         expect(result.status, result.stdout).toBe(0)
         expect(gh.graphqlCalls('dequeuePullRequest')).toEqual([])
-        expectRequests(configReads(), [ownersProbe, pullRead, graphql])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql])
       })
 
       it('schedule jobs: lgtm enqueues a queue-branch pr and never dequeues a gate-failing one', async () => {
@@ -1462,7 +1491,7 @@ describe('dist/index.js', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectRequests(configReads(), [ownersProbe, pullRead, bindingRead, queueRead, merge])
+      expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
 
     it('check_suite completed without pull_requests: finds the pr by head sha', async () => {
@@ -1480,10 +1509,10 @@ describe('dist/index.js', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expectRequests(configReads(), [
-        ownersProbe,
         `GET ${repo}/pulls?state=open&per_page=100&page=1`,
         `GET ${repo}/pulls?state=open&per_page=100&page=2`,
         pullRead,
+        ownersProbe,
         `GET ${repo}/commits/${sha}/status?per_page=100`,
         queueRead,
         merge,
@@ -1503,7 +1532,7 @@ describe('dist/index.js', () => {
     function routeOwnersRepo(files: string[], pulls: Record<string, unknown>[], comments: unknown[] = [], reviews: unknown[] = []) {
       gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })) } })
       // the first matching route wins, so the per-call pull bodies go in before routeOwners' static one
-      gh.routeSequence('GET', `${repo}/pulls/1`, pulls.map(pull => ({ status: 200, body: { ...openPr([]), number: 1, base: { sha: 'basesha' }, user: { login: 'Codertocat' }, draft: false, requested_reviewers: [], assignees: [], mergeable: true, mergeable_state: 'clean', ...pull } })))
+      gh.routeSequence('GET', `${repo}/pulls/1`, pulls.map(pull => ({ status: 200, body: { ...openPr([]), number: 1, base: { ref: 'master', sha: 'basesha' }, user: { login: 'Codertocat' }, draft: false, requested_reviewers: [], assignees: [], mergeable: true, mergeable_state: 'clean', ...pull } })))
       routeOwners(ownersFiles, files)
       gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
       gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: comments })
@@ -1631,8 +1660,8 @@ describe('dist/index.js', () => {
   })
 
   describe('schedule lgtm job', () => {
-    // a bare schedule payload names no default branch, so the gate reads the repository before probing its tree
-    const gateReads = [`GET ${repo}`, ownersProbe]
+    // the gate's default follows each listed pull request's base branch, so the tree is probed once the page is listed
+    const gateReads = [`GET ${repo}/pulls?state=open&page=1`, ownersProbe]
     const head = pullReqListPulls[0].head.sha
     // a listed pr that passes the gate is re-read through the shared merge path: its mergeability, then its lgtm binding
     const evaluation = [`GET ${repo}/pulls/2`, `GET ${repo}/commits/${head}/status?per_page=100`, queueRead]
@@ -1670,7 +1699,6 @@ describe('dist/index.js', () => {
       expect(merges[0].body).toEqual({ merge_method: 'squash', sha: head })
       expectRequests(configReads(), [
         ...gateReads,
-        `GET ${repo}/pulls?state=open&page=1`,
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
@@ -1690,7 +1718,6 @@ describe('dist/index.js', () => {
       expect(merges[0].body).toEqual({ merge_method: 'rebase', sha: head })
       expectRequests(configReads({ repo: '.github/prow.yaml' }), [
         ...gateReads,
-        `GET ${repo}/pulls?state=open&page=1`,
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls?state=open&page=2`,
@@ -1708,12 +1735,11 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       expectRequests(configReads(), [
         ...gateReads,
-        `GET ${repo}/pulls?state=open&page=1`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
-    it('does not merge a locked pr', async () => {
+    it('does not merge a locked pr, without resolving its gate', async () => {
       routePulls(openPr(['lgtm'], { locked: true }))
 
       const result = await runCron()
@@ -1722,7 +1748,6 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       expectRequests(configReads(), [
-        ...gateReads,
         `GET ${repo}/pulls?state=open&page=1`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
@@ -1740,7 +1765,6 @@ describe('dist/index.js', () => {
       // the refusal triggers a re-read to tell a concurrent merge from a real failure
       expectRequests(configReads(), [
         ...gateReads,
-        `GET ${repo}/pulls?state=open&page=1`,
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls/2`,
@@ -1757,6 +1781,35 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain(`skipping pr #2: not mergeable (${state})`)
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
+    })
+
+    it('a fork pr GitHub refuses with 403 over workflow files it lacks: one explaining comment, skipped, the run succeeds', async () => {
+      routePulls(openPr(['lgtm'], { head: { sha: head, repo: { full_name: 'dave/Hello-World' } } }), { status: 403, body: { message: 'Resource not accessible by integration' } })
+      gh.route('GET', `${repo}/compare/${head}...master`, { status: 200, body: { files: [{ filename: '.github/workflows/prow.yml', status: 'added' }] } })
+      gh.route('GET', `${repo}/pulls/2/files`, { status: 200, body: [{ filename: 'README.md', status: 'modified' }] })
+      gh.route('GET', `${repo}/issues/2/comments`, { status: 200, body: [] })
+      gh.route('POST', `${repo}/issues/2/comments`, { status: 201, body: {} })
+
+      const result = await runCron()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('skipping pr #2: fork pull request with workflow changes: the token may not merge it')
+      const comments = gh.requestsMatching('POST', /\/issues\/2\/comments$/)
+      expect(comments).toHaveLength(1)
+      expect((comments[0].body as { body: string }).body).toContain('workflow files (`.github/workflows/prow.yml`) that the branch does not contain')
+      // the refusal, the re-read, then the diagnosis: what the base has that the head lacks, and what the pr changes
+      expectRequests(configReads(), [
+        ...gateReads,
+        ...evaluation,
+        `PUT ${repo}/pulls/2/merge`,
+        `GET ${repo}/pulls/2`,
+        `GET ${repo}/compare/${head}...master`,
+        `GET ${repo}/pulls/2/files?per_page=100`,
+        `GET ${repo}/issues/2/comments?per_page=100`,
+        `POST ${repo}/issues/2/comments`,
+        `GET ${repo}/pulls?state=open&page=2`,
+      ])
     })
   })
 
@@ -1781,7 +1834,7 @@ describe('dist/index.js', () => {
         mergeable_state: 'clean',
         user: { login: 'dave' },
         head: { sha: `sha${number}`, repo: { full_name: 'dave/Hello-World' } },
-        base: { sha: 'basesha' },
+        base: { ref: 'master', sha: 'basesha' },
         ...overrides,
       })
     }
@@ -1809,10 +1862,9 @@ describe('dist/index.js', () => {
       expect(result.stdout).toContain('sweep: 1 candidate updated since')
       expect(result.stdout).toContain('sweep: #1 merged')
       expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge', sha: 'sha1' })
-      // the configuration, the window's page, then the OWNERS probe once; per candidate: the pr, its binding, the merge
+      // the configuration, the window's page, then per candidate: the OWNERS probe of its base branch (once per branch), the pr, its binding, the merge
       expectRequests(configReads(), [
         listPage(1),
-        `GET ${repo}`,
         ownersProbe,
         `GET ${repo}/pulls/1`,
         `GET ${repo}/commits/sha1/status?per_page=100`,

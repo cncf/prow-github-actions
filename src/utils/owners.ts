@@ -166,8 +166,14 @@ function decode(data: unknown, path: string): string {
   return Buffer.from(file.content, file.encoding as BufferEncoding).toString()
 }
 
+type TreeListing = Awaited<ReturnType<Octokit['git']['getTree']>>['data']
+
+const treeCache = new Map<string, Promise<TreeListing>>()
+
 /**
- * Load the OWNERS files at ref that can apply to the given paths.
+ * Load the OWNERS files at ref that can apply to the given paths. The
+ * recursive listing of a commit never changes, so it is memoized per ref for
+ * the lifetime of the process: pull requests sharing a base tip share it.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -184,12 +190,8 @@ export async function loadOwnersTree(
 
   let tree
   try {
-    const response = await octokit.git.getTree({
-      ...context.repo,
-      tree_sha: ref,
-      recursive: 'true',
-    })
-    tree = response.data
+    tree = await memoized(treeCache, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () =>
+      (await octokit.git.getTree({ ...context.repo, tree_sha: ref, recursive: 'true' })).data)
   }
   catch (e) {
     throw new Error(`error loading OWNERS files at ${ref}: ${e}`)
@@ -268,32 +270,49 @@ async function probeOwners(
 const hasOwnersCache = new Map<string, Promise<boolean>>()
 
 /**
- * repoHasOwners reports whether the default branch carries any OWNERS file,
- * which is what switches `/approve` and the tide gate to their OWNERS
- * behaviour. One recursive tree listing per repository, memoized for the
- * lifetime of the process; the payload's `repository.default_branch` spares
- * the `repos.get` lookup when present.
+ * repoHasOwners reports whether the default branch carries any OWNERS file.
+ * It is `branchHasOwners` for the default branch, which the payload's
+ * `repository.default_branch` names without a `repos.get` lookup. Callers
+ * with a pull request in scope use `branchHasOwners` on its base branch, so
+ * that the tide gate and `/approve` read the same ref.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 export function repoHasOwners(octokit: Octokit, context: Context): Promise<boolean> {
-  const key = `${context.repo.owner}/${context.repo.repo}`
-  let pending = hasOwnersCache.get(key)
+  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}`, async () =>
+    branchHasOwners(octokit, context, await defaultBranch(octokit, context)))
+}
+
+/**
+ * branchHasOwners reports whether a branch carries any OWNERS file, which is
+ * what switches `/approve` and the tide gate to their OWNERS behaviour. One
+ * recursive tree listing per branch, memoized for the lifetime of the process.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param branch - the branch name, ex: the pull request's `base.ref`
+ */
+export function branchHasOwners(octokit: Octokit, context: Context, branch: string): Promise<boolean> {
+  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}@${branch}`, () =>
+    probeBranchOwners(octokit, context, branch))
+}
+
+export function resetOwnersCaches(): void {
+  hasOwnersCache.clear()
+  treeCache.clear()
+}
+
+function memoized<T>(cache: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
+  let pending = cache.get(key)
   if (pending === undefined) {
-    pending = probeRepoOwners(octokit, context)
-    hasOwnersCache.set(key, pending)
+    pending = compute()
+    cache.set(key, pending)
   }
   return pending
 }
 
-export function resetRepoHasOwnersCache(): void {
-  hasOwnersCache.clear()
-}
-
-async function probeRepoOwners(octokit: Octokit, context: Context): Promise<boolean> {
-  const branch = await defaultBranch(octokit, context)
-
+async function probeBranchOwners(octokit: Octokit, context: Context, branch: string): Promise<boolean> {
   let tree
   try {
     tree = (await octokit.git.getTree({ ...context.repo, tree_sha: branch, recursive: 'true' })).data

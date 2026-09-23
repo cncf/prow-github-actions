@@ -50,11 +50,11 @@ concurrency:
 jobs:
   prow:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.1
 
   label-sync:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.1
     with:
       jobs: label-sync
 ```
@@ -71,7 +71,7 @@ your organization's `.github` repository for label families and `needs-*` rules
 ([starter](./templates/prow.yaml), [configuration](./docs/configuration.md)). The
 [Installing](./docs/installing.md) guide covers organizations, upgrading, inputs and secrets.
 
-These docs describe `main`; the latest release is [`v3.0.0`](https://github.com/cncf/prow-github-actions/releases/tag/v3.0.0)
+These docs describe `main`; the latest release is [`v3.0.1`](https://github.com/cncf/prow-github-actions/releases/tag/v3.0.1)
 ([releasing](./docs/releasing.md)). The action requires the `node24` runtime
 (GitHub requires actions/runner 2.327.1 or newer for node24 on self-hosted runners).
 
@@ -97,7 +97,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.0.0
+      - uses: cncf/prow-github-actions@v3.0.1
         with:
           prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'

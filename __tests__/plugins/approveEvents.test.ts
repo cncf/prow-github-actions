@@ -234,14 +234,14 @@ describe('approveOnPullRequest', () => {
     expect(debug).toHaveBeenCalledWith(`approve: skipping ${action} action`)
   })
 
-  it('a repository without OWNERS files on its default branch only reads the tree', async () => {
+  it('a pull request whose base branch has no OWNERS files only reads that tree', async () => {
     const observePull = new utils.ObserveRequest()
     server.use(utils.defaultBranchTree(['README.md']), http.get(`${repo}/pulls/1`, utils.mockResponse(500, null, observePull)))
 
     await approveOnPullRequest(prEvent('opened'))
 
     await expect(observePull.notCalled()).resolves.toBe('not called')
-    expect(debug).toHaveBeenCalledWith('approve: the repository has no OWNERS files')
+    expect(debug).toHaveBeenCalledWith('approve: the base branch has no OWNERS files')
   })
 
   it('a base branch without OWNERS files is left alone even when the default branch has them', async () => {
@@ -331,7 +331,7 @@ describe('approveOnPullRequest', () => {
         mergeable: true,
         mergeable_state: 'clean',
         labels: labels.map(name => ({ name })),
-        base: { sha: 'basesha' },
+        base: { ref: 'master', sha: 'basesha' },
         head: { sha: 'headsha' },
         user: { login: 'alice' },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -419,7 +419,7 @@ describe('approveOnReview', () => {
         mergeable: true,
         mergeable_state: 'clean',
         labels: (pulls === 1 ? ['lgtm'] : ['lgtm', 'approved']).map(name => ({ name })),
-        base: { sha: 'basesha' },
+        base: { ref: 'master', sha: 'basesha' },
         head: { sha: 'headsha' },
         user: { login: 'carol' },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } })

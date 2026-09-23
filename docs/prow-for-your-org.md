@@ -128,7 +128,7 @@ concurrency:
 jobs:
   prow:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.1
     # optional; the defaults enable every built-in command and the lgtm job
     # with:
     #   prow-commands: /lgtm /approve /hold /kind /area /priority
@@ -140,12 +140,12 @@ jobs:
 
   label-sync:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.0.1
     with:
       jobs: label-sync
 ```
 
-The templates pin the release `@v3.0.0`; [upgrading](./installing.md#upgrading) covers moving to
+The templates pin the release `@v3.0.1`; [upgrading](./installing.md#upgrading) covers moving to
 newer releases, the floating `v3` tag and hash pinning. The `permissions` block is the
 ceiling: the reusable workflow can only downgrade what the caller grants
 ([installing](./installing.md#one-repository)). Inputs, secrets and upgrading are covered
@@ -189,7 +189,8 @@ Those are all the keys supported: `approvers`, `reviewers`, `labels`,
 `options.no_parent_owners`. `OWNERS_ALIASES`, `filters` and `emeritus_approvers` are not
 supported. [commands](./commands.md#owners) has the full format and the failure modes.
 
-What changes the moment the default branch carries any OWNERS file:
+What changes the moment a pull request's base branch (your default branch, for most) carries any
+OWNERS file, open pull requests included:
 
 | Before | After |
 | --- | --- |
@@ -230,6 +231,7 @@ lines.
 | A merge made with `GITHUB_TOKEN` fires no `push` workflows | post-merge automation does not run | pass a PAT or GitHub App token via the `token` secret ([installing](./installing.md#inputs-and-secrets)) |
 | `<org>/.project` is private | a consumer's `GITHUB_TOKEN` cannot read it; the org tier silently falls through to `<org>/.github` | keep the org config in `.github`, or pass a `token` that can read `.project` ([installing](./installing.md#the-project-tier)) |
 | Fork PRs | the template uses `pull_request_target`, so forks get labels and merges; safe because nothing checks out PR code ([events](./events.md#pull_request_target-and-the-reusable-workflow)) | nothing |
+| A fork PR passes the gate but will not merge: `403 Resource not accessible by integration` | the merge involves workflow files the fork's branch lacks (or changes); `GITHUB_TOKEN` cannot get the `workflows` permission. The bot comments once and skips the PR ([fork pull requests and workflow files](./automatic-merging.md#fork-pull-requests-and-workflow-files)) | the author rebases onto the base branch; or pass a `token` with the `workflows` scope |
 | zizmor (`dangerous-triggers`) or a hash-pin org policy rejects `pull_request_target` | `pull_request` gives fork PRs a read-only token | use the [`pull_request` template](./installing.md#without-pull_request_target): fork PRs are handled by the scheduled `sweep` within minutes, comments stay instant |
 | Cron slots are delayed or dropped under GitHub load (observed: two slots dropped, one 16 min late) | merges land on events within seconds; the cron is only the backstop for missed events | keep the events subscribed; shorten the cron only if you accept the gap |
 | You want cron-only merging | — | set `tide.merge_on_events: false` ([automatic merging](./automatic-merging.md#merge_on_events)) |

@@ -4,6 +4,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { assertAuthorizedByOwnersOrMembership } from '../../src/utils/auth'
+import { resetOwnersCaches } from '../../src/utils/owners'
 import { resetPullRequestOwnersCache } from '../../src/utils/pullRequestOwners'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
@@ -37,9 +38,10 @@ const rootOwners = 'approvers:\n- alice\nreviewers:\n- rita\n'
 const sdkOwners = 'approvers:\n- bob\nreviewers:\n- ryan\n'
 const olmOwners = 'options:\n  no_parent_owners: true\napprovers:\n- carol\n'
 
-// each call stands for its own action run, so the per-run OWNERS memo is cleared first
+// each call stands for its own action run, so the per-run OWNERS memos (pull request, tree listing) are cleared first
 function authorize(role: 'approvers' | 'reviewers', username: string, context = prContext) {
   resetPullRequestOwnersCache()
+  resetOwnersCaches()
   return assertAuthorizedByOwnersOrMembership(octokit, context, role, username)
 }
 

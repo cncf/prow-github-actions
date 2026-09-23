@@ -24,9 +24,10 @@ function walk(dir: string): string[] {
   })
 }
 
+// past release notes pin the version they announced; only the current release's notes must exist
 const files = [
   'README.md',
-  ...walk('docs').filter(file => file.endsWith('.md')),
+  ...walk('docs').filter(file => file.endsWith('.md') && !file.startsWith('docs/releases/')),
   ...walk('templates'),
   '.github/workflows/prow.yml',
   '.github/workflows/prow-bot.yml',

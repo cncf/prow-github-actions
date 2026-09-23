@@ -1,13 +1,16 @@
+import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadPullRequestOwners, resetPullRequestOwnersCache } from '../../src/utils/pullRequestOwners'
 import * as utils from '../testUtils'
 import {
+  baseBranch,
   baseSha,
   blobSha,
+  branchHandler,
   changedFiles,
   filesHandler,
   prCommentEvent,
@@ -39,7 +42,7 @@ describe('loadPullRequestOwners', () => {
       http.get(`${repo}/pulls/1`, async (info) => {
         order.push('pull')
         return utils.mockResponse(200, {
-          base: { sha: baseSha },
+          base: { ref: baseBranch, sha: baseSha },
           head: { sha: 'headsha' },
           user: { login: 'Some-Author' },
           draft: true,
@@ -124,7 +127,7 @@ describe('loadPullRequestOwners', () => {
     server.use(
       http.get(`${repo}/pulls/1`, () => {
         pulls++
-        return new Response(JSON.stringify({ base: { sha: baseSha }, head: { sha: 'headsha' } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        return new Response(JSON.stringify({ base: { ref: baseBranch, sha: baseSha }, head: { sha: 'headsha' } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }),
       filesHandler(changedFiles('src/file1.txt')),
       ...treeHandlers({ OWNERS: rootOwners }),
@@ -145,7 +148,7 @@ describe('loadPullRequestOwners', () => {
 
     const observePull = new utils.ObserveRequest()
     server.use(
-      http.get(`${repo}/pulls/2`, utils.mockResponse(200, { base: { sha: baseSha }, head: { sha: 'headsha' } }, observePull)),
+      http.get(`${repo}/pulls/2`, utils.mockResponse(200, { base: { ref: baseBranch, sha: baseSha }, head: { sha: 'headsha' } }, observePull)),
       http.get(`${repo}/pulls/2/files`, utils.mockResponse(200, changedFiles('sdk/x.go'))),
       ...treeHandlers({ OWNERS: rootOwners }),
     )
@@ -181,5 +184,95 @@ describe('loadPullRequestOwners', () => {
 
     await expect(loadPullRequestOwners(octokit, context, 1)).rejects.toThrow(`error loading OWNERS files at ${baseSha}`)
     await observeTree.called()
+  })
+
+  describe('the base branch tip', () => {
+    const emptyTree = (sha: string) => ({ sha, truncated: false, tree: [] })
+
+    it('reads the OWNERS at the current tip of the base branch, not at base.sha (cncf/automation#709)', async () => {
+      const observeOld = new utils.ObserveRequest()
+      server.use(
+        pullHandler(undefined, { base: { ref: baseBranch, sha: 'old' } }),
+        filesHandler(changedFiles('src/file1.txt')),
+        http.get(`${repo}/git/trees/old`, utils.mockResponse(200, emptyTree('old'), observeOld)),
+        ...treeHandlers({ OWNERS: rootOwners }, { sha: 'new' }),
+      )
+
+      const owners = await loadPullRequestOwners(octokit, context, 1)
+
+      expect(owners.baseSha).toBe('new')
+      expect(owners.tree.hasOwners).toBe(true)
+      expect([...owners.perFile.get('src/file1.txt')!.approvers]).toEqual(['alice'])
+      await expect(observeOld.notCalled()).resolves.toBe('not called')
+    })
+
+    it('a pull request whose base lost its OWNERS files sees none', async () => {
+      server.use(
+        pullHandler(undefined, { base: { ref: baseBranch, sha: 'old' } }),
+        filesHandler(changedFiles('src/file1.txt')),
+        ...treeHandlers({ OWNERS: rootOwners }, { sha: 'old' }).slice(1),
+        ...treeHandlers({}, { sha: 'new' }),
+      )
+
+      const owners = await loadPullRequestOwners(octokit, context, 1)
+
+      expect(owners.baseSha).toBe('new')
+      expect(owners.tree.hasOwners).toBe(false)
+      expect(owners.perFile.get('src/file1.txt')).toBeUndefined()
+    })
+
+    it('falls back to base.sha with a warning when the base branch cannot be read', async () => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      server.use(
+        pullHandler(),
+        filesHandler(changedFiles('src/file1.txt')),
+        http.get(`${repo}/branches/${baseBranch}`, utils.mockResponse(404, { message: 'Branch not found' })),
+        ...treeHandlers({ OWNERS: rootOwners }).slice(1),
+      )
+
+      const owners = await loadPullRequestOwners(octokit, context, 1)
+
+      expect(owners.baseSha).toBe(baseSha)
+      expect(owners.tree.hasOwners).toBe(true)
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining(`could not read the tip of ${baseBranch}; reading OWNERS at ${baseSha}`))
+    })
+
+    it('is memoized per branch: two pull requests on the same base cost one branch read and one tree read', async () => {
+      let branches = 0
+      let trees = 0
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      server.use(
+        http.get(`${repo}/pulls/:number`, ({ params }) => json({ number: Number(params.number), base: { ref: baseBranch, sha: 'old' }, head: { sha: 'headsha' } })),
+        http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, changedFiles('src/file1.txt'))),
+        http.get(`${repo}/branches/${baseBranch}`, () => {
+          branches++
+          return json({ name: baseBranch, commit: { sha: 'new' } })
+        }),
+        http.get(`${repo}/git/trees/new`, () => {
+          trees++
+          return json(emptyTree('new'))
+        }),
+      )
+
+      const [one, two] = await Promise.all([loadPullRequestOwners(octokit, context, 1), loadPullRequestOwners(octokit, context, 2)])
+
+      expect(one.baseSha).toBe('new')
+      expect(two.baseSha).toBe('new')
+      expect(branches).toBe(1)
+      expect(trees).toBe(1)
+    })
+
+    it('resetPullRequestOwnersCache forgets the tip too', async () => {
+      server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
+      await loadPullRequestOwners(octokit, context, 1)
+
+      resetPullRequestOwnersCache()
+      const observeBranch = new utils.ObserveRequest()
+      server.use(pullHandler(), filesHandler(changedFiles('src/file1.txt')), branchHandler(baseSha, baseBranch, observeBranch), ...treeHandlers({ OWNERS: rootOwners }).slice(1))
+
+      await loadPullRequestOwners(octokit, context, 1)
+
+      await observeBranch.called()
+    })
   })
 })

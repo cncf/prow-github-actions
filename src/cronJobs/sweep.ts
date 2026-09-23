@@ -14,7 +14,7 @@ import { enforceRequiredLabels } from '../plugins/requireMatchingLabel'
 import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig, resolveSweepLookback } from '../utils/config'
 import { newOctokit } from '../utils/octokit'
-import { repoHasOwners } from '../utils/owners'
+import { branchHasOwners } from '../utils/owners'
 
 type PullsListItem = RestEndpointMethodTypes['pulls']['list']['response']['data'][number]
 
@@ -64,13 +64,7 @@ export async function sweep(context: Context = github.context, now: Date = new D
     return result
   }
 
-  const plugins = {
-    hasOwners: await repoHasOwners(octokit, context),
-    tide: await loadTide(octokit, context),
-    lgtm: lgtmSettings(config),
-    config,
-    since,
-  }
+  const plugins = { lgtm: lgtmSettings(config), config, since }
 
   await forEachLimited(candidates, sweepConcurrency, async (pr) => {
     const outcome = await sweepPullRequest(octokit, context, pr, plugins)
@@ -93,8 +87,6 @@ export async function sweep(context: Context = github.context, now: Date = new D
 }
 
 interface SweepPlugins {
-  hasOwners: boolean
-  tide: Awaited<ReturnType<typeof loadTide>>
   lgtm: ReturnType<typeof lgtmSettings>
   config: ProwConfig
   since: Date
@@ -109,6 +101,9 @@ type Step = [name: string, run: () => Promise<void>]
 
 async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<PullOutcome> {
   const outcome: PullOutcome = { result: 'evaluated', errors: [] }
+  // both memoized per base branch: one tree listing however many pull requests share it
+  const hasOwners = await branchHasOwners(octokit, context, pr.base.ref)
+  const tide = await loadTide(octokit, context, pr.base.ref)
   const ownersSteps: Step[] = [
     ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
     ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
@@ -116,10 +111,10 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
   ]
   const steps: Step[] = [
     ['require-matching-label', () => enforceRequiredLabels(octokit, context, { issueNumber: pr.number, isPullRequest: true })],
-    ...(plugins.hasOwners ? ownersSteps : []),
+    ...(hasOwners ? ownersSteps : []),
     ['ok-to-test', () => approveIfTrusted(octokit, context, pr)],
     ['tide', async () => {
-      const verdict = await evaluateMerge(octokit, context, pr.number, plugins.tide, plugins.lgtm)
+      const verdict = await evaluateMerge(octokit, context, pr.number, tide, plugins.lgtm, { once: true })
       if (verdict.result === 'failed') {
         throw new Error(verdict.message)
       }

@@ -25,7 +25,7 @@ The configuration is read once per run, however many commands the comment carrie
 ### The `config` input
 
 ```yaml
-- uses: cncf/prow-github-actions@v3.0.0
+- uses: cncf/prow-github-actions@v3.0.1
   with:
     config: cncf/prow-config:configs/prow.yaml@v1
     github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -85,7 +85,7 @@ require_matching_label:
     prs: true
     grace_period_duration: 5s
 
-# the merge gate; these are the defaults (labels is [lgtm, approved] once the repository has OWNERS files)
+# the merge gate; these are the defaults (labels is [lgtm, approved] once the pull request's base branch has OWNERS files)
 tide:
   labels: [lgtm]
   missing_labels: [do-not-merge/*, needs-rebase, hold]
@@ -201,7 +201,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.0.0
+      - uses: cncf/prow-github-actions@v3.0.1
         with:
           jobs: label-sync
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -263,7 +263,7 @@ default list rather than extending it.
 
 Field | Default | Meaning
 --- | --- | ---
-`labels` | `[lgtm]`; `[lgtm, approved]` when the repository has [OWNERS files](./commands.md#owners) | every pattern must match a label on the PR
+`labels` | `[lgtm]`; `[lgtm, approved]` when the PR's base branch has [OWNERS files](./commands.md#owners) | every pattern must match a label on the PR
 `missing_labels` | `[do-not-merge/*, needs-rebase, hold]` | no pattern may match a label on the PR
 `merge_method` | the `merge-method` input, else `merge` | `merge`, `squash` or `rebase`; wins over the input
 `merge_on_events` | `true` | `false`: the `pull_request`, `pull_request_review` and `check_suite` handlers merge nothing; only the cron does ([event-driven merging](./automatic-merging.md#event-driven-merging))
@@ -273,10 +273,12 @@ Entries are label names compared case-insensitively; `*` matches any run of char
 `/` included. An empty name, an unknown `merge_method`, a non-boolean `merge_on_events` or a
 `merge_queue` other than `auto`/`off` fails the run.
 
-The `labels` default is decided per run: when `tide.labels` is not configured, one recursive
-listing of the default branch tree (`GET /git/trees/{default_branch}`, memoized for the run)
-tells whether any `OWNERS` file exists; if so [`approved`](./commands.md#approve) joins `lgtm`.
-An explicit `labels` list always wins and skips the listing.
+The `labels` default is decided per pull request from its base branch: when `tide.labels` is not
+configured, one recursive listing of that branch's tree (`GET /git/trees/{base}`, memoized per
+branch for the run) tells whether any `OWNERS` file exists; if so
+[`approved`](./commands.md#approve) joins `lgtm`. The [OWNERS](./commands.md#owners) that
+`/approve` consults come from the same branch. An explicit `labels` list always wins and skips
+the listing.
 
 ### `hold`
 

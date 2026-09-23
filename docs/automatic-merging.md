@@ -45,7 +45,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.0.0
+      - uses: cncf/prow-github-actions@v3.0.1
         with:
           prow-commands: /lgtm /approve /hold /kind /area /priority /check-required-labels /auto-cc
           jobs: lgtm
@@ -194,7 +194,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.0.0
+      - uses: cncf/prow-github-actions@v3.0.1
         with:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'
@@ -329,11 +329,12 @@ lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively
 characters, `/` included, so `do-not-merge/*` covers the whole family while a bare `do-not-merge` matches
 only that exact label.
 
-The `labels` default follows the repository: with no `OWNERS` file anywhere on the default
-branch it is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
-[`/approve` plugin](./commands.md#approve) manages. The check is one recursive tree listing of
-the default branch per run (the event payload's `repository.default_branch`, else
-`GET /repos/{owner}/{repo}`), skipped entirely when `tide.labels` is configured.
+The `labels` default follows the pull request's **base branch**: with no `OWNERS` file anywhere
+on it the gate is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
+[`/approve` plugin](./commands.md#approve) manages. It is the same branch `/approve` reads the
+OWNERS from, so the gate can never require an `approved` that `/approve` cannot grant. The check
+is one recursive tree listing per base branch per run (`GET /git/trees/{base}`, memoized),
+skipped entirely when `tide.labels` is configured.
 
 `lgtm` and `approved` age differently: `lgtm` is [bound to the head commit](#lgtm-is-bound-to-a-commit)
 and a push (`synchronize`) removes it (the [`lgtm` PR job](./pr-jobs.md)); `approved` is never
@@ -443,6 +444,29 @@ Steps:
 4. Workflows that set `merge-method` keep working; move it to `tide.merge_method` when convenient.
 
 Refer to the [lgtm command](./commands.md) and the [PR jobs](./pr-jobs.md) for further reference.
+
+## Fork pull requests and workflow files
+
+A GitHub App token, `GITHUB_TOKEN` included, may not merge a **fork** pull request when the merge
+involves `.github/workflows/*` changes: the base branch carries workflow files the fork's head does
+not (the head is behind the commit that added them), or the pull request changes workflow files
+itself. GitHub answers `403 Resource not accessible by integration` and demands the `workflows`
+permission, which `GITHUB_TOKEN` cannot be granted (bors-ng/bors-ng#806; observed on
+cncf/automation#709). Branch protection, rulesets and the merge method have nothing to do with it;
+same-repository pull requests are unaffected.
+
+On such a 403 the merge path compares the head with the base (`GET /compare/{head}...{base}`) and
+lists the pull request's files, one call each and only then. When either lists a workflow file, the
+pull request gets one comment per head commit naming the files and the way out, the run logs a
+warning and the pull request is **skipped**, not failed: the `lgtm` cron and the `sweep` stop
+erroring on a pull request the bot cannot merge. A 403 without workflow files anywhere is still a
+failure with GitHub's message.
+
+What to do | Who
+--- | ---
+Rebase onto the base branch (or merge it into the pull request) so the branch carries the current workflows; the next evaluation merges | the author
+Merge by hand | a maintainer
+Pass a token with the `workflows` scope (a PAT or a GitHub App with *Workflows: write*) as the `token` secret ([installing](./installing.md#inputs-and-secrets)) | the repository
 
 ## Known limitations
 The cron job pages through the repository's open PRs, following pages until one comes back empty,

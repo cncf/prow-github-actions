@@ -6,7 +6,7 @@ import { resetTideWarnings } from '../src/plugins/tide'
 import { resetProwConfigCache } from '../src/utils/config'
 import { resetLabelCache } from '../src/utils/labeling'
 import { resetMergeQueueWarnings } from '../src/utils/mergeQueue'
-import { resetRepoHasOwnersCache } from '../src/utils/owners'
+import { resetOwnersCaches } from '../src/utils/owners'
 import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
 
 type WebhookPayload = Context['payload']
@@ -68,8 +68,9 @@ export function repoHasLabels(
 
 /**
  * defaultBranchTree serves the recursive tree of Codertocat/Hello-World's
- * default branch (`master` in every fixture), which is how the tide gate and
- * the approve plugin learn whether the repository has OWNERS files.
+ * `master`, the default branch and the base of every fixture pull request,
+ * which is how the tide gate and the approve plugin learn whether that branch
+ * has OWNERS files.
  *
  * @param paths - the blob paths in the tree, ex: ['OWNERS', 'README.md']
  * @param observeReq - optionally records the request
@@ -112,7 +113,7 @@ function clearActionEnv() {
   resetProwConfigCache()
   resetLabelCache()
   resetPullRequestOwnersCache()
-  resetRepoHasOwnersCache()
+  resetOwnersCaches()
   resetMergeQueueWarnings()
   resetTideWarnings()
   for (const key of Object.keys(process.env)) {

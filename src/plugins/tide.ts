@@ -6,11 +6,12 @@ import type { LgtmSettings } from './lgtmBinding'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
+import { createCommentOnce } from '../utils/comments'
 import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { dequeue, enqueue, enqueuedByBot, queueState } from '../utils/mergeQueue'
 import { newOctokit } from '../utils/octokit'
-import { repoHasOwners } from '../utils/owners'
+import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
 import { defaultLgtmSettings, hasLgtmLabel, isLgtmBound, lgtmSettings, shortSha, stripStaleLgtm } from './lgtmBinding'
@@ -25,7 +26,19 @@ export interface Mergeability {
   merged: boolean
   state_open: boolean
   sha: string
+  /** the base branch name, whose OWNERS files decide the gate's default */
+  base: string
+  /** the head lives in another repository */
+  fork: boolean
 }
+
+export interface EvaluateOptions {
+  /** evaluate each pull request once per run: the scheduled jobs pass it, since `sweep` and `lgtm` overlap */
+  once?: boolean
+}
+
+/** the resolved tide configuration, or how to resolve it once the pull request's base branch is known */
+export type TideSource = ResolvedTide | ((base: string) => Promise<ResolvedTide>)
 
 export type MergeResult = 'merged' | 'enqueued' | 'skipped' | 'failed'
 
@@ -61,6 +74,8 @@ const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_f
 const reviewActions = new Set(['submitted', 'dismissed'])
 // a suite or status that ended this way cannot have made the pull request more mergeable
 const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending'])
+// the pull requests the scheduled jobs evaluated in this run: `sweep` and `lgtm` both reach the same ones
+const evaluatedThisRun = new Set<number>()
 
 /**
  * fetchMergeability reads the pull request and, while GitHub reports its
@@ -143,17 +158,27 @@ export async function mergeOnce(octokit: Octokit, context: Context, number: numb
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
- * @param tide - the resolved tide configuration
+ * @param source - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
+ * @param options - see EvaluateOptions
  */
 export async function evaluateMerge(
   octokit: Octokit,
   context: Context,
   number: number,
-  tide: ResolvedTide,
+  source: TideSource,
   lgtm: LgtmSettings = defaultLgtmSettings,
+  options: EvaluateOptions = {},
 ): Promise<MergeVerdict> {
+  if (options.once === true) {
+    if (evaluatedThisRun.has(number)) {
+      return skip(number, 'already evaluated in this run')
+    }
+    evaluatedThisRun.add(number)
+  }
+
   const first = await getPull(octokit, context, number)
+  const tide = typeof source === 'function' ? await source(first.base) : source
 
   let reason = blockedReason(first, tide)
   if (reason === undefined && lgtm.bind_to_commit && hasLgtmLabel(first.labels) && !(await isLgtmBound(octokit, context, first.sha))) {
@@ -197,6 +222,9 @@ export async function evaluateMerge(
   if (outcome.status === 409) {
     return skip(number, /base branch/i.test(outcome.message) ? 'base branch moved' : 'head moved')
   }
+  if (outcome.status === 403 && first.fork && await explainForkWorkflows(octokit, context, number, first)) {
+    return skip(number, 'fork pull request with workflow changes: the token may not merge it')
+  }
 
   core.error(`could not merge pr #${number}: ${outcome.message}`)
   return outcome
@@ -206,6 +234,61 @@ let warnedMergeMethodIgnored = false
 
 export function resetTideWarnings(): void {
   warnedMergeMethodIgnored = false
+  evaluatedThisRun.clear()
+}
+
+const workflowsDir = '.github/workflows/'
+
+/**
+ * explainForkWorkflows diagnoses a 403 on a fork pull request: a GitHub App
+ * token, `GITHUB_TOKEN` included, may not merge one when the merge involves
+ * `.github/workflows/` changes, whether the base carries workflow files the
+ * head lacks or the pull request changes some itself; that needs the
+ * `workflows` permission, which `GITHUB_TOKEN` cannot be granted
+ * (bors-ng/bors-ng#806, observed on cncf/automation#709). When that is the
+ * case it tells the pull request so, once per head, and returns true.
+ */
+async function explainForkWorkflows(octokit: Octokit, context: Context, number: number, pr: Mergeability): Promise<boolean> {
+  let behind: string[]
+  let own: string[]
+  try {
+    const compared = await octokit.repos.compareCommitsWithBasehead({ ...context.repo, basehead: `${pr.sha}...${pr.base}` })
+    behind = workflowFiles((compared.data.files ?? []).map(file => file.filename))
+    const changed = await octokit.paginate(octokit.pulls.listFiles, { ...context.repo, pull_number: number, per_page: 100 })
+    own = workflowFiles(changed.map(file => file.filename))
+  }
+  catch (e) {
+    core.debug(`could not diagnose the 403 on pr #${number}: ${e}`)
+    return false
+  }
+  if (behind.length === 0 && own.length === 0) {
+    return false
+  }
+
+  const what = [
+    ...(behind.length > 0 ? [`(${fileList(behind)}) that the branch does not contain`] : []),
+    ...(own.length > 0 ? [`(${fileList(own)}) that it changes`] : []),
+  ].join(' and ')
+  core.warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`)
+  try {
+    await createCommentOnce(octokit, context, number, `<!-- prow-github-actions/fork-workflows: ${shortSha(pr.sha)} -->`, [
+      `GitHub does not let the workflow token merge this pull request: it comes from a fork and the merge involves workflow files ${what}.`,
+      `Merging such a change needs the \`workflows\` permission, which \`GITHUB_TOKEN\` cannot have. Rebase onto \`${pr.base}\` (or merge it into this branch) so the branch carries the current workflows; a maintainer can also merge by hand or pass a token with the \`workflows\` scope as the \`token\` secret.`,
+    ].join(' '))
+  }
+  catch (e) {
+    core.warning(`could not comment on pr #${number} about the workflow files: ${e}`)
+  }
+  return true
+}
+
+function workflowFiles(paths: string[]): string[] {
+  return [...new Set(paths.filter(path => path.startsWith(workflowsDir)))].sort()
+}
+
+function fileList(paths: string[]): string {
+  const shown = paths.slice(0, 5).map(path => `\`${path}\``).join(', ')
+  return paths.length > 5 ? `${shown} and ${paths.length - 5} more` : shown
 }
 
 async function evaluateInQueue(
@@ -291,17 +374,19 @@ async function dequeueIfOurs(octokit: Octokit, context: Context, number: number,
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
- * @param tide - the resolved tide configuration
+ * @param tide - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
+ * @param options - see EvaluateOptions
  */
 export async function tryMergePullRequest(
   octokit: Octokit,
   context: Context,
   number: number,
-  tide: ResolvedTide,
+  tide: TideSource,
   lgtm: LgtmSettings = defaultLgtmSettings,
+  options: EvaluateOptions = {},
 ): Promise<MergeResult> {
-  return (await evaluateMerge(octokit, context, number, tide, lgtm)).result
+  return (await evaluateMerge(octokit, context, number, tide, lgtm, options)).result
 }
 
 function skip(number: number, reason: string): MergeVerdict {
@@ -341,6 +426,8 @@ async function getPull(octokit: Octokit, context: Context, number: number): Prom
     merged: data.merged,
     state_open: data.state === 'open',
     sha: data.head.sha,
+    base: data.base.ref,
+    fork: data.head.repo?.full_name !== undefined && data.head.repo.full_name !== data.base.repo?.full_name,
   }
 }
 
@@ -439,16 +526,22 @@ export async function tideOnCheckSuite(context: Context = github.context): Promi
 
 /**
  * loadTide reads the configuration and resolves the tide section. The
- * `labels` default depends on whether the repository has OWNERS files
- * (`[lgtm, approved]`) or not (`[lgtm]`); that lookup is skipped when
- * `tide.labels` is configured, and memoized otherwise.
+ * `labels` default depends on whether the pull request's base branch has
+ * OWNERS files (`[lgtm, approved]`) or not (`[lgtm]`), the same branch
+ * `/approve` reads them from; without a base in scope the default branch
+ * stands in. That lookup is skipped when `tide.labels` is configured, and
+ * memoized per branch otherwise.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
+ * @param base - the pull request's base branch, when one is in scope
  */
-export async function loadTide(octokit: Octokit, context: Context): Promise<ResolvedTide> {
+export async function loadTide(octokit: Octokit, context: Context, base?: string): Promise<ResolvedTide> {
   const config = await loadProwConfig(octokit, context)
-  const hasOwners = config.tide.labels === undefined ? await repoHasOwners(octokit, context) : false
+  let hasOwners = false
+  if (config.tide.labels === undefined) {
+    hasOwners = base === undefined ? await repoHasOwners(octokit, context) : await branchHasOwners(octokit, context, base)
+  }
   return resolveTide(config.tide, core.getInput('merge-method', { required: false }), { hasOwners })
 }
 
@@ -463,7 +556,7 @@ async function evaluate(
     core.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
     return
   }
-  const tide = await loadTide(octokit, context)
+  const tide: TideSource = base => loadTide(octokit, context, base)
   const lgtm = lgtmSettings(config)
 
   const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers
