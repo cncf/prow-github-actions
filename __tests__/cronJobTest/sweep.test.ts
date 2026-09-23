@@ -53,7 +53,7 @@ function pull(spec: PullSpec) {
     assignees: [],
     user: { login: spec.user ?? 'some-author' },
     head: { sha: spec.head ?? `sha${spec.number}` },
-    base: { sha: 'basesha' },
+    base: { ref: 'master', sha: 'basesha' },
   }
 }
 

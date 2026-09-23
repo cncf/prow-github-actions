@@ -29,7 +29,8 @@ interface LgtmProgress {
 }
 
 interface MergePolicy {
-  tide: ResolvedTide
+  /** the tide configuration for a pull request's base branch; the gate default follows that branch's OWNERS files */
+  tide: (base: string) => Promise<ResolvedTide>
   lgtm: LgtmSettings
 }
 
@@ -58,7 +59,7 @@ export async function cronLgtm(
   const octokit = newOctokit(token)
 
   const policy: MergePolicy = {
-    tide: await loadTide(octokit, context),
+    tide: base => loadTide(octokit, context, base),
     lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
   }
 
@@ -158,13 +159,14 @@ async function tryMergePr(
   policy: MergePolicy,
   failures: MergeFailure[],
 ): Promise<boolean> {
-  const gate = meetsMergeGate(pr.labels.map(e => e.name), policy.tide)
+  const tide = await policy.tide(pr.base.ref)
+  const gate = meetsMergeGate(pr.labels.map(e => e.name), tide)
   if (!gate.ok) {
     core.info(`skipping pr #${pr.number}: ${gate.reason}`)
     return false
   }
 
-  const verdict = await evaluateMerge(octokit, context, pr.number, policy.tide, policy.lgtm)
+  const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm)
   if (verdict.result === 'failed') {
     failures.push({ number: pr.number, message: verdict.message })
   }

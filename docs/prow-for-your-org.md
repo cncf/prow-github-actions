@@ -189,7 +189,8 @@ Those are all the keys supported: `approvers`, `reviewers`, `labels`,
 `options.no_parent_owners`. `OWNERS_ALIASES`, `filters` and `emeritus_approvers` are not
 supported. [commands](./commands.md#owners) has the full format and the failure modes.
 
-What changes the moment the default branch carries any OWNERS file:
+What changes the moment a pull request's base branch (your default branch, for most) carries any
+OWNERS file, open pull requests included:
 
 | Before | After |
 | --- | --- |

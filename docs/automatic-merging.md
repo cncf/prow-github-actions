@@ -329,11 +329,12 @@ lets a PR with `do-not-merge/hold` merge. Label names compare case-insensitively
 characters, `/` included, so `do-not-merge/*` covers the whole family while a bare `do-not-merge` matches
 only that exact label.
 
-The `labels` default follows the repository: with no `OWNERS` file anywhere on the default
-branch it is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
-[`/approve` plugin](./commands.md#approve) manages. The check is one recursive tree listing of
-the default branch per run (the event payload's `repository.default_branch`, else
-`GET /repos/{owner}/{repo}`), skipped entirely when `tide.labels` is configured.
+The `labels` default follows the pull request's **base branch**: with no `OWNERS` file anywhere
+on it the gate is `[lgtm]`; with one it is `[lgtm, approved]`, the label the
+[`/approve` plugin](./commands.md#approve) manages. It is the same branch `/approve` reads the
+OWNERS from, so the gate can never require an `approved` that `/approve` cannot grant. The check
+is one recursive tree listing per base branch per run (`GET /git/trees/{base}`, memoized),
+skipped entirely when `tide.labels` is configured.
 
 `lgtm` and `approved` age differently: `lgtm` is [bound to the head commit](#lgtm-is-bound-to-a-commit)
 and a push (`synchronize`) removes it (the [`lgtm` PR job](./pr-jobs.md)); `approved` is never

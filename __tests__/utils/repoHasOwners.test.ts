@@ -4,7 +4,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { repoHasOwners, resetRepoHasOwnersCache } from '../../src/utils/owners'
+import { branchHasOwners, repoHasOwners, resetOwnersCaches } from '../../src/utils/owners'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 import { contentsResponse, repo } from './ownersFixtures'
@@ -26,7 +26,7 @@ function treeResponse(paths: string[], truncated = false) {
 describe('repoHasOwners', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
-    resetRepoHasOwnersCache()
+    resetOwnersCaches()
   })
 
   it('is true when the default branch tree lists an OWNERS file anywhere', async () => {
@@ -108,14 +108,14 @@ describe('repoHasOwners', () => {
     )
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(true)
 
-    resetRepoHasOwnersCache()
+    resetOwnersCaches()
     server.use(
       http.get(`${repo}/git/trees/master`, utils.mockResponse(200, treeResponse(['README.md'], true))),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404, { message: 'Not Found' })),
     )
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(false)
 
-    resetRepoHasOwnersCache()
+    resetOwnersCaches()
     server.use(
       http.get(`${repo}/git/trees/master`, utils.mockResponse(200, treeResponse(['README.md'], true))),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(500, { message: 'boom' })),
@@ -132,5 +132,49 @@ describe('repoHasOwners', () => {
 
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(true)
     await expect(observeContents.notCalled()).resolves.toBe('not called')
+  })
+})
+
+describe('branchHasOwners', () => {
+  beforeEach(() => {
+    utils.setupActionsEnv()
+    resetOwnersCaches()
+  })
+
+  it('reads the tree of the given branch, not the default one', async () => {
+    const observeDefault = new utils.ObserveRequest()
+    server.use(
+      utils.defaultBranchTree([], observeDefault),
+      http.get(`${repo}/git/trees/release-1`, utils.mockResponse(200, treeResponse(['sdk/OWNERS']))),
+    )
+
+    await expect(branchHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent), 'release-1')).resolves.toBe(true)
+    await expect(observeDefault.notCalled()).resolves.toBe('not called')
+  })
+
+  it('is false for a branch without OWNERS files while the default branch has them', async () => {
+    server.use(
+      utils.defaultBranchTree(['OWNERS']),
+      http.get(`${repo}/git/trees/release-1`, utils.mockResponse(200, treeResponse(['README.md']))),
+    )
+    const context = new utils.MockContext(pullReqOpenedEvent)
+
+    await expect(branchHasOwners(octokit, context, 'release-1')).resolves.toBe(false)
+    await expect(repoHasOwners(octokit, context)).resolves.toBe(true)
+  })
+
+  it('memoizes per branch and shares the default branch with repoHasOwners', async () => {
+    let trees = 0
+    server.use(http.get(`${repo}/git/trees/:branch`, ({ params }) => {
+      trees++
+      return new Response(JSON.stringify(treeResponse(params.branch === 'master' ? ['OWNERS'] : [])), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const context = new utils.MockContext(pullReqOpenedEvent)
+
+    await expect(repoHasOwners(octokit, context)).resolves.toBe(true)
+    await expect(branchHasOwners(octokit, context, 'master')).resolves.toBe(true)
+    await expect(branchHasOwners(octokit, context, 'release-1')).resolves.toBe(false)
+    await expect(branchHasOwners(octokit, context, 'release-1')).resolves.toBe(false)
+    expect(trees).toBe(2)
   })
 })

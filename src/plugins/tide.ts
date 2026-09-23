@@ -10,7 +10,7 @@ import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { dequeue, enqueue, enqueuedByBot, queueState } from '../utils/mergeQueue'
 import { newOctokit } from '../utils/octokit'
-import { repoHasOwners } from '../utils/owners'
+import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
 import { defaultLgtmSettings, hasLgtmLabel, isLgtmBound, lgtmSettings, shortSha, stripStaleLgtm } from './lgtmBinding'
@@ -25,7 +25,12 @@ export interface Mergeability {
   merged: boolean
   state_open: boolean
   sha: string
+  /** the base branch name, whose OWNERS files decide the gate's default */
+  base: string
 }
+
+/** the resolved tide configuration, or how to resolve it once the pull request's base branch is known */
+export type TideSource = ResolvedTide | ((base: string) => Promise<ResolvedTide>)
 
 export type MergeResult = 'merged' | 'enqueued' | 'skipped' | 'failed'
 
@@ -143,17 +148,18 @@ export async function mergeOnce(octokit: Octokit, context: Context, number: numb
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
- * @param tide - the resolved tide configuration
+ * @param source - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
  */
 export async function evaluateMerge(
   octokit: Octokit,
   context: Context,
   number: number,
-  tide: ResolvedTide,
+  source: TideSource,
   lgtm: LgtmSettings = defaultLgtmSettings,
 ): Promise<MergeVerdict> {
   const first = await getPull(octokit, context, number)
+  const tide = typeof source === 'function' ? await source(first.base) : source
 
   let reason = blockedReason(first, tide)
   if (reason === undefined && lgtm.bind_to_commit && hasLgtmLabel(first.labels) && !(await isLgtmBound(octokit, context, first.sha))) {
@@ -291,14 +297,14 @@ async function dequeueIfOurs(octokit: Octokit, context: Context, number: number,
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
  * @param number - the pull request number
- * @param tide - the resolved tide configuration
+ * @param tide - the resolved tide configuration, or its resolver for the pull request's base branch
  * @param lgtm - the resolved lgtm configuration; binding on by default
  */
 export async function tryMergePullRequest(
   octokit: Octokit,
   context: Context,
   number: number,
-  tide: ResolvedTide,
+  tide: TideSource,
   lgtm: LgtmSettings = defaultLgtmSettings,
 ): Promise<MergeResult> {
   return (await evaluateMerge(octokit, context, number, tide, lgtm)).result
@@ -341,6 +347,7 @@ async function getPull(octokit: Octokit, context: Context, number: number): Prom
     merged: data.merged,
     state_open: data.state === 'open',
     sha: data.head.sha,
+    base: data.base.ref,
   }
 }
 
@@ -439,16 +446,22 @@ export async function tideOnCheckSuite(context: Context = github.context): Promi
 
 /**
  * loadTide reads the configuration and resolves the tide section. The
- * `labels` default depends on whether the repository has OWNERS files
- * (`[lgtm, approved]`) or not (`[lgtm]`); that lookup is skipped when
- * `tide.labels` is configured, and memoized otherwise.
+ * `labels` default depends on whether the pull request's base branch has
+ * OWNERS files (`[lgtm, approved]`) or not (`[lgtm]`), the same branch
+ * `/approve` reads them from; without a base in scope the default branch
+ * stands in. That lookup is skipped when `tide.labels` is configured, and
+ * memoized per branch otherwise.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
+ * @param base - the pull request's base branch, when one is in scope
  */
-export async function loadTide(octokit: Octokit, context: Context): Promise<ResolvedTide> {
+export async function loadTide(octokit: Octokit, context: Context, base?: string): Promise<ResolvedTide> {
   const config = await loadProwConfig(octokit, context)
-  const hasOwners = config.tide.labels === undefined ? await repoHasOwners(octokit, context) : false
+  let hasOwners = false
+  if (config.tide.labels === undefined) {
+    hasOwners = base === undefined ? await repoHasOwners(octokit, context) : await branchHasOwners(octokit, context, base)
+  }
   return resolveTide(config.tide, core.getInput('merge-method', { required: false }), { hasOwners })
 }
 
@@ -463,7 +476,7 @@ async function evaluate(
     core.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
     return
   }
-  const tide = await loadTide(octokit, context)
+  const tide: TideSource = base => loadTide(octokit, context, base)
   const lgtm = lgtmSettings(config)
 
   const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers

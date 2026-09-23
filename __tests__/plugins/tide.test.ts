@@ -37,6 +37,7 @@ function pull(labels: string[], overrides: Record<string, unknown> = {}) {
     mergeable: true,
     mergeable_state: 'clean',
     labels: labels.map(name => ({ name })),
+    base: { ref: 'master', sha: 'basesha' },
     head: { sha: 'headsha' },
     ...overrides,
   }
@@ -89,6 +90,7 @@ describe('fetchMergeability', () => {
       merged: false,
       state_open: true,
       sha: 'headsha',
+      base: 'master',
     })
     expect(sleep).not.toHaveBeenCalled()
   })
@@ -632,6 +634,31 @@ describe('tideOnPullRequest', () => {
       expect(trees).toBe(1)
       expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
       expect(info).toHaveBeenCalledWith('skipping pr #2: missing approved')
+    })
+
+    it('the gate follows the pull request\'s base branch, not the default branch', async () => {
+      const observeDefault = new utils.ObserveRequest()
+      server.use(
+        utils.defaultBranchTree([], observeDefault),
+        http.get(`${repo}/git/trees/release-1`, utils.mockResponse(200, { sha: 'r', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'a' }] })),
+      )
+      servePull(pull(['lgtm'], { base: { ref: 'release-1', sha: 'basesha' } }))
+      const merge = observeMerge()
+      const info = vi.spyOn(core, 'info')
+
+      await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'lgtm' } }))).resolves.toBeUndefined()
+      await expect(merge.notCalled()).resolves.toBe('not called')
+      expect(info).toHaveBeenCalledWith('skipping pr #1: missing approved')
+      await expect(observeDefault.notCalled()).resolves.toBe('not called')
+    })
+
+    it('a base branch without OWNERS files keeps the [lgtm] gate although the default branch has them', async () => {
+      server.use(http.get(`${repo}/git/trees/release-1`, utils.mockResponse(200, { sha: 'r', truncated: false, tree: [] })))
+      servePull(pull(['lgtm'], { base: { ref: 'release-1', sha: 'basesha' } }))
+      const merge = observeMerge()
+
+      await expect(tideOnPullRequest(prEvent('labeled', { label: { name: 'lgtm' } }))).resolves.toBeUndefined()
+      await expect(merge.called()).resolves.toBe('called')
     })
   })
 })

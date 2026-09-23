@@ -7,6 +7,8 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
 
 export const repo = `${utils.api}/repos/Codertocat/Hello-World`
+// every fixture pull request targets master; its tip is basesha unless a test serves another
+export const baseBranch = 'master'
 export const baseSha = 'basesha'
 
 export function prCommentEvent(body: string, commenter = 'Codertocat', author = 'some-author') {
@@ -45,12 +47,17 @@ export const pullBody = {
   mergeable: true,
   mergeable_state: 'clean',
   labels: [],
-  base: { sha: baseSha },
+  base: { ref: baseBranch, sha: baseSha },
   head: { sha: 'headsha' },
 }
 
 export function pullHandler(observe?: utils.ObserveRequest, overrides: Record<string, unknown> = {}): HttpHandler {
   return http.get(`${repo}/pulls/1`, utils.mockResponse(200, { ...pullBody, ...overrides }, observe))
+}
+
+// `GET /branches/{branch}`: the current tip of a base branch, where the OWNERS plugins read the OWNERS files
+export function branchHandler(sha = baseSha, branch = baseBranch, observe?: utils.ObserveRequest): HttpHandler {
+  return http.get(`${repo}/branches/${branch}`, utils.mockResponse(200, { name: branch, commit: { sha } }, observe))
 }
 
 export function filesHandler(files: ChangedFile[], observe?: utils.ObserveRequest): HttpHandler {
@@ -61,11 +68,12 @@ export function blobSha(path: string): string {
   return `blob-${path.replace(/\//g, '-')}`
 }
 
-// git tree and blob handlers for the OWNERS files given as { 'sdk/OWNERS': yaml }
+// the base branch tip, then the git tree and blob handlers for the OWNERS files given as { 'sdk/OWNERS': yaml }
 export function treeHandlers(
   owners: Record<string, string>,
-  options: { truncated?: boolean, observeTree?: utils.ObserveRequest } = {},
+  options: { truncated?: boolean, observeTree?: utils.ObserveRequest, sha?: string } = {},
 ): HttpHandler[] {
+  const sha = options.sha ?? baseSha
   const tree = Object.keys(owners).map(path => ({
     path,
     mode: '100644',
@@ -74,11 +82,12 @@ export function treeHandlers(
   }))
 
   const handlers: HttpHandler[] = [
+    branchHandler(sha),
     http.get(
-      `${repo}/git/trees/${baseSha}`,
+      `${repo}/git/trees/${sha}`,
       utils.mockResponse(
         200,
-        { sha: baseSha, truncated: options.truncated ?? false, tree },
+        { sha, truncated: options.truncated ?? false, tree },
         options.observeTree,
       ),
     ),

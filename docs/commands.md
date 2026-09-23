@@ -175,7 +175,7 @@ Setting `options.no_parent_owners: true` in an `OWNERS` file stops the walk ther
 
 ### Which files decide the outcome
 
-On a pull request the changed files are listed (for renames both the old and the new path count) and their OWNERS are read from the PR's **base** branch. The head branch is never consulted, so a pull request cannot grant itself approvers by editing an `OWNERS` file.
+On a pull request the changed files are listed (for renames both the old and the new path count) and their OWNERS are read from the **current tip of the pull request's base branch**, never from the pull request itself: the head branch is never consulted, so a pull request cannot grant itself approvers by editing an `OWNERS` file, and a pull request opened before the OWNERS files existed picks them up without a rebase (GitHub's `base.sha` is a snapshot from the PR's last update; the bot reads the branch instead, one `GET /branches/{base}` per branch per run). The `[APPROVALNOTIFIER]` links point at that tip.
 
 - `/approve`: the commenter must be an `approver` for **at least one** changed file; their approval then counts for the files they own and the [approve plugin](#approve) decides whether the whole pull request is approved. The refusal is `<user> is not an approver for any changed file`.
 - `/lgtm`: the commenter must be a `reviewer` or `approver` for **at least one** changed file (Prow's lgtm rule).

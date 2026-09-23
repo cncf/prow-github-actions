@@ -11,7 +11,7 @@ import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
-import { repoHasOwners } from '../utils/owners'
+import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 export interface ApproveSettings {
@@ -476,8 +476,10 @@ async function evaluateOnOwnersRepo(context: Context, pullNumber: number | undef
   }
 
   const octokit = newOctokit(core.getInput('github-token', { required: true }))
-  if (!(await repoHasOwners(octokit, context))) {
-    core.debug('approve: the repository has no OWNERS files')
+  const base: unknown = context.payload.pull_request?.base?.ref
+  const hasOwners = typeof base === 'string' ? await branchHasOwners(octokit, context, base) : await repoHasOwners(octokit, context)
+  if (!hasOwners) {
+    core.debug('approve: the base branch has no OWNERS files')
     return
   }
 

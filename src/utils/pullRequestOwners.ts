@@ -2,11 +2,14 @@ import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
 import type { OwnersSet, OwnersTree } from './owners'
 
+import * as core from '@actions/core'
+
 import { effectiveOwners, loadOwnersTree } from './owners'
 
 /** a pull request and the OWNERS covering its changed files; every login is lowercased */
 export interface PullRequestOwners {
   number: number
+  /** the tip of the base branch the OWNERS were read from */
   baseSha: string
   headSha: string
   author: string
@@ -20,6 +23,7 @@ export interface PullRequestOwners {
 }
 
 const cache = new Map<string, Promise<PullRequestOwners>>()
+const tipCache = new Map<string, Promise<string>>()
 
 /**
  * loadPullRequestOwners reads the pull request, its changed files and the
@@ -47,6 +51,7 @@ export function loadPullRequestOwners(
 
 export function resetPullRequestOwnersCache(): void {
   cache.clear()
+  tipCache.clear()
 }
 
 async function load(
@@ -67,13 +72,20 @@ async function load(
     f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename],
   ))]
 
-  // OWNERS come from the base branch so a PR cannot grant itself approvers
-  const tree = await loadOwnersTree(octokit, context, pull.base.sha, files)
+  // OWNERS come from the base branch so a PR cannot grant itself approvers: its current tip, not
+  // `pull.base.sha`, which GitHub snapshots when the PR last changed. A PR opened before OWNERS
+  // files landed would otherwise never see them, while the tide gate, reading the branch, would
+  // require `approved` that `/approve` could not grant (cncf/automation#709).
+  const baseSha = await baseBranchTip(octokit, context, pull.base.ref).catch((e) => {
+    core.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`)
+    return pull.base.sha
+  })
+  const tree = await loadOwnersTree(octokit, context, baseSha, files)
   const perFile = new Map(files.map(file => [file, effectiveOwners(file, tree.owners)]))
 
   return {
     number: pullNumber,
-    baseSha: pull.base.sha,
+    baseSha,
     headSha: pull.head.sha,
     author: (pull.user?.login ?? '').toLowerCase(),
     draft: pull.draft === true,
@@ -84,4 +96,16 @@ async function load(
     tree,
     perFile,
   }
+}
+
+// `repos.getBranch` rather than `git.getRef`: same one request and the same sha, without the
+// `heads/` namespace that octokit percent-encodes into the path
+function baseBranchTip(octokit: Octokit, context: Context, branch: string): Promise<string> {
+  const key = `${context.repo.owner}/${context.repo.repo}@${branch}`
+  let pending = tipCache.get(key)
+  if (pending === undefined) {
+    pending = octokit.repos.getBranch({ ...context.repo, branch }).then(response => response.data.commit.sha)
+    tipCache.set(key, pending)
+  }
+  return pending
 }
