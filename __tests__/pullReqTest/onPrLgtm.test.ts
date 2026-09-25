@@ -110,4 +110,48 @@ describe('onPrLgtm', () => {
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
   })
+
+  it('fails the run when the labels read fails', async () => {
+    const prContext = new utils.MockContext(pullReqEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      ...prHandlers({}, ['src/file1.txt']),
+      utils.defaultBranchTree(),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(500, { message: 'boom' }),
+      ),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/lgtm`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handlePullReq(prContext)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not get labels from issue'))
+  })
+
+  it('fails the run when the payload has no pull request', async () => {
+    const { pull_request: _pullRequest, ...payload } = pullReqEvent
+    const prContext = new utils.MockContext(payload)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      ...prHandlers({}, ['src/file1.txt']),
+      utils.defaultBranchTree(),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handlePullReq(prContext)).resolves.not.toThrow()
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('github context payload missing pr number'))
+  })
 })
