@@ -143,6 +143,19 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(1)
   })
 
+  it('a head that moves while an unknown state is retried is skipped without a mutation', async () => {
+    const gets = servePull(pull(['lgtm'], { mergeable: null, mergeable_state: 'unknown' }), pull(['lgtm'], { head: { sha: 'newsha' } }))
+    const merge = observeMerge()
+    const calls = serveGraphql()
+    const info = vi.spyOn(core, 'info')
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'head moved during evaluation' })
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(2)
+    expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(0)
+    expect(info).toHaveBeenCalledWith('skipping pr #1: head moved during evaluation')
+  })
+
   it('a pr already in the queue is skipped with its position and state, no mutation', async () => {
     servePull(pull(['lgtm']))
     const merge = observeMerge()
