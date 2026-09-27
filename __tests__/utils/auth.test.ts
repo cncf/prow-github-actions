@@ -85,6 +85,18 @@ describe('checkOrgMember', () => {
     )
   })
 
+  it('warns with status=unknown when the rejection is a plain string', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce('socket hang up')
+
+    await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      'encountered unexpected error: status=unknown, message=socket hang up',
+    )
+  })
+
   it('is false when the payload has no repository', async () => {
     const noRepo = new utils.MockContext({})
 
@@ -134,6 +146,18 @@ describe('checkCollaborator', () => {
       expect.stringContaining('status=500'),
     )
   })
+
+  it('warns with status=unknown when the rejection has neither status nor message', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    vi.spyOn(octokit.repos, 'checkCollaborator').mockRejectedValueOnce({})
+
+    await expect(checkCollaborator(octokit, context, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      'encountered unexpected error checking collaborator status: status=unknown, message=[object Object]',
+    )
+  })
 })
 
 describe('checkIssueComments', () => {
@@ -173,6 +197,18 @@ describe('checkIssueComments', () => {
 
     expect(warningSpy).toHaveBeenCalledWith(
       expect.stringContaining('status=500'),
+    )
+  })
+
+  it('warns with status=unknown when the rejection is an Error without a status', async () => {
+    const warningSpy = vi.spyOn(core, 'warning')
+
+    vi.spyOn(octokit.issues, 'listComments').mockRejectedValueOnce(new Error('network down'))
+
+    await expect(checkIssueComments(octokit, context, 1, 'some-user')).resolves.toBe(false)
+
+    expect(warningSpy).toHaveBeenCalledWith(
+      'encountered unexpected error checking issue comments: status=unknown, message=network down',
     )
   })
 })
