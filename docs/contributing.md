@@ -86,8 +86,8 @@ Setup, once, by a maintainer:
   - `E2E_REVIEWER_TOKEN` (secret): a collaborator with write access; contents, issues, pull
     requests and commit statuses read and write. It posts the reviewer's comments and is the
     action's `github-token`.
-  - `E2E_AUTHOR_TOKEN` (secret): contents and pull requests read and write. It opens the pull
-    requests and posts the author's `/lgtm`.
+  - `E2E_AUTHOR_TOKEN` (secret): contents, issues and pull requests read and write. It opens
+    the pull requests and posts the author's `/lgtm`.
 - `E2E_REPOSITORY` (repository variable): the sandbox as `owner/repo`.
 
 Locally, with the same three variables exported and `dist/` packed: `npm run e2e`.

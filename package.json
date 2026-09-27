@@ -17,7 +17,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p e2e",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "pack": "ncc build",
