@@ -241,6 +241,21 @@ describe('label-sync job', () => {
     expect(lines.some(line => line.includes('would update') && line.includes('lgtm'))).toBe(true)
   })
 
+  it('fails the run when the repository labels cannot be listed', async () => {
+    serveConfig()
+    const writes: Write[] = []
+    server.use(
+      http.get(`${repo}/labels`, () => json({ message: 'boom' }, 500)),
+      http.post(`${repo}/labels`, async ({ request }) => {
+        writes.push({ method: 'POST', body: await request.json() })
+        return json({}, 201)
+      }),
+    )
+
+    await expect(labelSync(dispatchContext())).rejects.toThrow('could not list the repository labels')
+    expect(writes).toEqual([])
+  })
+
   it('fails the run when the configuration cannot be loaded', async () => {
     server.use(
       http.get(`${repo}/contents/.github%2Fprow.yaml`, utils.mockResponse(500, { message: 'boom' })),
