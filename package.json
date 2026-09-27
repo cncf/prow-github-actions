@@ -22,6 +22,7 @@
     "lint:fix": "eslint --fix",
     "pack": "ncc build",
     "test": "vitest run",
+    "e2e": "node e2e/sandbox.mts",
     "test-all": "npm run build && npm run pack && npm test",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

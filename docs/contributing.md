@@ -54,3 +54,40 @@ requests it makes, its exit code, and its `::error::` output. Because it tests
 the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
+
+## End-to-end tests
+
+The [`End-to-end (sandbox)`](../.github/workflows/e2e.yml) workflow runs nightly and on
+demand (`workflow_dispatch`, which can target any branch). `npm run e2e`
+([`e2e/sandbox.mts`](../e2e/sandbox.mts)) drives the committed `dist/index.js` against a real
+repository on github.com: it makes each change through the API as a user would, rebuilds the
+event payload GitHub delivers for it from the real objects, runs the bundle on that event as
+a child process, and asserts on the repository's resulting state. Nothing is mocked, so an
+API change or a regression fails the run. The scenario:
+
+1. Writes `OWNERS` (the reviewer as approver and reviewer) and a `.github/prow.yaml` to the
+   default branch if they differ, then runs the `label-sync` job.
+2. Opens a pull request as the author. The author's `/lgtm` is refused; the reviewer's
+   `/assign`, `/approve` and `/lgtm` assign them, apply `approved`, bind `lgtm` to the head
+   (`prow/lgtm` status) and merge the pull request on the `/lgtm` comment event.
+3. Opens a second pull request; `/hold`, `/approve` and `/lgtm` leave it open. The hold label
+   is then removed by hand with no event run, and the `lgtm` cron job (`schedule`) merges it.
+
+Every pull request and branch the run creates is closed and deleted when it ends, pass or
+fail. The configuration is read with `config: <sandbox>:.github/prow.yaml`, so the sandbox
+owner's organization-wide prow configuration never applies.
+
+Setup, once, by a maintainer:
+
+- A dedicated, empty sandbox repository with merge commits allowed and no branch protection.
+  Do not use it for anything else: the cron step evaluates every open pull request in it.
+- Two accounts, since Prow never lets the author `/lgtm` their own pull request, each with a
+  fine-grained token scoped to the sandbox alone:
+  - `E2E_REVIEWER_TOKEN` (secret): a collaborator with write access; contents, issues, pull
+    requests and commit statuses read and write. It posts the reviewer's comments and is the
+    action's `github-token`.
+  - `E2E_AUTHOR_TOKEN` (secret): contents and pull requests read and write. It opens the pull
+    requests and posts the author's `/lgtm`.
+- `E2E_REPOSITORY` (repository variable): the sandbox as `owner/repo`.
+
+Locally, with the same three variables exported and `dist/` packed: `npm run e2e`.

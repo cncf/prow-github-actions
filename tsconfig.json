@@ -10,5 +10,5 @@
     "outDir": "./lib", /* Redirect output structure to the directory. */
     "esModuleInterop": true /* Enables emit interoperability between CommonJS and ES Modules via creation of namespace objects for all imports. Implies 'allowSyntheticDefaultImports'. */
   },
-  "exclude": ["node_modules", "**/*.test.ts", "__tests__"]
+  "exclude": ["node_modules", "**/*.test.ts", "__tests__", "e2e"]
 }
