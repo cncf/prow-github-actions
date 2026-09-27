@@ -5,7 +5,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
-import { meowConfig } from '../../src/issueComment/meow'
+import { meow, meowConfig } from '../../src/issueComment/meow'
 import * as comments from '../../src/utils/comments'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
@@ -491,5 +491,45 @@ describe('/meow', () => {
     await handleIssueComment(contextFor('/meow'))
 
     expect(cancelled).toBe(true)
+  })
+
+  it('throws when the payload has no issue number', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const context = contextFor('/meow')
+    delete (context.payload as { issue?: unknown }).issue
+
+    await expect(meow(context)).rejects.toThrow(
+      'github context payload missing issue number',
+    )
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(createComment).not.toHaveBeenCalled()
+  })
+
+  it('still retries when cancelling the response body fails', async () => {
+    const stream = new ReadableStream({
+      cancel() {
+        throw new Error('cancel failed')
+      },
+    })
+    vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(stream, { status: 503 }))
+      .mockResolvedValueOnce(
+        Response.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }]),
+      )
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+
+    await handleIssueComment(contextFor('/meow'))
+
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('could not cancel cat api response body'),
+    )
+    expect(createComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      1,
+      '![cat](<https://cdn2.thecatapi.com/images/cat.jpg>)',
+    )
   })
 })
