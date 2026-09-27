@@ -57,8 +57,7 @@ check then proves that the bundle the harness just exercised matches `src/`.
 
 ## End-to-end tests
 
-The [`End-to-end (sandbox)`](../.github/workflows/e2e.yml) workflow runs nightly and on
-demand (`workflow_dispatch`, which can target any branch). `npm run e2e`
+`npm run e2e`
 ([`e2e/sandbox.mts`](../e2e/sandbox.mts)) drives the committed `dist/index.js` against a real
 repository on github.com: it makes each change through the API as a user would, rebuilds the
 event payload GitHub delivers for it from the real objects, runs the bundle on that event as
@@ -77,7 +76,8 @@ Every pull request and branch the run creates is closed and deleted when it ends
 fail. The configuration is read with `config: <sandbox>:.github/prow.yaml`, so the sandbox
 owner's organization-wide prow configuration never applies.
 
-Setup, once, by a maintainer:
+No workflow runs it yet: a scheduled workflow needs a push with the `workflow` scope
+(see #210). Setup, once, by a maintainer:
 
 - A dedicated, empty sandbox repository with merge commits allowed and no branch protection.
   Do not use it for anything else: the cron step evaluates every open pull request in it.
