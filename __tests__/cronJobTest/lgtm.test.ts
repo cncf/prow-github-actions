@@ -470,4 +470,58 @@ describe('cronLgtm', () => {
     expect(calls).toHaveLength(1)
     expect(info).toHaveBeenCalledWith('skipping pr #5: in the merge queue (position 1, AWAITING_CHECKS)')
   })
+
+  it('fails the run when the open pull request listing cannot be read', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
+        utils.mockResponse(500, { message: 'Server Error' }),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not get PRs'))
+  })
+
+  it('skips a closed pr in the listing without reading or merging it', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    const closed = lgtmPr(6)
+    closed.state = 'closed'
+    routePulls([closed])
+
+    const read = new utils.ObserveRequest()
+    const merge = new utils.ObserveRequest()
+    server.use(
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/6`, utils.mockResponse(200, closed, read)),
+      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/6/merge`, utils.mockResponse(200, null, merge)),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(read.notCalled()).resolves.toBe('not called')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails the run when evaluating a pr throws instead of returning a verdict', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    routePulls([lgtmPr(7)])
+    const merge = new utils.ObserveRequest()
+    server.use(
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/7`, utils.mockResponse(500, { message: 'Server Error' })),
+      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/7/merge`, utils.mockResponse(200, null, merge)),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('error processing pr'))
+  })
 })
