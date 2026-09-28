@@ -297,6 +297,31 @@ describe('approveOnPullRequest', () => {
     await expect(writes.addLabels.called()).resolves.toBe('called')
   })
 
+  it('without lgtm_acts_as_approve, /lgtm cancel is ignored like /lgtm', async () => {
+    const writes = serve({
+      comments: [
+        { body: '/approve', user: { login: 'bob' } },
+        { body: '/approve', user: { login: 'carol' } },
+        { body: '/lgtm cancel', user: { login: 'bob' } },
+      ],
+    })
+
+    await approveOnPullRequest(prEvent('opened'))
+
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await commentBody(writes.postComment)).toContain('This pull-request has been approved by: *bob*, *carol*')
+  })
+
+  it('a bot comment without a body is not mistaken for the notifier', async () => {
+    const writes = serve({ comments: [{ id: 900, body: null as unknown as string, user: bot }, { body: '/approve', user: { login: 'bob' } }] })
+
+    await approveOnPullRequest(prEvent('opened'))
+
+    await expect(writes.postComment.called()).resolves.toBe('called')
+    expect(await commentBody(writes.postComment)).toContain('This PR is **NOT APPROVED**')
+    await expect(writes.patchComment.notCalled()).resolves.toBe('not called')
+  })
+
   it('throws when the payload has no pull request', async () => {
     await expect(approveOnPullRequest(new utils.MockContext({ action: 'opened' }))).rejects.toThrow('missing pull request')
   })
