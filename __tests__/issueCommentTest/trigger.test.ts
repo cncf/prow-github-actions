@@ -6,7 +6,9 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import { okToTestOnPullRequest, retest } from '../../src/issueComment/trigger'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import prOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers, repo } from '../utils/ownersFixtures'
 
@@ -200,6 +202,69 @@ describe('/retest', () => {
 
     await expect(reply.called()).resolves.toBe('called')
     expect((await reply.body()).body).toBe('No failed GitHub Actions workflow runs on `headsha`: 1 successful. Checks from other CI systems cannot be re-run here.')
+  })
+
+  it('omits the summary entirely when the only runs are the current workflow and a completed run without a conclusion', async () => {
+    const reply = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([
+        { id: 5, name: 'Prow', path: '.github/workflows/prow.yml', status: 'in_progress' },
+        { id: 10, name: 'Skipped', status: 'completed', conclusion: null },
+      ]),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+    )
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/retest')))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe('No failed GitHub Actions workflow runs on `headsha`. Checks from other CI systems cannot be re-run here.')
+  })
+
+  it('a comment without an id re-runs the failed jobs and skips the reaction', async () => {
+    const reaction = new utils.ObserveRequest()
+    const reruns: number[] = []
+    const event = prCommentEvent('/retest') as { comment: { id?: number } }
+    delete event.comment.id
+    server.use(
+      ...memberAuth(),
+      serveRuns(mixedRuns),
+      http.post(`${repo}/actions/runs/:id/rerun-failed-jobs`, ({ params }) => {
+        reruns.push(Number(params.id))
+        return new Response(null, { status: 201 })
+      }),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(event as never))
+
+    expect(reruns.sort()).toEqual([1, 4])
+    await expect(reaction.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a failed refusal comment is logged and the refusal still fails the run', async () => {
+    server.use(
+      ...outsiderAuth(),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(500, { message: 'boom' })),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/retest')))
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Could not comment with an auth error'))
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('Codertocat is not a org member or collaborator'))
+    expect(calls.some(c => c.includes('/actions/runs'))).toBe(false)
+  })
+
+  it('throws when the payload carries no issue number', async () => {
+    const event = prCommentEvent('/retest')
+    const context = new utils.MockContext({ ...event, issue: { ...event.issue, number: undefined as never } })
+
+    await expect(retest(context)).rejects.toThrow('github context payload missing issue number')
+    expect(calls).toEqual([])
   })
 
   it('a 409 on one run skips it and the others are still re-run with a rocket', async () => {
@@ -497,6 +562,41 @@ describe('/test', () => {
     expect(calls.some(c => c.includes('/actions/runs/'))).toBe(false)
   })
 
+  it('a run without a name is listed by its path and matched by its file', async () => {
+    const reply = new utils.ObserveRequest()
+    const reruns: number[] = []
+    const nameless: RunSpec = { id: 11, name: null as never, path: '.github/workflows/nightly.yml', status: null as never, conclusion: null }
+    server.use(...memberAuth(), serveRuns([nameless]), serveRerun(reruns), http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/test ?')))
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toContain('`.github/workflows/nightly.yml` |  | ')
+
+    server.use(...memberAuth(), serveRuns([{ ...nameless, status: 'completed', conclusion: 'success' }]), http.post(reactionUrl, utils.mockResponse(201, {})))
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/test nightly')))
+    expect(reruns).toEqual([11])
+  })
+
+  it('lists a placeholder row when the head has no runs besides the current workflow', async () => {
+    const reply = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([{ id: 5, name: 'Prow', path: '.github/workflows/prow.yml', status: 'in_progress' }]),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+    )
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/test')))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe([
+      'Workflow runs on `headsha`:',
+      '',
+      'workflow | status | conclusion',
+      '--- | --- | ---',
+      '_none_ | |',
+    ].join('\n'))
+  })
+
   it('a 403 on the re-run fails with the actions: write hint', async () => {
     const reply = new utils.ObserveRequest()
     server.use(
@@ -694,6 +794,19 @@ describe('/ok-to-test', () => {
     expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('cannot approve workflow runs: grant `actions: write` to the workflow'))
   })
 
+  it('any other approval failure names the run', async () => {
+    server.use(
+      ...memberAuth(),
+      serveRuns(pendingRuns),
+      http.post(`${repo}/actions/runs/:id/approve`, utils.mockResponse(500, { message: 'boom' })),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not approve run 8 (CI)'))
+  })
+
   it('on an issue comments that it only applies to pull requests', async () => {
     const reply = new utils.ObserveRequest()
     const event = structuredClone(issueCommentEvent)
@@ -704,5 +817,41 @@ describe('/ok-to-test', () => {
 
     await expect(reply.called()).resolves.toBe('called')
     expect((await reply.body()).body).toBe('`/ok-to-test` only applies to pull requests.')
+  })
+})
+
+describe('okToTestOnPullRequest', () => {
+  beforeEach(() => setup(''))
+
+  function synchronizeEvent(labels: unknown) {
+    const event = structuredClone(prOpenedEvent) as { action: string, pull_request: { labels: unknown, head: { sha?: string }, number?: number } }
+    event.action = 'synchronize'
+    event.pull_request.labels = labels
+    return event
+  }
+
+  it.each([
+    ['no labels array', undefined],
+    ['a label without a name', [{}]],
+  ])('makes no Actions call with %s', async (_, labels) => {
+    const runs = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/actions/runs`, utils.mockResponse(200, { total_count: 0, workflow_runs: [] }, runs)))
+    const debug = vi.spyOn(core, 'debug')
+
+    await expect(okToTestOnPullRequest(new utils.MockContext(synchronizeEvent(labels) as never))).resolves.toBeUndefined()
+
+    await expect(runs.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith('trigger: the pull request does not carry ok-to-test')
+  })
+
+  it.each([
+    ['head sha', (pull: { head: { sha?: string } }) => delete pull.head.sha],
+    ['number', (pull: { number?: number }) => delete pull.number],
+  ])('throws when a labeled pull request lacks its %s', async (_, strip) => {
+    const event = synchronizeEvent([{ name: 'OK-To-Test' }])
+    strip(event.pull_request)
+
+    await expect(okToTestOnPullRequest(new utils.MockContext(event as never))).rejects.toThrow('github context payload missing pull request head')
+    expect(calls).toEqual([])
   })
 })
