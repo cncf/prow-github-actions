@@ -760,3 +760,65 @@ describe('after a command ran', () => {
     expect(setFailed).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('could not merge pull request(s) #1'))
   })
 })
+
+describe('the sweep after a label-writing command', () => {
+  beforeEach(() => {
+    vi.spyOn(lgtm, 'lgtm').mockResolvedValue()
+    vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+  })
+
+  it('does not re-check required labels when the comment already ran /check-required-labels', async () => {
+    utils.setupActionsEnv('/lgtm /check-required-labels')
+    issueCommentEvent.comment.body = '/lgtm\n/check-required-labels'
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(requireMatchingLabel.checkRequiredLabels).toHaveBeenCalledTimes(1)
+    expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('re-checks required labels when /check-required-labels is configured but not in the comment', async () => {
+    utils.setupActionsEnv('/lgtm /check-required-labels')
+    issueCommentEvent.comment.body = '/lgtm'
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(requireMatchingLabel.checkRequiredLabels).toHaveBeenCalledTimes(1)
+    expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails the run when a command rejects with a non-Error value', async () => {
+    utils.setupActionsEnv('/lgtm')
+    issueCommentEvent.comment.body = '/lgtm'
+    vi.spyOn(lgtm, 'lgtm').mockRejectedValue('lgtm exploded')
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(core.setFailed).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('error handling issue comment: Error: lgtm exploded'))
+    expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails the run when a sweep step rejects with a non-Error value and still runs the later steps', async () => {
+    utils.setupActionsEnv('/lgtm')
+    issueCommentEvent.comment.body = '/lgtm'
+    vi.spyOn(requireMatchingLabel, 'checkRequiredLabels').mockRejectedValue('needs-kind exploded')
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(core.setFailed).toHaveBeenCalledExactlyOnceWith('Error: needs-kind exploded')
+    expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+  })
+
+  it('joins a command failure and a sweep failure into one message', async () => {
+    utils.setupActionsEnv('/lgtm')
+    issueCommentEvent.comment.body = '/lgtm'
+    vi.spyOn(lgtm, 'lgtm').mockRejectedValue(new Error('lgtm exploded'))
+    vi.spyOn(tide, 'tideOnComment').mockRejectedValue(new Error('tide exploded'))
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(core.setFailed).toHaveBeenCalledExactlyOnceWith('TypeError: error handling issue comment: Error: lgtm exploded; Error: tide exploded')
+  })
+})
