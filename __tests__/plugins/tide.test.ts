@@ -448,6 +448,53 @@ describe('tryMergePullRequest', () => {
       await expect(diff.comment.notCalled()).resolves.toBe('not called')
       expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
     })
+
+    it('a failing diagnosis (compare 500) keeps the raw failure and is debugged, not commented', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const comment = new utils.ObserveRequest()
+      server.use(
+        http.get(`${repo}/compare/headsha...master`, utils.mockResponse(500, { message: 'boom' })),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, comment)),
+      )
+      const debug = vi.spyOn(core, 'debug')
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(comment.notCalled()).resolves.toBe('not called')
+      expect(debug).toHaveBeenCalledWith(expect.stringMatching(/^could not diagnose the 403 on pr #1: /))
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
+    })
+
+    it('a failing listFiles during the diagnosis is handled the same way', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['.github/workflows/ci.yml'], [])
+      server.use(http.get(`${repo}/pulls/1/files`, utils.mockResponse(502, { message: 'bad gateway' })))
+      const debug = vi.spyOn(core, 'debug')
+      vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(diff.compare.called()).resolves.toBe('called')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+      expect(debug).toHaveBeenCalledWith(expect.stringMatching(/^could not diagnose the 403 on pr #1: /))
+    })
+
+    it('a refused explanatory comment is a warning; the skip still stands', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['.github/workflows/ci.yml'], [])
+      server.use(http.post(`${repo}/issues/1/comments`, utils.mockResponse(403, forbidden)))
+      const info = vi.spyOn(core, 'info')
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      await expect(diff.compare.called()).resolves.toBe('called')
+      expect(warning).toHaveBeenCalledWith(expect.stringMatching(/^could not comment on pr #1 about the workflow files: /))
+      expect(info).toHaveBeenCalledWith(reason)
+      expect(error).not.toHaveBeenCalled()
+    })
   })
 })
 
