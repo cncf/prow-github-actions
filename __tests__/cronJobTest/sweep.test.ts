@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
 import { sweep, sweepConcurrency } from '../../src/cronJobs/sweep'
+import * as requireMatchingLabel from '../../src/plugins/requireMatchingLabel'
 import { maxSweepLookbackMs, parseProwConfig, resolveSweepLookback } from '../../src/utils/config'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -181,6 +182,13 @@ describe('sweep candidates', () => {
 
     await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
     await expect(tree.notCalled()).resolves.toBe('not called')
+  })
+
+  it('records a step that rejects with a non-Error value as its string form', async () => {
+    servePulls([{ number: 1 }])
+    vi.spyOn(requireMatchingLabel, 'enforceRequiredLabels').mockRejectedValueOnce('plain string failure')
+
+    await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (require-matching-label: plain string failure)')
   })
 
   it('fails when the list cannot be read', async () => {
@@ -380,6 +388,26 @@ describe('sweep on a repository with OWNERS files', () => {
     await expect(reviewers.notCalled()).resolves.toBe('not called')
     // only #4 passed the cheap gates and needed the reviews read; approve reads reviews for every pr too
     expect(reviewReads.filter((n, i) => reviewReads.indexOf(n) !== i)).toEqual([4])
+  })
+
+  it('treats a pull request listed without labels or requested_reviewers as unlabelled with no reviewers', async () => {
+    serveOwners(['sdk/x.go'])
+    const full = pull({ number: 1, created: ago(60_000), updated: ago(60_000) })
+    const { labels: _labels, requested_reviewers: _reviewers, ...bare } = full
+    const runs = new utils.ObserveRequest()
+    const reviewers = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/pulls`, () => json([bare])),
+      http.get(`${repo}/pulls/1`, () => json(full)),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'area/sdk' }] })),
+      http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [])),
+      http.get(`${repo}/actions/runs`, utils.mockResponse(200, { total_count: 0, workflow_runs: [] }, runs)),
+      http.post(`${repo}/pulls/1/requested_reviewers`, utils.mockResponse(201, {}, reviewers)),
+    )
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1], failures: [] })
+    await expect(runs.notCalled()).resolves.toBe('not called')
+    await expect(reviewers.called()).resolves.toBe('called')
   })
 
   it('a bound lgtm and approved on a clean pull request merges', async () => {
