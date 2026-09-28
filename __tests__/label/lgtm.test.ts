@@ -7,6 +7,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import * as lgtmBinding from '../../src/plugins/lgtmBinding'
 
 import issuePayload from '../fixtures/issues/issue.json'
 
@@ -14,6 +15,10 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers } from '../utils/ownersFixtures'
+
+// bindLgtm wraps every HTTP failure in an Error; its non-Error fallback in
+// /lgtm is only reachable when the binding itself rejects with a bare value
+vi.mock('../../src/plugins/lgtmBinding', { spy: true })
 
 const server = setupServer()
 beforeAll(() =>
@@ -781,6 +786,26 @@ reviewers:
 
       await expect(label.notCalled()).resolves.toBe('not called')
       expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not bind lgtm to headsha'))
+    })
+
+    it('a binding refused with a non-Error value fails the command with its string form and applies no label', async () => {
+      const label = new utils.ObserveRequest()
+      const reply = new utils.ObserveRequest()
+      server.use(
+        ...prHandlers({}, ['src/file1.txt']),
+        http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+        http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      )
+      vi.mocked(lgtmBinding.bindLgtm).mockRejectedValueOnce('status api offline')
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await handleIssueComment(new utils.MockContext(prCommentEvent('/lgtm')))
+
+      await expect(reply.called()).resolves.toBe('called')
+      expect(await reply.body().then(body => body.body)).toBe('status api offline')
+      await expect(label.notCalled()).resolves.toBe('not called')
+      expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('status api offline'))
     })
 
     it('lgtm.bind_to_commit: false applies the label with no status call at all', async () => {
