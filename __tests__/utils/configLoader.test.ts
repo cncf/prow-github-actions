@@ -1,7 +1,7 @@
 import type { Octokit } from '@octokit/rest'
 import { Buffer } from 'node:buffer'
 import process from 'node:process'
-import { http } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -244,6 +244,42 @@ describe('loadProwConfig', () => {
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from cncf/prow-config:prow.yaml:',
+      )
+    })
+
+    it('fails when the explicit repo answers with something other than 404', async () => {
+      process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
+      server.use(
+        http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(500, { message: 'boom' })),
+        ...utils.noOrgOrRepoConfigExcept(),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from cncf/prow-config:prow.yaml:',
+      )
+    })
+
+    it('fails when the explicit repo path is a directory rather than a file', async () => {
+      process.env.INPUT_CONFIG = 'cncf/prow-config:configs'
+      server.use(
+        http.get(`${utils.api}/repos/cncf/prow-config/contents/configs`, utils.mockResponse(200, [{ name: 'prow.yaml', type: 'file' }])),
+        ...utils.noOrgOrRepoConfigExcept(),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from cncf/prow-config:configs: TypeError: configs is not a file',
+      )
+    })
+
+    it('fails when the url cannot be fetched at all', async () => {
+      process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
+      server.use(
+        http.get('https://config.example.com/prow.yaml', () => HttpResponse.error()),
+        ...utils.noOrgOrRepoConfigExcept(),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from https://config.example.com/prow.yaml: TypeError: Failed to fetch',
       )
     })
 

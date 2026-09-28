@@ -116,6 +116,15 @@ describe('run', () => {
     }
   })
 
+  it('stringifies a non-Error handler rejection for setFailed', async () => {
+    mockedHandle.mockRejectedValue('plain string failure')
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await run()
+
+    expect(setFailed).toHaveBeenCalledWith('plain string failure')
+  })
+
   it('reports a dispatched handler rejection through setFailed', async () => {
     mockedHandle.mockRejectedValue(new Error('handler blew up'))
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
