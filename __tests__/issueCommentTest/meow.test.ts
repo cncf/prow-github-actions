@@ -146,6 +146,22 @@ describe('/meow', () => {
     )
   })
 
+  it('names a status-less response as a redirect', async () => {
+    // Response.error() is the only status 0 fetch can resolve with
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.error())
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+    await handleIssueComment(contextFor('/meow'))
+
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('cat api responded with a redirect'))
+    expect(createComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      1,
+      'The cat API is unavailable right now.',
+    )
+  })
+
   it('degrades to a note on a network error', async () => {
     server.use(http.get(catApi, () => HttpResponse.error()))
     vi.spyOn(core, 'warning').mockImplementation(() => {})

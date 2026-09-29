@@ -6,7 +6,8 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
-import { okToTestOnPullRequest, retest } from '../../src/issueComment/trigger'
+import { approvePendingRuns, okToTestOnPullRequest, retest } from '../../src/issueComment/trigger'
+import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import prOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
@@ -805,6 +806,16 @@ describe('/ok-to-test', () => {
     await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
 
     expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not approve run 8 (CI)'))
+  })
+
+  it('a non-Error approve rejection carries no status and fails with its string form', async () => {
+    server.use(serveRuns(pendingRuns))
+    const octokit = newOctokit('some-token')
+    vi.spyOn(octokit.actions, 'approveWorkflowRun').mockRejectedValue('nope')
+
+    await expect(approvePendingRuns(octokit, new utils.MockContext(prCommentEvent('/ok-to-test')), 1, headSha))
+      .rejects
+      .toThrow('could not approve run 8 (CI): nope')
   })
 
   it('on an issue comments that it only applies to pull requests', async () => {
