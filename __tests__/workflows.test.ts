@@ -61,6 +61,44 @@ const secretBackedInputs = ['github-token', 'cat-api-key']
 
 const templateGroup = String(loadYaml<Workflow>(templatePath).concurrency?.group)
 
+function sourceFiles(dir: string): string[] {
+  return readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+    const file = path.posix.join(dir, entry.name)
+    return entry.isDirectory() ? sourceFiles(file) : entry.name.endsWith('.ts') ? [file] : []
+  })
+}
+
+/** every input name src/ reads through @actions/core, by file */
+function inputReads(): Map<string, Set<string>> {
+  const reads = new Map<string, Set<string>>()
+  for (const file of sourceFiles('src')) {
+    for (const match of read(file).matchAll(/\bget(?:Boolean|Multiline)?Input\(\s*(['"`])([^'"`]+)\1/g)) {
+      const readers = reads.get(match[2]) ?? new Set<string>()
+      readers.add(file)
+      reads.set(match[2], readers)
+    }
+  }
+  return reads
+}
+
+describe('action.yml mirrors the inputs src/ reads', () => {
+  const reads = inputReads()
+
+  it('declares every input src/ reads, so a typo cannot silently read the empty string', () => {
+    for (const [name, readers] of reads) {
+      expect(actionInputs, `${name} is read by ${[...readers].join(', ')}`).toContain(name)
+    }
+  })
+
+  it('declares no input src/ never reads', () => {
+    expect([...reads.keys()].sort()).toEqual(actionInputs.slice().sort())
+  })
+
+  it('always reads the token', () => {
+    expect(reads.get('github-token')?.size).toBeGreaterThan(0)
+  })
+})
+
 describe('the reusable workflow mirrors action.yml', () => {
   it('has exactly one job', () => {
     expect(Object.keys(reusable.jobs)).toEqual(['prow'])
