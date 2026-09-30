@@ -738,6 +738,49 @@ describe('dist/index.js', () => {
     ])
   })
 
+  it('issue_comment /assign with argument users assigns the org member and drops the stranger', async () => {
+    gh.route('GET', '/orgs/Codertocat/members/octocat', { status: 204 })
+    gh.route('GET', `${repo}/collaborators/octocat`, { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', '/orgs/Codertocat/members/stranger', { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', `${repo}/collaborators/stranger`, { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+    gh.route('POST', `${repo}/issues/1/assignees`, { status: 201, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/assign @octocat @stranger'),
+      inputs: { ...token, 'prow-commands': '/assign' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    // the argument users' authorization reads are the /cc cases' ground; here only the write matters
+    expect(gh.requestsMatching('POST', /./).map(r => [r.path, r.body])).toEqual([[`${repo}/issues/1/assignees`, { assignees: ['octocat'] }]])
+  })
+
+  it('issue_comment /milestone sets the milestone whose title matches the argument', async () => {
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+    gh.route('GET', `${repo}/milestones`, { status: 200, body: [{ number: 3, title: 'v1.0' }, { number: 7, title: 'Sprint 2' }] })
+    gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/milestone Sprint 2'),
+      inputs: { ...token, 'prow-commands': '/milestone' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/collaborators/Codertocat`,
+      `GET ${repo}/milestones`,
+      `PATCH ${repo}/issues/1`,
+    ])
+    expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ milestone: 7 })
+  })
+
   it('issue_comment /milestone clear unsets the milestone for a collaborator', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
     gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
