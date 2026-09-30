@@ -1897,5 +1897,65 @@ describe('dist/index.js', () => {
         desired.map(name => (name === 'kind/bug' ? `PATCH ${repo}/labels/kind%2Fbug` : `POST ${repo}/labels`)),
       )
     })
+
+    it('dry-run: true reads the labels, logs the plan and writes nothing', async () => {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, { name: 'unrelated', color: 'ffffff' }] })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, 'jobs': 'label-sync', 'dry-run': 'true' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`label-sync (dry-run): would create ${builtins.length + 1} [${[...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)).join(', ')}], would update 1 [kind/bug (color)], unchanged 0`)
+      expect(gh.requestsMatching('POST', /./)).toEqual([])
+      expect(gh.requestsMatching('PATCH', /./)).toEqual([])
+      expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+      expectRequests([...configReads({ org: '.project' }), labelsRead], [])
+    })
+
+    it('the config input owner/repo:path@ref replaces the organization lookup, read at that ref with the token', async () => {
+      gh.route('GET', '/repos/Codertocat/shared-config/contents/labels%2Fprow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: 'd73a4a', description: 'Something is not working' }] })
+      gh.route('POST', `${repo}/labels`, { status: 201, body: {} })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync', config: 'Codertocat/shared-config:labels/prow.yaml@v1' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const explicitRead = '/repos/Codertocat/shared-config/contents/labels%2Fprow.yaml?ref=v1'
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/shared-config\//).map(r => r.path)).toEqual([explicitRead])
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/(\.project|\.github)\//)).toEqual([])
+      const posts = gh.requestsMatching('POST', /\/labels$/)
+      expect(posts.map(p => (p.body as { name: string }).name)).toEqual([...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)))
+      expect(gh.requestsMatching('PATCH', /./)).toEqual([])
+      // the repository tier is still probed, at every path, alongside the explicit source
+      const repoReads = configReads().filter(read => !read.includes('/repos/Codertocat/.'))
+      expectRequests([`GET ${explicitRead}`, ...repoReads, labelsRead], posts.map(() => `POST ${repo}/labels`))
+    })
+
+    it('the config input refuses an http:// source and writes nothing', async () => {
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync', config: 'http://example.invalid/prow.yaml' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status).toBe(1)
+      expect(result.errors.some(e => e.includes('config: http:// sources are not allowed, use https://'))).toBe(true)
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/(\.project|\.github)\//)).toEqual([])
+      expect(gh.requestsMatching('GET', /\/labels/)).toEqual([])
+      expect(gh.requests.filter(r => r.method !== 'GET')).toEqual([])
+    })
   })
 })
