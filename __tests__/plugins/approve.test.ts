@@ -7,7 +7,7 @@ import { approvalEvents, approveSettings, computeApproval, notifierMarker, rende
 import { mergeProwConfig } from '../../src/utils/config'
 import { effectiveOwners, ownersDir, parseOwners } from '../../src/utils/owners'
 
-const defaults: ApproveSettings = { require_self_approval: false, ignore_review_state: false, lgtm_acts_as_approve: false }
+const defaults: ApproveSettings = { require_self_approval: false, ignore_review_state: false, lgtm_acts_as_approve: false, github_review: false }
 
 // the OWNERS of a pull request as loadPullRequestOwners would resolve them, without the network
 function pullOwners(ownersFiles: Record<string, string>, files: string[], author = 'author'): PullRequestOwners {
@@ -18,6 +18,7 @@ function pullOwners(ownersFiles: Record<string, string>, files: string[], author
     baseSha: 'basesha',
     author,
     draft: false,
+    open: true,
     requestedReviewers: [],
     assignees: [],
     labels: [],
@@ -42,9 +43,9 @@ describe('approveSettings', () => {
   it('applies the Prow defaults and reads every flag', () => {
     expect(approveSettings({ ...mergeProwConfig({}, {}), sources: [] })).toEqual(defaults)
     expect(approveSettings({
-      ...mergeProwConfig({}, { approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: true } }),
+      ...mergeProwConfig({}, { approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: true, github_review: true } }),
       sources: [],
-    })).toEqual({ require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: true })
+    })).toEqual({ require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: true, github_review: true })
   })
 })
 
