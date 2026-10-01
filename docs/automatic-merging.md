@@ -412,11 +412,73 @@ Steps:
 4. If branch protection relied on the bot's approving review to satisfy "required approving
    reviews", that review is no longer submitted. Either let this action's merge gate be the
    approval signal (`approved` + `lgtm`, then it merges), or lower the required review count and
-   let a human's review, which the plugin also counts, satisfy the protection.
+   let a human's review, which the plugin also counts, satisfy the protection, or set
+   [`approve.github_review: true`](./commands.md#mirroring-approved-as-a-github-review) so that the
+   bot keeps an approving review on the head while `approved` is set
+   ([required reviews and OpenSSF Scorecard](#required-reviews-and-openssf-scorecard)).
 5. To keep merging on `lgtm` alone, pin the gate: `tide: { labels: [lgtm] }`. The `approved`
    label and the notifier are still maintained for information.
 
 This repository has no OWNERS files, so its own workflows are unaffected.
+
+## Required reviews and OpenSSF Scorecard
+
+A Prow-gated repository (OWNERS, `/lgtm`, `/approve`, the required `prow/lgtm` status) decides
+approval with labels, not GitHub reviews, so its branch protection or ruleset typically requires
+zero approving reviews. Requiring one would make every pull request need a GitHub review on top
+of `/approve`. [`approve.github_review: true`](./commands.md#mirroring-approved-as-a-github-review)
+closes that gap: while the PR carries `approved`, the token keeps an `APPROVE` review on the head
+commit, and dismisses it when `approved` goes away.
+
+```yaml
+approve:
+  github_review: true
+```
+
+What it is | What it is not
+--- | ---
+the approve plugin's verdict (every changed file covered by an OWNERS approver) mirrored as one review by the token | an extra human review: nobody looked at the code twice
+an approving review for "Require a pull request before merging" with 1 required approval in branch protection; a ruleset's "Required approvals" is expected to count it the same way (not verified here) | a **code owner** review: "Require review from Code Owners" still needs an approval from a user or team that CODEOWNERS names, which `github-actions[bot]` is not
+gone the moment `approved` is (cancel, `CHANGES_REQUESTED`, files no longer covered) | a way to approve: the bot's own review never counts toward `approved`
+
+**Repository setting.** With `GITHUB_TOKEN`, *Settings → Actions → General → Workflow
+permissions → Allow GitHub Actions to create and approve pull requests* must be on (on an
+organization's repositories the organization may force it off). Otherwise GitHub refuses the
+review with `GitHub Actions is not permitted to approve pull requests.` and the run logs a warning
+instead of failing. A GitHub App token or a machine user's PAT passed as the `token` secret
+([installing](./installing.md#inputs-and-secrets)) does not need the setting; it must not be the
+author of the pull requests it approves. The workflow permissions do not change:
+`pull-requests: write` is already required.
+
+**Dismiss stale reviews.** With "Dismiss stale pull request approvals when new commits are pushed"
+GitHub dismisses the bot's review on a push; the `synchronize` run submits a fresh one on the new
+head while `approved` stays (`approved` is [sticky](./commands.md#approve)). Without it the old
+review stays and the new one joins it. Whether GitHub's own dismissal can land after the fresh
+review, and dismiss that too, is not documented; the run's log and the PR's timeline show it if
+it does, and the next approval evaluation (a comment, a review, a push, the
+[`sweep` job](./cron-jobs.md#sweep)) puts it back.
+
+**Require approval of the most recent reviewable push.** GitHub wants the latest push approved by
+someone other than its pusher. The fresh review on every new head is what satisfies it, as long
+as the token's identity is not the pusher.
+
+**Mergeability right after the review.** The review is submitted before the merge evaluation of
+the same run, so that evaluation reads the pull request after the review exists. GitHub computes
+`mergeable_state` lazily; the [`unknown` retries](#unknown-github-computes-mergeability-lazily)
+cover an `unknown` answer, but whether the first read can instead return the previous `blocked`
+is not documented. If it does, the pull request is skipped as `not mergeable (blocked)` and the
+next event or the cron merges it. With `GITHUB_TOKEN` the review fires no `pull_request_review`
+event of its own; with a user token it does, and that run re-evaluates the merge.
+
+**Scorecard.** The [Branch-Protection](https://github.com/ossf/scorecard/blob/main/docs/checks.md#branch-protection)
+check scores in tiers and credits a tier only once the previous one is complete. Tier 2 (6/10)
+includes "Require at least 1 reviewer for approval before merging"; tier 3 (8/10) "Require
+branch to pass at least 1 status check before merging". A repository that prevents force pushes
+and deletion and requires the `prow/lgtm` status but no reviewer stops in tier 2 with partial
+credit (4/10 observed); requiring one approving review completes tiers 2 and 3 (8/10). Tier 4
+asks for 2 reviewers and code owner review. The check reads the required review count; it does
+not judge who approves. Scorecard's separate Code-Review check does not count bot reviews and
+already recognizes Prow's `lgtm` and `approved` labels; this setting does not change it.
 
 ## Upgrading from the `hold` label
 

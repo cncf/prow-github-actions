@@ -232,14 +232,59 @@ which the [`lgtm` PR job](./pr-jobs.md) removes on every push.
 vouches for); a changed file no OWNERS file covers can never be approved and is listed as such in
 the notifier. `/approve cancel` by someone who never approved is a no-op re-evaluation.
 
-**No bot review.** On repositories with OWNERS files the bot submits no GitHub review any more:
-a review by `github-actions[bot]` would satisfy branch protection's "required approving reviews"
-on its own, which is the wrong signal once `approved` is what the [merge gate](./automatic-merging.md#the-merge-gate)
-requires. `/approve cancel` therefore dismisses nothing; it just recomputes.
+**No bot review by default.** On repositories with OWNERS files the bot submits no GitHub review
+of its own accord: a review by `github-actions[bot]` would satisfy branch protection's "required
+approving reviews" on its own, which is the wrong signal once `approved` is what the
+[merge gate](./automatic-merging.md#the-merge-gate) requires. `/approve cancel` therefore dismisses
+nothing; it just recomputes. A repository that wants a required review to follow the Prow decision
+opts in with [`approve.github_review`](#mirroring-approved-as-a-github-review).
 
 Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `labeled`/`unlabeled` of
 `approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
 See [events](./events.md).
+
+#### Mirroring `approved` as a GitHub review
+
+With [`approve.github_review: true`](./configuration.md#approve) (default `false`) the token keeps
+an `APPROVE` review on the pull request's head commit for as long as the PR carries `approved`,
+and dismisses it when `approved` goes away. Humans keep using `/approve` (and `/lgtm`); a branch
+protection rule or ruleset that requires one approving review is then met by the Prow decision,
+without anyone approving twice. It is the plugin's verdict mirrored, not an extra human review
+([required reviews and OpenSSF Scorecard](./automatic-merging.md#required-reviews-and-openssf-scorecard)).
+Only repositories with OWNERS files are affected; without them `/approve` submits a bot review
+anyway ([below](#repositories-without-owners-files)).
+
+Situation | Action
+--- | ---
+the evaluation ends with `approved` | one `APPROVED` review by the token on the **current head** (`commit_id`); none is written when it already exists. Body: `Approved via /approve by <approvers> (OWNERS).`, an explanation and the hidden marker `<!-- prow-github-actions/approve-review -->`. The approvers are named without `@`, so a fresh review after each push notifies nobody
+the evaluation ends without `approved` (`/approve cancel`, a `CHANGES_REQUESTED` review, files no longer covered, ...) | every `APPROVED` review by the token that carries the marker is dismissed, on any commit, with `approved removed: <reason>`, ex: `approved removed: no approver covers sdk/x.go; withdrawn by bob (/approve cancel)`
+`synchronize` (a new head) while `approved` stays | a fresh review on the new head; the one on the old commit is left as it is (GitHub may have dismissed it as stale). Reviews without the marker are never touched
+the PR's author is the token's own identity (a PR the bot opened, or a `token` secret of the author) | GitHub does not let an author approve their own pull request: warning `cannot submit the approval review: #<n> was opened by the token's own identity (<login>), and GitHub does not let an author approve their own pull request (approve.github_review)`, no review
+GitHub refuses with 403, or with `GitHub Actions is not permitted to approve pull requests.` (reported as a 422 when "Allow GitHub Actions to create and approve pull requests" is off; GitHub does not document the status) | warning, not failure: `cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review): <GitHub's message>`
+any other API error | `could not submit the approval review: <error>` or `could not dismiss the approval review <id>: <error>`, an error annotation; the run fails at the end, after the merge evaluation
+the pull request is closed | nothing
+
+The order inside one run is: compute the approval → write the label → edit the notifier →
+submit or dismiss the review → the merge evaluation, so the merge evaluation of the same run starts
+after the review exists (whether GitHub's `mergeable_state` already reflects it is another matter,
+see [required reviews](./automatic-merging.md#required-reviews-and-openssf-scorecard)).
+
+**The bot's review never approves.** It is an output, never an input: a review carrying the
+marker never counts as an approval, and with the setting on neither does any review by the
+token's own user (when `token` is a user's PAT; `GITHUB_TOKEN` and GitHub App reviews are by a
+`Bot` and never count anyway). Otherwise `approved` would hold itself up. To find that user the
+bot reads `GET /user` once per run; an installation token is answered with 403 and needs no login.
+Use a dedicated machine user, not a maintainer's PAT, or that maintainer's own reviews stop
+counting. A `pull_request_review` event for the bot's review (only a user token fires one)
+evaluates nothing in the approve plugin; the merge gate still runs, which is harmless.
+
+Dismissing the bot's review by hand does not withdraw approval: the next evaluation submits it
+again. Use `/approve cancel`. Turning the setting off leaves the reviews already submitted in
+place; dismiss them by hand. Two runs evaluating the same pull request at the same moment (a push
+and a review, say) may both submit a review; the duplicate is harmless.
+
+With the setting off nothing changes: no `GET /user`, no review read beyond what
+`ignore_review_state` already reads, no review written.
 
 ### Repositories without OWNERS files
 
