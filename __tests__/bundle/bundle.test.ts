@@ -138,7 +138,10 @@ describe('dist/index.js', () => {
   it('is a syntactically valid bundle with no unresolved modules', () => {
     expect(fs.existsSync(bundlePath)).toBe(true)
 
-    const check = spawnSync(process.execPath, ['--check', bundlePath], { encoding: 'utf8' })
+    // node re-injects the parent's NODE_V8_COVERAGE into any child env lacking the key, and
+    // `node --check` crashes under it (nodejs v26 source-map cache); an empty value opts out
+    const env = { ...process.env, NODE_V8_COVERAGE: '' }
+    const check = spawnSync(process.execPath, ['--check', bundlePath], { encoding: 'utf8', env })
     expect(check.status, check.stderr).toBe(0)
 
     expect(fs.readFileSync(bundlePath, 'utf8')).not.toContain('webpackMissingModule')
