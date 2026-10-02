@@ -726,6 +726,23 @@ reviewers:
       expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('you cannot approve your own PR'))
     })
 
+    it('require_self_approval: a payload whose issue has no user is not treated as the author', async () => {
+      const writes = serve({
+        owners: { OWNERS: 'approvers:\n- alice\n' },
+        files: ['src/a.go'],
+        prowYaml: 'approve:\n  require_self_approval: true\n',
+        comments: [{ body: '/approve', user: { login: 'alice' } }],
+      })
+      const event = prCommentEvent('/approve', 'alice')
+      delete (event.issue as { user?: unknown }).user
+
+      await handleIssueComment(new utils.MockContext(event))
+
+      await expect(writes.addLabels.called()).resolves.toBe('called')
+      expect(await writes.addLabels.body()).toEqual({ labels: ['approved'] })
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
     it('fails when the repository lacks the approved label', async () => {
       const writes = serve({ owners: { OWNERS: 'approvers:\n- alice\n' }, files: ['src/a.go'], comments: [{ body: '/approve', user: { login: 'alice' } }], repoLabels: ['lgtm'] })
 
