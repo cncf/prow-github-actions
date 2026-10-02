@@ -92,6 +92,18 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     expect(info).toHaveBeenCalledWith('enqueued pr #1 (position 3)')
   })
 
+  it('an enqueue that reports no entry is still enqueued, without a position', async () => {
+    servePull(pull(['lgtm']))
+    const merge = observeMerge()
+    const calls = serveGraphql({ enqueuePosition: null })
+    const info = vi.spyOn(core, 'info')
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'enqueued' })
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(1)
+    expect(info).toHaveBeenCalledWith('enqueued pr #1')
+  })
+
   it('a blocked pr is still enqueued: required checks are the queue\'s business', async () => {
     servePull(pull(['lgtm'], { mergeable_state: 'blocked' }))
     const merge = observeMerge()
@@ -166,6 +178,18 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     await expect(merge.notCalled()).resolves.toBe('not called')
     expect(calls).toHaveLength(1)
     expect(info).toHaveBeenCalledWith('skipping pr #1: in the merge queue (position 2, AWAITING_CHECKS)')
+  })
+
+  it('a pr in the queue without an entry is skipped as plainly in the queue, no mutation', async () => {
+    servePull(pull(['lgtm']))
+    const merge = observeMerge()
+    const calls = serveGraphql({ inQueue: true, entry: null })
+    const info = vi.spyOn(core, 'info')
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'in the merge queue' })
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(calls).toHaveLength(1)
+    expect(info).toHaveBeenCalledWith('skipping pr #1: in the merge queue')
   })
 
   it.each([
@@ -318,6 +342,16 @@ describe('dequeue when the gate breaks', () => {
     await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
     expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(0)
     expect(debug).toHaveBeenCalledWith('pr #1 was enqueued by alice; leaving it in the queue')
+  })
+
+  it('an entry without an enqueuer: left alone as an unknown actor', async () => {
+    servePull(pull([]))
+    const calls = serveGraphql({ inQueue: true, entry: { state: 'QUEUED', position: 1, enqueuer: null } })
+    const debug = vi.spyOn(core, 'debug')
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
+    expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(0)
+    expect(debug).toHaveBeenCalledWith('pr #1 was enqueued by an unknown actor; leaving it in the queue')
   })
 
   it('not in the queue: one query, no mutation', async () => {
