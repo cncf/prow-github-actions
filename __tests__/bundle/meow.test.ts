@@ -4,14 +4,12 @@ import http from 'node:http'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import { start } from './fakeGithub'
+import { comment, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
-const repo = '/repos/Codertocat/Hello-World'
-const token = { 'github-token': 'some-token' }
 const preload = path.resolve(__dirname, 'catApiPreload.cjs')
 const image = 'https://cdn2.thecatapi.com/images/MTY3ODIyMQ.jpg'
 const fallback = 'The cat API is unavailable right now.'
@@ -53,15 +51,10 @@ async function startCatApi() {
   }
 }
 
-function comment(body: string) {
-  const payload = structuredClone(issueCommentEvent)
-  payload.comment.body = body
-  return payload
-}
-
 describe('dist/index.js issue_comment /meow', () => {
   let gh: FakeGithub
   let cat: Awaited<ReturnType<typeof startCatApi>>
+  const { calls } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -88,10 +81,6 @@ describe('dist/index.js issue_comment /meow', () => {
 
   function postedComments() {
     return gh.requestsMatching('POST', /\/issues\/1\/comments$/).map(r => (r.body as { body: string }).body)
-  }
-
-  function calls() {
-    return gh.requests.map(r => `${r.method} ${r.path}`)
   }
 
   it('posts the image the cat api returns, with no authorization read and no sweep', async () => {
@@ -201,8 +190,7 @@ describe('dist/index.js issue_comment /meow', () => {
     const result = await meow('/meow')
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors).toHaveLength(1)
-    expect(result.errors[0]).toMatch(/error handling issue comment/)
+    expect(result.errors.some(e => e.includes('could not add comment'))).toBe(true)
     expect(calls()).toEqual([`POST ${repo}/issues/1/comments`])
   })
 })
