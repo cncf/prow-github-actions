@@ -2,6 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
+import { token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -9,7 +10,6 @@ vi.setConfig({ testTimeout: 30_000 })
 // the `jobs` input validation of the cron dispatcher, driven through dist/index.js: the push event routes to the
 // cron jobs like schedule and workflow_dispatch do, and a blank list fails the run before anything talks to the api
 describe('dist/index.js cron jobs input', () => {
-  const token = { 'github-token': 'some-token' }
   let gh: FakeGithub
 
   beforeAll(async () => {
