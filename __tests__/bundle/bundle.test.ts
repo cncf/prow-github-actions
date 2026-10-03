@@ -563,6 +563,69 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('PUT', /merge$/)).toEqual([])
     })
 
+    describe('with approve.github_review', () => {
+      const reviewMarker = '<!-- prow-github-actions/approve-review -->'
+
+      function routeGithubReview() {
+        gh.route('GET', `${repo}/contents/.github%2Fprow.yaml`, { status: 200, body: yamlFile('approve:\n  github_review: true\n') })
+        // GITHUB_TOKEN is an installation token: GET /user is refused, its reviews are a Bot's
+        gh.route('GET', '/user', { status: 403, body: { message: 'Resource not accessible by integration' } })
+        gh.route('PUT', /\/pulls\/1\/reviews\/\d+\/dismissals$/, { status: 200, body: {} })
+      }
+
+      it('/approve adds approved, then submits one APPROVE review on the head before the merge evaluation', async () => {
+        routeGithubReview()
+        routeApprove(['sdk/x.go'], {
+          comments: [{ id: 1, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' }],
+        })
+
+        const result = await runApprove('/approve', 'bob')
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+        const reviews = gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)
+        expect(reviews).toHaveLength(1)
+        expect(reviews[0].body).toEqual({
+          commit_id: pullBody.head.sha,
+          event: 'APPROVE',
+          body: expect.stringContaining(reviewMarker),
+        })
+        expect((reviews[0].body as { body: string }).body).toContain('Approved via /approve by bob (OWNERS).')
+        const calls = gh.requests.map(r => `${r.method} ${r.path}`)
+        const at = (call: string) => calls.indexOf(call)
+        expect(at(`POST ${repo}/issues/1/labels`)).toBeLessThan(at(`POST ${repo}/pulls/1/reviews`))
+        expect(at(`POST ${repo}/pulls/1/reviews`)).toBeLessThan(calls.lastIndexOf(`GET ${repo}/pulls/1`))
+        expect(gh.requestsMatching('PUT', /dismissals$/)).toEqual([])
+      })
+
+      it('/approve cancel removes approved and dismisses the mirrored review, leaving a review without the marker alone', async () => {
+        routeGithubReview()
+        routeApprove(['sdk/x.go'], {
+          labels: ['approved'],
+          comments: [
+            { id: 900, body: `stale\n${marker}`, user: bot, created_at: '2024-01-01T00:00:00Z' },
+            { id: 1, body: '/approve', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:01Z' },
+            { id: 2, body: '/approve cancel', user: { login: 'bob', type: 'User' }, created_at: '2024-01-01T00:00:02Z' },
+          ],
+          reviews: [
+            { id: 70, state: 'APPROVED', user: bot, body: '', commit_id: pullBody.head.sha, submitted_at: '2024-01-01T00:00:00Z' },
+            { id: 71, state: 'APPROVED', user: bot, body: `Approved via /approve by bob (OWNERS).\n${reviewMarker}`, commit_id: pullBody.head.sha, submitted_at: '2024-01-01T00:00:01Z' },
+          ],
+        })
+
+        const result = await runApprove('/approve cancel', 'bob')
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(gh.requestsMatching('DELETE', /\/issues\/1\/labels\/approved$/)).toHaveLength(1)
+        const dismissals = gh.requestsMatching('PUT', /dismissals$/)
+        expect(dismissals.map(r => r.path)).toEqual([`${repo}/pulls/1/reviews/71/dismissals`])
+        expect(dismissals[0].body).toEqual({ message: 'approved removed: no approver covers sdk/x.go; withdrawn by bob (/approve cancel)' })
+        expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      })
+    })
+
     it('refuses with a comment a commenter who approves none of the changed files', async () => {
       routeApprove(['sdk/x.go', 'olm/y.go'])
 

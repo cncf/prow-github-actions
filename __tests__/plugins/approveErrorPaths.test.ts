@@ -17,7 +17,7 @@ beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-const defaults: ApproveSettings = { require_self_approval: false, ignore_review_state: false, lgtm_acts_as_approve: false }
+const defaults: ApproveSettings = { require_self_approval: false, ignore_review_state: false, lgtm_acts_as_approve: false, github_review: false }
 const sdkOwners = 'approvers:\n- bob\n'
 const link = (path: string) => `https://github.com/Codertocat/Hello-World/blob/basesha/${path}`
 
@@ -29,6 +29,7 @@ function pullOwners(ownersFiles: Record<string, string>, files: string[], author
     baseSha: 'basesha',
     author,
     draft: false,
+    open: true,
     requestedReviewers: [],
     assignees: [],
     labels: [],
