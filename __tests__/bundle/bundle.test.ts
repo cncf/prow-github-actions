@@ -945,6 +945,28 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [requestReviewers])
     })
+
+    it('synchronize of a pull request carrying ok-to-test approves the runs waiting on its head', async () => {
+      const head = pullReqOpenedEvent.pull_request.head.sha
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', `${repo}/actions/runs`, { status: 200, body: { total_count: 1, workflow_runs: [
+        { id: 9, name: 'CI', path: '.github/workflows/ci.yml', head_sha: head, status: 'action_required', conclusion: 'action_required' },
+      ] } })
+      gh.route('POST', `${repo}/actions/runs/9/approve`, { status: 201 })
+
+      const result = await runBundle({
+        eventName: 'pull_request',
+        payload: { ...pullReqOpenedEvent, action: 'synchronize', pull_request: { ...pullReqOpenedEvent.pull_request, labels: [{ name: 'ok-to-test' }] } },
+        inputs: token,
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`trigger: #1 approved 1 run(s) on ${head.slice(0, 7)}`)
+      // owners-label, approve's probe, then ok-to-test; tide skips synchronize
+      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([...ownersReads, ownersProbe, `GET ${repo}/actions/runs?head_sha=${head}&per_page=100`, `POST ${repo}/actions/runs/9/approve`])
+    })
   })
 
   it('pull_request lgtm job leaves the lgtm label alone when the pr is labeled', async () => {
@@ -1887,6 +1909,25 @@ describe('dist/index.js', () => {
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('sweep: 1 pull request(s) failed: #1 (tide: Pull Request is not mergeable)'))).toBe(true)
       expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
+    })
+
+    it('a fork pr carrying ok-to-test: approves its runs awaiting approval before tide reads it', async () => {
+      const pr = forkPr(1, ['ok-to-test'])
+      routeList([pr])
+      gh.route('GET', `${repo}/actions/runs`, { status: 200, body: { total_count: 2, workflow_runs: [
+        { id: 4, name: 'Job 4', path: '.github/workflows/job4.yml', head_sha: 'sha1', status: 'action_required', conclusion: 'action_required' },
+        { id: 5, name: 'CI', path: '.github/workflows/ci.yml', head_sha: 'sha1', status: 'completed', conclusion: 'success' },
+      ] } })
+      gh.route('POST', `${repo}/actions/runs/4/approve`, { status: 201 })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: pr })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('trigger: #1 approved 1 run(s) on sha1')
+      // the one pending run is approved; tide then reads the pr and stops at the missing lgtm
+      expectRequests(configReads(), [listPage(1), ownersProbe, `GET ${repo}/actions/runs?head_sha=sha1&per_page=100`, `POST ${repo}/actions/runs/4/approve`, `GET ${repo}/pulls/1`])
     })
   })
 
