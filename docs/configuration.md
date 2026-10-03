@@ -334,7 +334,7 @@ Field | Default | Meaning
 `require_self_approval` | `false` | `false`: the PR author implicitly approves every changed file their OWNERS entries cover (Prow's default). `true`: the author never counts, implicitly or through `/approve`
 `ignore_review_state` | `false` | `true`: GitHub reviews neither add (`APPROVED`) nor remove (`CHANGES_REQUESTED`) approvers
 `lgtm_acts_as_approve` | `false` | `true`: `/lgtm` counts as `/approve` and `/lgtm cancel` as `/approve cancel` when computing approval; the `lgtm` label is unaffected
-`github_review` | `false` | `true`: while the PR carries `approved`, the token keeps an `APPROVE` review on the PR's head commit, and dismisses it when `approved` goes away, so that a required approving review is met by the Prow decision ([mirrored review](./commands.md#mirroring-approved-as-a-github-review)). Needs "Allow GitHub Actions to create and approve pull requests" with `GITHUB_TOKEN`. `false`: no review is written and no extra API call is made
+`github_review` | `false` | `true`: while the PR carries `approved`, the token keeps an `APPROVE` review on the PR's head commit, and dismisses it when `approved` goes away, so that a required approving review is met by the Prow decision ([mirrored review](./commands.md#mirroring-approved-as-a-github-review)). Needs "Allow GitHub Actions to create and approve pull requests" with `GITHUB_TOKEN`; that setting is repo-wide and lets **any** workflow approve PRs with `GITHUB_TOKEN`, so a dedicated GitHub App or machine-user `token` is the safer setup ([repository setting](./automatic-merging.md#required-reviews-and-openssf-scorecard)). `false`: no review is written and no extra API call is made
 
 ### `lgtm`
 

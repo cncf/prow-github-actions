@@ -404,8 +404,8 @@ Steps:
 1. Run the [`label-sync` job](./cron-jobs.md#label-sync), or create `approved` by hand. Until it
    exists an evaluation that wants to add it fails with
    `the label(s) approved cannot be applied because the repository doesn't have them`.
-2. Subscribe the workflow to `pull_request` (`opened`, `reopened`, `synchronize`, `labeled`,
-   `unlabeled`) and `pull_request_review` (`submitted`, `dismissed`) so approvals from reviews and
+2. Subscribe the workflow to `pull_request` (`opened`, `reopened`, `synchronize`,
+   `ready_for_review`, `labeled`, `unlabeled`) and `pull_request_review` (`submitted`, `dismissed`) so approvals from reviews and
    authorship are picked up ([events](./events.md)). `/approve` comments work with `issue_comment` alone.
 3. Open PRs need an approver: an author who owns every changed file is approved on the next
    evaluation; anyone else needs `/approve` (or an approving review) from the OWNERS approvers.
@@ -450,17 +450,39 @@ instead of failing. A GitHub App token or a machine user's PAT passed as the `to
 author of the pull requests it approves. The workflow permissions do not change:
 `pull-requests: write` is already required.
 
+> [!WARNING]
+> "Allow GitHub Actions to create and approve pull requests" is a **repository-wide** switch, not
+> a grant to this action. Once it is on, every workflow in the repository can approve pull
+> requests with `GITHUB_TOKEN`, including one that a collaborator with write access adds on their
+> own branch. The safer setup leaves the setting off and passes a dedicated GitHub App token or a
+> machine user's token as the `token` secret, so that only this action's identity can approve.
+
+**Stale-approval rules are neutralized.** `approved` is [sticky](./commands.md#approve): it stays
+on a pull request across pushes, so the bot approves every new head again. That makes GitHub's
+"Dismiss stale pull request approvals when new commits are pushed" and "Require approval of the
+most recent reviewable push" ineffective as protections with this setting on: neither forces a
+person to look at the new commits. The protection after a push is the `lgtm` side of the gate:
+`lgtm` is [removed on every push](#lgtm-is-bound-to-a-commit) and the `prow/lgtm` status no longer
+matches the new head, so **`prow/lgtm` must stay a required status check**.
+
 **Dismiss stale reviews.** With "Dismiss stale pull request approvals when new commits are pushed"
 GitHub dismisses the bot's review on a push; the `synchronize` run submits a fresh one on the new
-head while `approved` stays (`approved` is [sticky](./commands.md#approve)). Without it the old
-review stays and the new one joins it. Whether GitHub's own dismissal can land after the fresh
+head while `approved` stays. Without it the old review stays and the new one joins it. Whether GitHub's own dismissal can land after the fresh
 review, and dismiss that too, is not documented; the run's log and the PR's timeline show it if
 it does, and the next approval evaluation (a comment, a review, a push, the
 [`sweep` job](./cron-jobs.md#sweep)) puts it back.
 
 **Require approval of the most recent reviewable push.** GitHub wants the latest push approved by
 someone other than its pusher. The fresh review on every new head is what satisfies it, as long
-as the token's identity is not the pusher.
+as the token's identity is not the pusher; as above, it does not mean anyone reviewed that push.
+
+**Refused dismissals.** If GitHub refuses to dismiss the bot's review (for example "Restrict who
+can dismiss pull request reviews" does not include the token's identity), every approval
+evaluation of that pull request fails with `could not dismiss the approval review <id>` until
+someone allowed to dismisses the review by hand.
+
+**Drafts.** A draft pull request gets no review; it is submitted once the PR is marked ready for
+review (the `ready_for_review` event). Dismissals still apply to drafts.
 
 **Mergeability right after the review.** The review is submitted before the merge evaluation of
 the same run, so that evaluation reads the pull request after the review exists. GitHub computes
@@ -478,7 +500,9 @@ and deletion and requires the `prow/lgtm` status but no reviewer stops in tier 2
 credit (4/10 observed); requiring one approving review completes tiers 2 and 3 (8/10). Tier 4
 asks for 2 reviewers and code owner review. The check reads the required review count; it does
 not judge who approves. Scorecard's separate Code-Review check does not count bot reviews and
-already recognizes Prow's `lgtm` and `approved` labels; this setting does not change it.
+already recognizes Prow's `lgtm` and `approved` labels; this setting does not change it. The
+required-review credit is nominal with this setup: the review mirrors the Prow decision, it is not
+an independent control.
 
 ## Upgrading from the `hold` label
 
