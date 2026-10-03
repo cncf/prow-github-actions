@@ -1454,7 +1454,11 @@ describe('dist/index.js', () => {
       expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
 
-    it('check_suite completed without pull_requests: finds the pr by head sha', async () => {
+    // a check_suite without pull_requests and a legacy commit status name only the commit: both find the pr by its head sha
+    it.each([
+      ['check_suite', checkSuiteCompletedEvent],
+      ['status', { sha: checkSuiteCompletedEvent.check_suite.head_sha, state: 'success', context: 'ci/lint', repository: checkSuiteCompletedEvent.repository }],
+    ])('%s with only a head sha: finds the pr by that sha', async (eventName, payload) => {
       const sha = checkSuiteCompletedEvent.check_suite.head_sha
       gh.commitStatuses(repo, sha, bound)
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
@@ -1464,7 +1468,7 @@ describe('dist/index.js', () => {
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...mergeablePr('clean'), head: { sha } } })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
-      const result = await runBundle({ eventName: 'check_suite', payload: checkSuiteCompletedEvent, inputs: token, apiUrl: gh.url })
+      const result = await runBundle({ eventName, payload, inputs: token, apiUrl: gh.url })
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
