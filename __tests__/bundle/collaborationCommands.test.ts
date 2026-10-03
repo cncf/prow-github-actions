@@ -1,8 +1,8 @@
 import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import { start } from './fakeGithub'
+import { comment, helpersFor, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -10,27 +10,15 @@ vi.setConfig({ testTimeout: 30_000 })
 // the issue_comment commands that touch assignees, reviewers, title and lock state,
 // driven through dist/index.js like the label commands in bundle.test.ts
 describe('dist/index.js collaboration commands', () => {
-  const repo = '/repos/Codertocat/Hello-World'
-  const token = { 'github-token': 'some-token' }
   const collaboratorRead = `GET ${repo}/collaborators/Codertocat`
   let gh: FakeGithub
+  const { calls } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
   })
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
-
-  function comment(body: string, author = issueCommentEvent.issue.user.login) {
-    const payload = structuredClone(issueCommentEvent)
-    payload.comment.body = body
-    payload.issue.user.login = author
-    return payload
-  }
-
-  function calls() {
-    return gh.requests.map(r => `${r.method} ${r.path}`)
-  }
 
   async function run(body: string, command: string, author?: string) {
     const result = await runBundle({
@@ -43,12 +31,8 @@ describe('dist/index.js collaboration commands', () => {
   }
 
   // the three reads checkCommenterAuth / getOrgCollabCommentUsers make for one user, in order
-  function membershipReads(user: string) {
-    return [
-      `GET /orgs/Codertocat/members/${user}`,
-      `GET ${repo}/collaborators/${user}`,
-      `GET ${repo}/issues/1/comments`,
-    ]
+  function membershipOrCommentReads(user: string) {
+    return [...membershipReads(user), `GET ${repo}/issues/1/comments`]
   }
 
   describe('/cc', () => {
@@ -87,7 +71,7 @@ describe('dist/index.js collaboration commands', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       // the two users are checked concurrently, so their reads interleave
-      expect(calls().slice(0, 6).sort()).toEqual([...membershipReads('octocat'), ...membershipReads('stranger')].sort())
+      expect(calls().slice(0, 6).sort()).toEqual([...membershipOrCommentReads('octocat'), ...membershipOrCommentReads('stranger')].sort())
       expect(calls().slice(6)).toEqual([`POST ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('POST', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
@@ -128,7 +112,7 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
+      expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('DELETE', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat', 'hubot'] })
     })
 
@@ -141,7 +125,7 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual(membershipReads('Codertocat'))
+      expect(calls()).toEqual(membershipOrCommentReads('Codertocat'))
     })
   })
 
@@ -167,7 +151,7 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
+      expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
     })
 

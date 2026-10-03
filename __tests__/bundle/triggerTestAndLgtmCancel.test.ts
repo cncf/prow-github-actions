@@ -3,8 +3,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
-import { prCommentEvent, pullBody } from '../utils/ownersFixtures'
+import { prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
+import { helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -12,12 +13,11 @@ vi.setConfig({ testTimeout: 30_000 })
 // the /test trigger command and the lgtm cancel spellings (/lgtm cancel, /remove-lgtm),
 // driven through dist/index.js like /retest and /lgtm in bundle.test.ts
 describe('dist/index.js /test and lgtm cancel', () => {
-  const repo = '/repos/Codertocat/Hello-World'
-  const token = { 'github-token': 'some-token' }
   const commentPost = `POST ${repo}/issues/1/comments`
   const rocket = `POST ${repo}/issues/comments/492700400/reactions`
   const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
   let gh: FakeGithub
+  const { calls, expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -26,44 +26,23 @@ describe('dist/index.js /test and lgtm cancel', () => {
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
 
-  function calls() {
-    return gh.requests.map(r => `${r.method} ${r.path}`)
-  }
-
   function comments() {
     return gh.requestsMatching('POST', /\/issues\/1\/comments$/).map(r => (r.body as { body: string }).body)
   }
 
   // the pull request, its files and an OWNERS-less base tree: the commenter is then authorized by membership
   function routePullRequest(labels: string[] = []) {
-    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'some-author' }, requested_reviewers: [], assignees: [], labels: labels.map(name => ({ name })) } })
-    gh.route('GET', `${repo}/pulls/1/files`, { status: 200, body: [{ filename: 'src/file1.txt', status: 'modified' }] })
-    gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
-    gh.route('GET', `${repo}/git/trees/basesha`, { status: 200, body: { sha: 'basesha', truncated: false, tree: [] } })
+    routeOwners({}, ['src/file1.txt'], { user: { login: 'some-author' }, labels: labels.map(name => ({ name })) })
   }
-
-  const ownersReads = [
-    `GET ${repo}/pulls/1`,
-    `GET ${repo}/pulls/1/files?per_page=100`,
-    `GET ${repo}/branches/master`,
-    `GET ${repo}/git/trees/basesha?recursive=true`,
-  ]
 
   function routeMember(login: string, member: boolean) {
     gh.route('GET', `/orgs/Codertocat/members/${login}`, member ? { status: 204 } : { status: 404, body: { message: 'Not Found' } })
     gh.route('GET', `${repo}/collaborators/${login}`, { status: 404, body: { message: 'Not Found' } })
   }
 
-  function membershipReads(login: string) {
-    return [`GET /orgs/Codertocat/members/${login}`, `GET ${repo}/collaborators/${login}`]
-  }
-
   // the OWNERS-less authorization of a reviewer: owners reads, then org membership and collaborator (unordered among themselves)
   function expectAuthorized(rest: string[], login = 'Codertocat') {
-    const reads = [...ownersReads, ...membershipReads(login)]
-    const recorded = calls()
-    expect(recorded.slice(0, reads.length).sort()).toEqual([...reads].sort())
-    expect(recorded.slice(reads.length)).toEqual(rest)
+    expectRequests([...ownersReads, ...membershipReads(login)], rest)
   }
 
   describe('/test', () => {
@@ -248,13 +227,7 @@ describe('dist/index.js /test and lgtm cancel', () => {
     const unbind = `POST ${repo}/statuses/headsha`
     const pullRead = `GET ${repo}/pulls/1`
     // tide's sweep: the pr (now without lgtm), whether its base has OWNERS files, and the merge queue state
-    const sweep = [pullRead, `GET ${repo}/git/trees/master?recursive=true`, 'POST /graphql']
-    const configReads = [
-      'GET /repos/Codertocat/.project/contents/prow.yaml',
-      'GET /repos/Codertocat/.github/contents/prow.yaml',
-      ...['.github/prow.yaml', '.github/prowlabels.yaml', 'prow.yaml', '.prowlabels.yaml', '.github/prow.yml', '.github/prowlabels.yml', 'prow.yml', '.prowlabels.yml']
-        .map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`),
-    ]
+    const sweep = [pullRead, ownersProbe, queueRead]
 
     // the issue read answers with `labels`; the pull request read (before and after the removal) never carries lgtm,
     // as tide's sweep would see it once the label is gone
@@ -272,16 +245,6 @@ describe('dist/index.js /test and lgtm cancel', () => {
         inputs: { ...token, 'prow-commands': '/lgtm' },
         apiUrl: gh.url,
       })
-    }
-
-    // after the command: the configuration reads (unordered) for lgtm.bind_to_commit, then a fixed tail
-    function expectCommandThenConfig(command: string[], tail: string[], commandReads: string[]) {
-      const recorded = calls()
-      expect(recorded.slice(0, commandReads.length).sort()).toEqual([...commandReads].sort())
-      const afterAuth = recorded.slice(commandReads.length)
-      expect(afterAuth.slice(0, command.length)).toEqual(command)
-      expect(afterAuth.slice(command.length, command.length + configReads.length).sort()).toEqual([...configReads].sort())
-      expect(afterAuth.slice(command.length + configReads.length)).toEqual(tail)
     }
 
     it('/lgtm cancel by a reviewer on an lgtm\'d pr: removes the label, voids the binding with a pending status, and the sweep skips the pr', async () => {
