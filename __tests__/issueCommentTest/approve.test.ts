@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { notifierMarker } from '../../src/plugins/approve'
 
-import issueCommentEventAssign from '../fixtures/issues/assign/issueCommentEventAssign.json'
+import issueCommentEventAssignFixture from '../fixtures/issues/assign/issueCommentEventAssign.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
@@ -26,8 +26,11 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('/approve', () => {
+  // tests rewrite the comment body and commenter; a fresh copy per test keeps those edits from leaking into the next
+  let issueCommentEventAssign: typeof issueCommentEventAssignFixture
   beforeEach(() => {
     utils.setupActionsEnv('/approve')
+    issueCommentEventAssign = structuredClone(issueCommentEventAssignFixture)
   })
 
   it('fails if commenter is not an approver in OWNERS', async () => {
