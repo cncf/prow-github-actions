@@ -131,6 +131,7 @@ export interface MirrorInput {
 }
 
 export const notPermittedWarning = 'cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review)'
+export const forbiddenWarning = 'cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review)'
 
 /**
  * syncApprovalReview makes the action's own APPROVE review follow the
@@ -139,8 +140,9 @@ export const notPermittedWarning = 'cannot submit the approval review: enable "A
  * Not approved: every such review the action submitted earlier is dismissed,
  * on any commit. Reviews without the marker, or by anyone else, are never
  * touched. GitHub refusing the approval itself (the repository does not let
- * Actions approve, or the token authored the pull request) is a warning;
- * any other API error fails the evaluation.
+ * Actions approve, the token lacks `pull-requests: write`, or the token
+ * authored the pull request) is a warning; any other API error fails the
+ * evaluation.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
@@ -198,8 +200,12 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
       core.warning(selfApprovalWarning(number, owners.author))
       return
     }
-    if (errorStatus(e) === 403 || /not permitted to approve pull requests/i.test(message)) {
+    if (/not permitted to approve pull requests/i.test(message)) {
       core.warning(`${notPermittedWarning}: ${message}`)
+      return
+    }
+    if (errorStatus(e) === 403) {
+      core.warning(`${forbiddenWarning}: ${message}`)
       return
     }
     throw new Error(`could not submit the approval review: ${e}`)

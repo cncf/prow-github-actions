@@ -8,7 +8,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { approveOnPullRequest, approveOnReview } from '../../src/plugins/approve'
-import { isOwnReview, notPermittedWarning, reviewBody, reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from '../../src/plugins/approveReview'
+import { forbiddenWarning, isOwnReview, notPermittedWarning, reviewBody, reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from '../../src/plugins/approveReview'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import { handlePullReqReview } from '../../src/pullReq/handlePullReqReview'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -261,7 +261,7 @@ describe('approve.github_review: approved', () => {
     expect(warning).toHaveBeenCalledWith('cannot submit the approval review: #1 was opened by the token\'s own identity (github-actions[bot]), and GitHub does not let an author approve their own pull request (approve.github_review)')
   })
 
-  it('403: warning naming the repository setting, not failure', async () => {
+  it('a plain 403: warning naming the missing permission, not the repository setting, not failure', async () => {
     serve({
       comments: [approveBy('bob'), approveBy('carol')],
       createReview: { status: 403, body: { message: 'Resource not accessible by integration' } },
@@ -269,19 +269,26 @@ describe('approve.github_review: approved', () => {
 
     await expect(approveOnPullRequest(prEvent('opened'))).resolves.toBeUndefined()
 
-    expect(warning).toHaveBeenCalledWith(`${notPermittedWarning}: Resource not accessible by integration`)
-    expect(notPermittedWarning).toBe('cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review)')
+    expect(warning).toHaveBeenCalledWith(`${forbiddenWarning}: Resource not accessible by integration`)
+    expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('Allow GitHub Actions'))
+    expect(forbiddenWarning).toBe('cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review)')
   })
 
-  it('"GitHub Actions is not permitted to approve pull requests." whatever the status: the same warning', async () => {
-    serve({
-      comments: [approveBy('bob'), approveBy('carol')],
-      createReview: { status: 422, body: { message: 'GitHub Actions is not permitted to approve pull requests.' } },
-    })
+  it('"GitHub Actions is not permitted to approve pull requests." whatever the status: warning naming the repository setting', async () => {
+    for (const status of [422, 403]) {
+      warning.mockClear()
+      serve({
+        comments: [approveBy('bob'), approveBy('carol')],
+        createReview: { status, body: { message: 'GitHub Actions is not permitted to approve pull requests.' } },
+      })
 
-    await expect(approveOnPullRequest(prEvent('opened'))).resolves.toBeUndefined()
+      await expect(approveOnPullRequest(prEvent('opened'))).resolves.toBeUndefined()
 
-    expect(warning).toHaveBeenCalledWith(`${notPermittedWarning}: GitHub Actions is not permitted to approve pull requests.`)
+      expect(warning).toHaveBeenCalledWith(`${notPermittedWarning}: GitHub Actions is not permitted to approve pull requests.`)
+      expect(notPermittedWarning).toBe('cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review)')
+      server.resetHandlers()
+      utils.setupActionsEnv()
+    }
   })
 
   it('any other API error fails the evaluation after the label and the notifier were written', async () => {
