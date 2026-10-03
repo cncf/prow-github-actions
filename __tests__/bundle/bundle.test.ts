@@ -1358,6 +1358,50 @@ describe('dist/index.js', () => {
         expectRequests(configReads(), [pullRead, ownersProbe, graphql])
       })
 
+      it('a GraphQL error on the state read (a GHES without the queue fields) warns once and falls back to the direct merge', async () => {
+        gh.commitStatuses(repo, head, bound)
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, queryError: 'Field \'isMergeQueueEnabled\' doesn\'t exist on type \'PullRequest\'' })
+
+        const result = await runPullRequest(labeledLgtm())
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('merged pr #1')
+        const warnings = result.stdout.split('\n').filter(line => line.startsWith('::warning::'))
+        expect(warnings.filter(w => w.includes('falling back to a direct merge'))).toHaveLength(1)
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, merge])
+      })
+
+      it('an enqueue the token may not perform fails the run naming the permissions; no PUT merge', async () => {
+        gh.commitStatuses(repo, head, bound)
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, enqueueError: 'Resource not accessible by integration' })
+
+        const result = await runPullRequest(labeledLgtm())
+
+        expect(result.status, result.stdout).toBe(1)
+        expect(result.errors.some(e => e.includes('the token may not enqueue'))).toBe(true)
+        expect(result.errors.some(e => e.includes('automatic-merging.md#merge-queues'))).toBe(true)
+        expect(gh.requestsMatching('PUT', /./)).toEqual([])
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, graphql])
+      })
+
+      it('pull_request unlabeled lgtm when the dequeue is refused: warns, leaves the entry, exits 0', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, entry: { state: 'AWAITING_CHECKS', position: 1, enqueuer: 'github-actions' }, dequeueError: 'Resource not accessible by integration' })
+
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'unlabeled', label: { name: 'lgtm' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('::warning::could not dequeue pr #1: Resource not accessible by integration')
+        expect(result.stdout).not.toContain('(dequeued)')
+        expect(gh.graphqlCalls('dequeuePullRequest')).toHaveLength(1)
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+      })
+
       it('schedule jobs: lgtm enqueues a queue-branch pr and never dequeues a gate-failing one', async () => {
         gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
         gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
