@@ -224,7 +224,7 @@ describe('approveOnPullRequest', () => {
     expect(debug).toHaveBeenCalledWith('approve: labeled kind/bug does not concern approval')
   })
 
-  it.each(['closed', 'ready_for_review', 'edited', 'assigned'])('%s is skipped', async (action) => {
+  it.each(['closed', 'edited', 'assigned'])('%s is skipped', async (action) => {
     const observeTree = new utils.ObserveRequest()
     server.use(utils.defaultBranchTree(['OWNERS'], observeTree))
 

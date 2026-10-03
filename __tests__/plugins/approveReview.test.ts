@@ -299,6 +299,34 @@ describe('approve.github_review: approved', () => {
     expect(writes.calls).toEqual(['label', 'notifier', 'review'])
   })
 
+  it('a draft pull request gets no review until it is ready for review', async () => {
+    const draft = serve({ comments: [approveBy('bob'), approveBy('carol')], pull: { draft: true } })
+
+    await approveOnPullRequest(prEvent('opened'))
+
+    expect(draft.calls).toEqual(['label', 'notifier'])
+    expect(draft.created).toEqual([])
+    expect(debug).toHaveBeenCalledWith('approve: #1 is a draft; no approval review is submitted until it is ready for review')
+
+    server.resetHandlers()
+    utils.setupActionsEnv()
+    const ready = serve({ labels: ['approved'], comments: [approveBy('bob'), approveBy('carol')] })
+
+    await approveOnPullRequest(prEvent('ready_for_review'))
+
+    expect(ready.created).toHaveLength(1)
+    expect(ready.created[0].commit_id).toBe(head)
+  })
+
+  it('a draft that loses approved still has its mirrored review dismissed', async () => {
+    const writes = serve({ labels: ['approved'], reviews: [mirrored({ id: 9 })], pull: { draft: true } })
+
+    await approveOnPullRequest(prEvent('synchronize'))
+
+    expect(writes.calls).toEqual(['unlabel', 'notifier', 'dismiss'])
+    expect(writes.dismissed.map(d => d.id)).toEqual(['9'])
+  })
+
   it('a closed pull request gets no review', async () => {
     const writes = serve({ comments: [approveBy('bob'), approveBy('carol')], pull: { state: 'closed' } })
 

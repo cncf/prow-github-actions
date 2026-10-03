@@ -137,8 +137,9 @@ export const forbiddenWarning = 'cannot submit the approval review: the token wa
  * syncApprovalReview makes the action's own APPROVE review follow the
  * `approved` label (`approve.github_review`). Approved: one review by the
  * token on the current head commit, submitted unless it already exists.
- * Not approved: every such review the action submitted earlier is dismissed,
- * on any commit. Reviews without the marker, or by anyone else, are never
+ * A draft gets none until it is ready for review. Not approved: every such
+ * review the action submitted earlier is dismissed, on any commit, drafts
+ * included. Reviews without the marker, or by anyone else, are never
  * touched. GitHub refusing the approval itself (the repository does not let
  * Actions approve, the token lacks `pull-requests: write`, or the token
  * authored the pull request) is a warning; any other API error fails the
@@ -178,6 +179,10 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
 
   if (own.some(review => review.commit_id === owners.headSha)) {
     core.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`)
+    return
+  }
+  if (owners.draft) {
+    core.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`)
     return
   }
   if (identity.login !== undefined && identity.login === owners.author) {

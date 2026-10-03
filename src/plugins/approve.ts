@@ -61,7 +61,7 @@ export const approvedLabel = 'approved'
 export const notifierMarker = '<!-- prow-github-actions/approve -->'
 const commandsDoc = 'https://github.com/cncf/prow-github-actions/blob/main/docs/commands.md'
 
-const pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled'])
+const pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'ready_for_review', 'labeled', 'unlabeled'])
 const reviewActions = new Set(['submitted', 'dismissed'])
 
 /**
@@ -451,8 +451,9 @@ async function listReviews(octokit: Octokit, context: Context, pullNumber: numbe
 
 /**
  * approveOnPullRequest is the `pull_request` handler: on `opened`,
- * `reopened` and `synchronize`, and when a human adds or removes the
- * `approved` label, it re-evaluates the approval. Approval is sticky across
+ * `reopened`, `synchronize` and `ready_for_review` (a draft gets no mirrored
+ * review until then), and when a human adds or removes the `approved` label,
+ * it re-evaluates the approval. Approval is sticky across
  * pushes; a push only matters because the changed files may differ.
  *
  * @param context - the github context of the current action event
