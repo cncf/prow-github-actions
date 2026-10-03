@@ -10,9 +10,7 @@ import * as utils from '../testUtils'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 const registeredHandlers = [...pullRequestReviewHandlers]
 beforeEach(() => {

@@ -13,6 +13,14 @@ type WebhookPayload = Context['payload']
 
 export const api = 'https://api.github.com'
 
+/**
+ * failOnUnhandledRequest makes `server.listen` reject any request no handler
+ * answers instead of passing it through to the network. msw 2 reads
+ * `onUnhandledRequest`, msw 3 reads `onUnhandledFrame`; naming both keeps the
+ * suite offline on either version.
+ */
+export const failOnUnhandledRequest = { onUnhandledRequest: 'error', onUnhandledFrame: 'error' } as const
+
 /** every file the prow configuration loader probes for Codertocat/Hello-World, as `owner/repo:path` */
 export const configProbes = [
   'Codertocat/.project:prow.yaml',

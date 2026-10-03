@@ -13,7 +13,7 @@ import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -66,14 +66,19 @@ describe('loadProwConfig', () => {
     })
 
     it('fails closed when an org repo answers with something other than 404', async () => {
+      // the repo tier is probed in parallel with the org tier; answer its first
+      // probe so none of its requests outlive this test and reach the next one
+      const repo = new utils.ObserveRequest()
+      serve('.github/prow.yaml', 'labels:\n  kind: [repo]\n', repo)
       server.use(
         http.get(utils.contentsUrl(project), utils.mockResponse(500, { message: 'boom' })),
-        ...utils.noOrgOrRepoConfigExcept(project),
+        ...utils.noOrgOrRepoConfigExcept(project, '.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load organization prow config from Codertocat/.project:prow.yaml:',
       )
+      await repo.called()
     })
   })
 
@@ -279,7 +284,8 @@ describe('loadProwConfig', () => {
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
-        'could not load prow config from https://config.example.com/prow.yaml: TypeError: Failed to fetch',
+        // msw 2 surfaces HttpResponse.error() as "Failed to fetch", msw 3 as undici's "fetch failed"
+        /^could not load prow config from https:\/\/config\.example\.com\/prow\.yaml: TypeError: (?:Failed to fetch|fetch failed)$/,
       )
     })
 

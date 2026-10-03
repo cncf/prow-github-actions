@@ -12,9 +12,7 @@ import * as utils from '../testUtils'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -158,9 +156,9 @@ describe('/cc', () => {
 
     await handleIssueComment(commentContext)
     await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      reviewers: ['some-user', 'other-user'],
-    })
+    // getOrgCollabCommentUsers collects users as their auth checks settle, so
+    // the order of reviewers is not fixed
+    expect((await observeReq.body()).reviewers.sort()).toEqual(['other-user', 'some-user'])
   })
 
   it('ccs user if they are an org member', async () => {
