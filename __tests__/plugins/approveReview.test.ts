@@ -18,7 +18,7 @@ import * as utils from '../testUtils'
 import { prHandlers, pullBody, repo } from '../utils/ownersFixtures'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
