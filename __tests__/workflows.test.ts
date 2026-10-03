@@ -1,14 +1,14 @@
+import type { Mapping, Workflow } from './utils/workflowYaml'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import * as path from 'node:path'
-import * as yaml from 'js-yaml'
-import { describe, expect, it } from 'vitest'
 
+import { describe, expect, it } from 'vitest'
 import { fixedLabelCommands } from '../src/labels/fixed'
 import { prefixedLabelCommands } from '../src/labels/prefixed'
 import { mergeProwConfig, parseProwConfig } from '../src/utils/config'
 import { builtinLabelDefaults, desiredLabels } from '../src/utils/labelCatalog'
+import { expression, loadYaml, read, root } from './utils/workflowYaml'
 
-const root = path.resolve(__dirname, '..')
 const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string }
 const reusableWorkflowPath = '.github/workflows/prow.yml'
 const reusableWorkflowRef = `cncf/prow-github-actions/.github/workflows/prow.yml@v${version}`
@@ -27,28 +27,6 @@ const requiredTriggers: Record<string, string[]> = {
   schedule: [],
   workflow_dispatch: [],
   push: [],
-}
-
-type Mapping = Record<string, unknown>
-interface Step { uses?: string, with?: Mapping, run?: string }
-interface Job { if?: string, uses?: string, with?: Mapping, permissions?: Mapping, steps?: Step[] }
-interface Workflow {
-  on: Mapping
-  permissions?: Mapping
-  concurrency?: Mapping
-  jobs: Record<string, Job>
-}
-
-function expression(inner: string): string {
-  return `$\{{ ${inner} }}`
-}
-
-function read(file: string): string {
-  return readFileSync(path.join(root, file), 'utf8')
-}
-
-function loadYaml<T>(file: string): T {
-  return yaml.load(read(file)) as T
 }
 
 const actionInputs = Object.keys((loadYaml<{ inputs: Mapping }>('action.yml')).inputs)
