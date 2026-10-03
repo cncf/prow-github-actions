@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, repo, token } from './helpers'
+import { comment, configReads, helpersFor, repo, repoLabels, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -53,7 +53,7 @@ describe('dist/index.js fixed and built-in prefixed label commands', () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
     gh.route('GET', `${repo}/issues/1`, issueLabels('lifecycle/frozen', 'kind/bug'))
     gh.route('DELETE', `${repo}/issues/1/labels/lifecycle%2Ffrozen`, { status: 200, body: [] })
-    gh.route('GET', `${repo}/labels`, { status: 200, body: ['lifecycle/frozen', 'lifecycle/stale', 'lifecycle/rotten'].map(name => ({ name })) })
+    gh.route('GET', `${repo}/labels`, repoLabels('lifecycle/frozen', 'lifecycle/stale', 'lifecycle/rotten'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
     const result = await run('/lifecycle stale', '/lifecycle')

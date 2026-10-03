@@ -13,7 +13,7 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, repoLabels, token } from './helpers'
 import { bundlePath, runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -24,10 +24,6 @@ const labelsRead = `GET ${repo}/labels?per_page=100`
 function openPr(labels: string[], overrides: Record<string, unknown> = {}) {
   const pr = structuredClone(pullReqListPulls[0])
   return { ...pr, labels: labels.map(name => ({ name })), ...overrides }
-}
-
-function repoLabels(...names: string[]) {
-  return { status: 200, body: names.map(name => ({ name })) }
 }
 
 function yamlFile(text: string) {
