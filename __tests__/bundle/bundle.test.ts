@@ -643,6 +643,39 @@ describe('dist/index.js', () => {
         `POST ${repo}/pulls/1/reviews`,
       ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
     })
+
+    it('on a repository without OWNERS files /approve cancel dismisses the bot\'s latest APPROVED review and touches no label', async () => {
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', `/orgs/Codertocat/members/bob`, { status: 204 })
+      gh.route('GET', `${repo}/pulls/1/reviews`, {
+        status: 200,
+        body: [
+          { id: 10, user: bot, state: 'APPROVED' },
+          { id: 11, user: { login: 'carol', type: 'User' }, state: 'APPROVED' },
+          { id: 12, user: bot, state: 'APPROVED' },
+          { id: 13, user: bot, state: 'DISMISSED' },
+        ],
+      })
+      gh.route('PUT', `${repo}/pulls/1/reviews/12/dismissals`, { status: 200, body: {} })
+
+      const result = await runApprove('/approve cancel', 'bob')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const dismissals = gh.requestsMatching('PUT', /\/dismissals$/)
+      expect(dismissals).toHaveLength(1)
+      expect(dismissals[0].path).toBe(`${repo}/pulls/1/reviews/12/dismissals`)
+      expect(dismissals[0].body).toEqual({ message: 'Canceled through prow-github-actions by @bob' })
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('DELETE', /\/issues\/1\/labels\//)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      expectCommandThenConfig([
+        ...ownersReads,
+        ...membershipReads('bob'),
+        `GET ${repo}/pulls/1/reviews`,
+        `PUT ${repo}/pulls/1/reviews/12/dismissals`,
+      ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
+    })
   })
 
   describe('issue_comment trigger commands on a pull request', () => {
