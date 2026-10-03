@@ -27,7 +27,12 @@ export interface MergeQueueFixture {
   enabled: boolean
   inQueue?: boolean
   entry?: { state: string, position: number, enqueuer: string }
+  /** GraphQL error message for the enqueue mutation */
   enqueueError?: string
+  /** GraphQL error message for the state query */
+  queryError?: string
+  /** GraphQL error message for the dequeue mutation */
+  dequeueError?: string
 }
 
 export interface FakeGithub {
@@ -156,8 +161,12 @@ function mergeQueueRoute(queue: MergeQueueFixture): Route {
         : { status: 200, body: { data: null, errors: [{ message: queue.enqueueError }] } }
     }
     if (query.includes('dequeuePullRequest')) {
-      return { status: 200, body: { data: { dequeuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } } } }
+      return queue.dequeueError === undefined
+        ? { status: 200, body: { data: { dequeuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } } } }
+        : { status: 200, body: { data: null, errors: [{ message: queue.dequeueError }] } }
     }
+    if (queue.queryError !== undefined)
+      return { status: 200, body: { data: null, errors: [{ message: queue.queryError }] } }
     const entry = queue.entry
     return { status: 200, body: { data: { repository: { pullRequest: {
       id: queue.pullRequestId,
