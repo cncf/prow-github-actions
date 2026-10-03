@@ -5,7 +5,6 @@ import fs from 'node:fs'
 import process from 'node:process'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -14,21 +13,13 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
+import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { bundlePath, runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
-const repo = '/repos/Codertocat/Hello-World'
-const token = { 'github-token': 'some-token' }
 // the read every label command makes before it applies a label
 const labelsRead = `GET ${repo}/labels?per_page=100`
-
-function comment(body: string, author = issueCommentEvent.issue.user.login) {
-  const payload = structuredClone(issueCommentEvent)
-  payload.comment.body = body
-  payload.issue.user.login = author
-  return payload
-}
 
 function openPr(labels: string[], overrides: Record<string, unknown> = {}) {
   const pr = structuredClone(pullReqListPulls[0])
@@ -45,31 +36,9 @@ function yamlFile(text: string) {
   return file
 }
 
-const orgConfigRepos = ['.project', '.github']
-const repoConfigFiles = [
-  '.github/prow.yaml',
-  '.github/prowlabels.yaml',
-  'prow.yaml',
-  '.prowlabels.yaml',
-  '.github/prow.yml',
-  '.github/prowlabels.yml',
-  'prow.yml',
-  '.prowlabels.yml',
-]
-
-// the configuration reads the loader makes before it finds `org` and `repo` (or gives up on a tier)
-function configReads({ org, repo: file }: { org?: string, repo?: string } = {}): string[] {
-  const orgReads = orgConfigRepos
-    .slice(0, org ? orgConfigRepos.indexOf(org) + 1 : orgConfigRepos.length)
-    .map(name => `GET /repos/Codertocat/${name}/contents/prow.yaml`)
-  const repoReads = repoConfigFiles
-    .slice(0, file ? repoConfigFiles.indexOf(file) + 1 : repoConfigFiles.length)
-    .map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`)
-  return [...orgReads, ...repoReads]
-}
-
 describe('dist/index.js', () => {
   let gh: FakeGithub
+  const { expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -78,62 +47,6 @@ describe('dist/index.js', () => {
   beforeEach(() => gh.mergeQueueFallback({ pullRequestId: 'PR_none', headOid: pullReqOpenedEvent.pull_request.head.sha, enabled: false }))
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
-
-  // the org and repo tiers are probed concurrently, so the reads have no fixed order among themselves
-  function expectRequests(reads: string[], rest: string[]) {
-    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-    expect(calls.slice(0, reads.length).sort()).toEqual([...reads].sort())
-    expect(calls.slice(reads.length)).toEqual(rest)
-  }
-
-  // a label command that never reads the configuration, then the sweep that follows it: the configuration
-  // reads (unordered) for the needs-* re-check and, on a pull request, tide's calls
-  function expectCommandThenSweep(command: string[], sweep: string[] = []) {
-    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-    expect(calls.slice(0, command.length)).toEqual(command)
-    const reads = configReads()
-    expect(calls.slice(command.length, command.length + reads.length).sort()).toEqual([...reads].sort())
-    expect(calls.slice(command.length + reads.length)).toEqual(sweep)
-  }
-
-  // the pull request, its changed files, the tip of its base branch and the OWNERS files there, as the OWNERS plugins read them
-  function routeOwners(ownersFiles: Record<string, string>, files: string[], pull: Record<string, unknown> = {}) {
-    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'Codertocat' }, requested_reviewers: [], assignees: [], ...pull } })
-    gh.route('GET', `${repo}/pulls/1/files`, {
-      status: 200,
-      body: files.map(filename => ({ filename, status: 'modified' })),
-    })
-    gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
-    gh.route('GET', `${repo}/git/trees/basesha`, {
-      status: 200,
-      body: {
-        sha: 'basesha',
-        truncated: false,
-        tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
-      },
-    })
-    for (const [path, contents] of Object.entries(ownersFiles)) {
-      gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
-        status: 200,
-        body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
-      })
-    }
-  }
-
-  const ownersReads = [
-    `GET ${repo}/pulls/1`,
-    `GET ${repo}/pulls/1/files?per_page=100`,
-    `GET ${repo}/branches/master`,
-    `GET ${repo}/git/trees/basesha?recursive=true`,
-  ]
-
-  // the tide gate learns whether the pull request's base branch (master in every fixture) has OWNERS files from
-  // its tree, once per branch per run, after the pull request read that names the branch; the fake answers 404
-  // (an empty repository) unless a test routes it
-  const ownersProbe = `GET ${repo}/git/trees/master?recursive=true`
-  // tide asks GraphQL once whether the base branch requires a merge queue: once the gate passes, or when it
-  // fails on an event (to dequeue the bot's own entry); the fake answers "no queue" unless a test routes it
-  const queueRead = 'POST /graphql'
 
   it('is a syntactically valid bundle with no unresolved modules', () => {
     expect(fs.existsSync(bundlePath)).toBe(true)
@@ -459,7 +372,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
-    expectCommandThenSweep([labelsRead, `POST ${repo}/issues/1/labels`])
+    expectCommandThenConfig([labelsRead, `POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /assign self-assigns an org member', async () => {
@@ -723,7 +636,7 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
       // the membership fallback checks org membership and collaborator status; the sweep then reads the configuration and the pr
-      expectCommandThenSweep([
+      expectCommandThenConfig([
         ...ownersReads,
         `GET /orgs/Codertocat/members/bob`,
         `GET ${repo}/collaborators/bob`,
@@ -753,7 +666,7 @@ describe('dist/index.js', () => {
       gh.route('POST', `${repo}/issues/comments/492700400/reactions`, { status: 201, body: { content: 'rocket' } })
     }
 
-    const authReads = [...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`]
+    const authReads = [...ownersReads, ...membershipReads('Codertocat')]
     const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
     const rocket = `POST ${repo}/issues/comments/492700400/reactions`
 
@@ -818,7 +731,7 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toMatch(/could not remove label foo/)
-    expectCommandThenSweep([
+    expectCommandThenConfig([
       `GET ${repo}/collaborators/Codertocat`,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/foo`,
