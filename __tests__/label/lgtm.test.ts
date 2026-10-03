@@ -704,18 +704,24 @@ reviewers:
   describe('bound to the head commit', () => {
     const repo = `${utils.api}/repos/Codertocat/Hello-World`
     let calls: string[]
+    const recordCall = ({ request }: { request: Request }) => {
+      calls.push(`${request.method} ${new URL(request.url).pathname}`)
+    }
 
     beforeEach(() => {
       calls = []
-      server.events.on('request:start', ({ request }) => {
-        calls.push(`${request.method} ${new URL(request.url).pathname}`)
-      })
+      server.events.on('request:start', recordCall)
       server.use(
         http.get(`${utils.api}/orgs/Codertocat/members/Codertocat`, utils.mockResponse(204)),
         http.get(`${repo}/collaborators/Codertocat`, utils.mockResponse(404)),
         utils.repoHasLabels(['lgtm']),
         utils.lgtmStatus('headsha'),
       )
+    })
+
+    // the server outlives the test; an unremoved listener would record every later request again
+    afterEach(() => {
+      server.events.removeListener('request:start', recordCall)
     })
 
     it('/lgtm on a pull request reads it, records the prow/lgtm status on its head, then labels', async () => {
