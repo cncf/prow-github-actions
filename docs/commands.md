@@ -239,8 +239,8 @@ approving reviews" on its own, which is the wrong signal once `approved` is what
 nothing; it just recomputes. A repository that wants a required review to follow the Prow decision
 opts in with [`approve.github_review`](#mirroring-approved-as-a-github-review).
 
-Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `labeled`/`unlabeled` of
-`approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
+Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review`,
+`labeled`/`unlabeled` of `approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
 See [events](./events.md).
 
 #### Mirroring `approved` as a GitHub review
@@ -260,9 +260,12 @@ the evaluation ends with `approved` | one `APPROVED` review by the token on the 
 the evaluation ends without `approved` (`/approve cancel`, a `CHANGES_REQUESTED` review, files no longer covered, ...) | every `APPROVED` review by the token that carries the marker is dismissed, on any commit, with `approved removed: <reason>`, ex: `approved removed: no approver covers sdk/x.go; withdrawn by bob (/approve cancel)`
 `synchronize` (a new head) while `approved` stays | a fresh review on the new head; the one on the old commit is left as it is (GitHub may have dismissed it as stale). Reviews without the marker are never touched
 the PR's author is the token's own identity (a PR the bot opened, or a `token` secret of the author) | GitHub does not let an author approve their own pull request: warning `cannot submit the approval review: #<n> was opened by the token's own identity (<login>), and GitHub does not let an author approve their own pull request (approve.github_review)`, no review
-GitHub refuses with 403, or with `GitHub Actions is not permitted to approve pull requests.` (reported as a 422 when "Allow GitHub Actions to create and approve pull requests" is off; GitHub does not document the status) | warning, not failure: `cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review): <GitHub's message>`
+GitHub refuses with `GitHub Actions is not permitted to approve pull requests.` (reported as a 422 when "Allow GitHub Actions to create and approve pull requests" is off; GitHub does not document the status) | warning, not failure: `cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review): <GitHub's message>`
+GitHub refuses with any other 403 (ex: the workflow lacks `pull-requests: write`) | warning, not failure: ``cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review): <GitHub's message>``
 any other API error | `could not submit the approval review: <error>` or `could not dismiss the approval review <id>: <error>`, an error annotation; the run fails at the end, after the merge evaluation
 the pull request is closed | nothing
+the pull request is a draft | no review is submitted until it is marked ready for review (`ready_for_review` re-evaluates); dismissals still happen
+GitHub refuses the dismissal (ex: "Restrict who can dismiss pull request reviews" excludes the token) | `could not dismiss the approval review <id>: <error>` on every evaluation of the pull request until the review is dismissed by hand
 
 The order inside one run is: compute the approval → write the label → edit the notifier →
 submit or dismiss the review → the merge evaluation, so the merge evaluation of the same run starts
