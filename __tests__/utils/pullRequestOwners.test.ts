@@ -21,7 +21,7 @@ import {
 } from './ownersFixtures'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 beforeEach(() => utils.setupActionsEnv())
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

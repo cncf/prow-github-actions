@@ -17,9 +17,7 @@ vi.mock('../../src/utils/auth', { spy: true })
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

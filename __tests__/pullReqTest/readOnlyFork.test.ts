@@ -11,7 +11,7 @@ import * as utils from '../testUtils'
 
 // no handler is served: any api call is an unhandled request and fails the test
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 
 const fork = 'octocat/Hello-World'
 const same = pullReqOpenedEvent.repository.full_name

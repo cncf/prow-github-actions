@@ -10,7 +10,7 @@ import * as utils from '../testUtils'
 import { contentsResponse, repo } from './ownersFixtures'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 

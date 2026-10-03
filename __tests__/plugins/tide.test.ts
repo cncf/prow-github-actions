@@ -18,9 +18,7 @@ import { prCommentEvent } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

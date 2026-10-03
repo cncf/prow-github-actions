@@ -12,9 +12,7 @@ import * as utils from '../testUtils'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -165,9 +163,9 @@ describe('/assign', () => {
 
     await handleIssueComment(commentContext)
     await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      assignees: ['some-user', 'other-user'],
-    })
+    // getOrgCollabCommentUsers collects users as their auth checks settle, so
+    // the order of assignees is not fixed
+    expect((await observeReq.body()).assignees.sort()).toEqual(['other-user', 'some-user'])
   })
 
   it('assigns users from every /assign line in the comment', async () => {
@@ -209,9 +207,7 @@ describe('/assign', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await observeReq.called()
-    expect(await observeReq.body()).toEqual({
-      assignees: ['some-user', 'other-user'],
-    })
+    expect((await observeReq.body()).assignees.sort()).toEqual(['other-user', 'some-user'])
     expect(setFailed).not.toHaveBeenCalled()
   })
 

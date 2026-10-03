@@ -21,7 +21,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() => {
   utils.setupActionsEnv()
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen(utils.failOnUnhandledRequest)
 })
 beforeEach(() => resetMergeQueueWarnings())
 afterEach(() => server.resetHandlers())

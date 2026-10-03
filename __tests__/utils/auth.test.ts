@@ -22,9 +22,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() => {
   utils.setupActionsEnv()
-  server.listen({
-    onUnhandledRequest: 'error',
-  })
+  server.listen(utils.failOnUnhandledRequest)
 })
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
