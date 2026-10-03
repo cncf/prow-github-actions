@@ -4,7 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
-export const bundlePath = path.resolve(__dirname, '../../dist/index.js')
+// PROW_BUNDLE_PATH lets `npm run test:coverage:e2e` point the suite at a
+// source-mapped coverage bundle instead of the committed dist/index.js
+export const bundlePath = process.env.PROW_BUNDLE_PATH
+  ? path.resolve(process.env.PROW_BUNDLE_PATH)
+  : path.resolve(__dirname, '../../dist/index.js')
 
 export interface RunBundleOptions {
   eventName: string
