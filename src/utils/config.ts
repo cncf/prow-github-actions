@@ -81,6 +81,8 @@ export interface ApproveConfig {
   ignore_review_state?: boolean
   /** `/lgtm` counts as `/approve`; default false */
   lgtm_acts_as_approve?: boolean
+  /** keep an APPROVE review by the token on the head commit while `approved` is set; default false */
+  github_review?: boolean
 }
 
 export interface LgtmConfig {
@@ -558,7 +560,7 @@ function normalizeBlunderbuss(source: string, raw: unknown): BlunderbussConfig {
   })
 }
 
-const approveFlags = ['require_self_approval', 'ignore_review_state', 'lgtm_acts_as_approve'] as const
+const approveFlags = ['require_self_approval', 'ignore_review_state', 'lgtm_acts_as_approve', 'github_review'] as const
 
 function normalizeApprove(source: string, raw: unknown): ApproveConfig {
   if (!isMapping(raw)) {

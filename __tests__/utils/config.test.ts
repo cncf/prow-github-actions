@@ -306,8 +306,8 @@ describe('parseProwConfig', () => {
 
   describe('approve', () => {
     it('accepts every flag', () => {
-      expect(parseProwConfig('x', 'approve:\n  require_self_approval: true\n  ignore_review_state: true\n  lgtm_acts_as_approve: false\n')).toEqual({
-        approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: false },
+      expect(parseProwConfig('x', 'approve:\n  require_self_approval: true\n  ignore_review_state: true\n  lgtm_acts_as_approve: false\n  github_review: true\n')).toEqual({
+        approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: false, github_review: true },
       })
     })
 
@@ -320,6 +320,7 @@ describe('parseProwConfig', () => {
       ['a non-boolean require_self_approval', 'approve:\n  require_self_approval: yes please\n', 'x: approve.require_self_approval must be a boolean'],
       ['a non-boolean ignore_review_state', 'approve:\n  ignore_review_state: 1\n', 'x: approve.ignore_review_state must be a boolean'],
       ['a non-boolean lgtm_acts_as_approve', 'approve:\n  lgtm_acts_as_approve: [true]\n', 'x: approve.lgtm_acts_as_approve must be a boolean'],
+      ['a non-boolean github_review', 'approve:\n  github_review: \'true\'\n', 'x: approve.github_review must be a boolean'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })
