@@ -45,7 +45,7 @@ stay in step with `action.yml` and the label catalogue.
 | `npm test` | The whole Vitest suite |
 | `npm run test:coverage` | The suite with v8 coverage; CI enforces the thresholds in `vitest.config.mjs` (lines 85, branches 83, functions 91, statements 85) |
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
-| `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built into `.coverage-bundle/` so its hits are reported against `src/`. This is end-to-end-only coverage and is deliberately not merged with `test:coverage`: the two runs transform `src/` differently, so their line maps do not line up |
+| `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`. This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API
 with [msw](https://mswjs.io/). The acceptance harness in `__tests__/bundle/`
