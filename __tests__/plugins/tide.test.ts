@@ -4,9 +4,10 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchMergeability, tideOnCheckSuite, tideOnComment, tideOnPullRequest, tideOnReview, tryMergePullRequest, unknownRetryDelaysMs } from '../../src/plugins/tide'
+import { fetchMergeability, loadTide, mergeOnce, tideOnCheckSuite, tideOnComment, tideOnPullRequest, tideOnReview, tryMergePullRequest, unknownRetryDelaysMs } from '../../src/plugins/tide'
 import { resolveTide } from '../../src/utils/config'
 import { newOctokit } from '../../src/utils/octokit'
+import { resetOwnersCaches } from '../../src/utils/owners'
 import * as sleepModule from '../../src/utils/sleep'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -17,9 +18,7 @@ import { prCommentEvent } from '../utils/ownersFixtures'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -114,6 +113,16 @@ describe('fetchMergeability', () => {
     expect(info).toHaveBeenCalledWith('mergeability of pr #1 is still unknown after 3 retries')
   })
 
+  it('a state computed on the read after the last wait is returned without the give-up line', async () => {
+    const gets = servePull(pull([], unknown), pull([], unknown), pull([], unknown), pull([], { mergeable_state: 'behind' }))
+    const info = vi.spyOn(core, 'info')
+
+    await expect(fetchMergeability(octokit, context, 1)).resolves.toMatchObject({ state: 'behind', mergeable: true })
+    expect(gets).toHaveLength(unknownRetryDelaysMs.length + 1)
+    expect(sleep.mock.calls.map(call => call[0])).toEqual(unknownRetryDelaysMs)
+    expect(info).not.toHaveBeenCalled()
+  })
+
   it('treats a null mergeable as unknown even when the state says otherwise', async () => {
     const gets = servePull(pull([], { mergeable: null, mergeable_state: 'clean' }), pull([]))
 
@@ -127,6 +136,37 @@ describe('fetchMergeability', () => {
     await expect(fetchMergeability(octokit, context, 1, { retryIf: () => false })).resolves.toMatchObject({ state: 'unknown' })
     expect(gets).toHaveLength(1)
     expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('reads a pull request without a draft field as not draft', async () => {
+    const { draft, ...noDraft } = pull([])
+    expect(draft).toBe(false)
+    servePull(noDraft)
+
+    await expect(fetchMergeability(octokit, context, 1)).resolves.toMatchObject({ draft: false })
+  })
+})
+
+describe('mergeOnce', () => {
+  it('reports a non-Error rejection by its string form, without a status', async () => {
+    vi.spyOn(octokit.pulls, 'merge').mockRejectedValue('nope')
+
+    await expect(mergeOnce(octokit, context, 1, tide, 'headsha')).resolves.toEqual({ result: 'failed', message: 'nope', status: undefined })
+  })
+})
+
+describe('loadTide', () => {
+  beforeEach(() => {
+    resetOwnersCaches()
+    server.use(...utils.noOrgOrRepoConfigExcept())
+  })
+
+  it('without a base in scope, reads the OWNERS files of the default branch', async () => {
+    const tree = new utils.ObserveRequest()
+    server.use(utils.defaultBranchTree(['OWNERS'], tree))
+
+    await expect(loadTide(octokit, context)).resolves.toMatchObject({ labels: ['lgtm', 'approved'] })
+    await expect(tree.called()).resolves.toBe('called')
   })
 })
 
@@ -433,6 +473,19 @@ describe('tryMergePullRequest', () => {
 
       await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
       await expect(diff.compare.notCalled()).resolves.toBe('not called')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
+    })
+
+    it('a compare response without a files list is read as no workflow files behind', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff([], ['src/a.go'])
+      server.use(http.get(`${repo}/compare/headsha...master`, utils.mockResponse(200, { status: 'identical' }, diff.compare)))
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(diff.compare.called()).resolves.toBe('called')
       await expect(diff.comment.notCalled()).resolves.toBe('not called')
       expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
     })

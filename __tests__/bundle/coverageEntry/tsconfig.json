@@ -1,0 +1,9 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../../..",
+    "sourceMap": true
+  },
+  "include": ["main.ts", "../../../src/**/*.ts"],
+  "exclude": []
+}

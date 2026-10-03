@@ -1,14 +1,14 @@
+import type { Mapping, Workflow } from './utils/workflowYaml'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import * as path from 'node:path'
-import * as yaml from 'js-yaml'
-import { describe, expect, it } from 'vitest'
 
+import { describe, expect, it } from 'vitest'
 import { fixedLabelCommands } from '../src/labels/fixed'
 import { prefixedLabelCommands } from '../src/labels/prefixed'
 import { mergeProwConfig, parseProwConfig } from '../src/utils/config'
 import { builtinLabelDefaults, desiredLabels } from '../src/utils/labelCatalog'
+import { expression, loadYaml, read, root } from './utils/workflowYaml'
 
-const root = path.resolve(__dirname, '..')
 const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string }
 const reusableWorkflowPath = '.github/workflows/prow.yml'
 const reusableWorkflowRef = `cncf/prow-github-actions/.github/workflows/prow.yml@v${version}`
@@ -29,28 +29,6 @@ const requiredTriggers: Record<string, string[]> = {
   push: [],
 }
 
-type Mapping = Record<string, unknown>
-interface Step { uses?: string, with?: Mapping, run?: string }
-interface Job { if?: string, uses?: string, with?: Mapping, permissions?: Mapping, steps?: Step[] }
-interface Workflow {
-  on: Mapping
-  permissions?: Mapping
-  concurrency?: Mapping
-  jobs: Record<string, Job>
-}
-
-function expression(inner: string): string {
-  return `$\{{ ${inner} }}`
-}
-
-function read(file: string): string {
-  return readFileSync(path.join(root, file), 'utf8')
-}
-
-function loadYaml<T>(file: string): T {
-  return yaml.load(read(file)) as T
-}
-
 const actionInputs = Object.keys((loadYaml<{ inputs: Mapping }>('action.yml')).inputs)
 const reusable = loadYaml<Workflow>(reusableWorkflowPath)
 const workflowCall = reusable.on.workflow_call as { inputs: Mapping, secrets: Mapping }
@@ -60,6 +38,44 @@ const reusableJob = reusable.jobs.prow
 const secretBackedInputs = ['github-token', 'cat-api-key']
 
 const templateGroup = String(loadYaml<Workflow>(templatePath).concurrency?.group)
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+    const file = path.posix.join(dir, entry.name)
+    return entry.isDirectory() ? sourceFiles(file) : entry.name.endsWith('.ts') ? [file] : []
+  })
+}
+
+/** every input name src/ reads through @actions/core, by file */
+function inputReads(): Map<string, Set<string>> {
+  const reads = new Map<string, Set<string>>()
+  for (const file of sourceFiles('src')) {
+    for (const match of read(file).matchAll(/\bget(?:Boolean|Multiline)?Input\(\s*(['"`])([^'"`]+)\1/g)) {
+      const readers = reads.get(match[2]) ?? new Set<string>()
+      readers.add(file)
+      reads.set(match[2], readers)
+    }
+  }
+  return reads
+}
+
+describe('action.yml mirrors the inputs src/ reads', () => {
+  const reads = inputReads()
+
+  it('declares every input src/ reads, so a typo cannot silently read the empty string', () => {
+    for (const [name, readers] of reads) {
+      expect(actionInputs, `${name} is read by ${[...readers].join(', ')}`).toContain(name)
+    }
+  })
+
+  it('declares no input src/ never reads', () => {
+    expect([...reads.keys()].sort()).toEqual(actionInputs.slice().sort())
+  })
+
+  it('always reads the token', () => {
+    expect(reads.get('github-token')?.size).toBeGreaterThan(0)
+  })
+})
 
 describe('the reusable workflow mirrors action.yml', () => {
   it('has exactly one job', () => {

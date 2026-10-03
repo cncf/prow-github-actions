@@ -13,7 +13,7 @@ import * as utils from '../testUtils'
 const catApi = 'https://api.thecatapi.com/v1/images/search'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -138,6 +138,22 @@ describe('/meow', () => {
 
     expect(calls).toBe(meowConfig.maxAttempts)
     expect(warning).toHaveBeenCalled()
+    expect(createComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      1,
+      'The cat API is unavailable right now.',
+    )
+  })
+
+  it('names a status-less response as a redirect', async () => {
+    // Response.error() is the only status 0 fetch can resolve with
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.error())
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+    await handleIssueComment(contextFor('/meow'))
+
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('cat api responded with a redirect'))
     expect(createComment).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -364,7 +380,7 @@ describe('/meow', () => {
 
   it('does not follow a redirect or forward the key', async () => {
     process.env['INPUT_CAT-API-KEY'] = 'secret-key'
-    // the redirect target is intentionally not mocked: onUnhandledRequest error
+    // the redirect target is intentionally not mocked: failOnUnhandledRequest
     // fails the test if the request is ever followed there
     server.use(
       http.get(catApi, () =>

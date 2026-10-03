@@ -72,7 +72,7 @@ export async function handlePullReq(context: Context = github.context): Promise<
     .then((results) => {
       for (const result of results) {
         if (result instanceof Error) {
-          throw new TypeError(`error handling issue comment: ${result}`)
+          throw new TypeError(`error handling pull request: ${result}`)
         }
       }
     })

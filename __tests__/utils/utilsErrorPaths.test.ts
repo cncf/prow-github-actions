@@ -15,7 +15,7 @@ import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -157,7 +157,8 @@ describe('utils error paths', () => {
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
-        'could not load prow config from https://config.example.com/prow.yaml: TypeError: Failed to fetch',
+        // msw 2 surfaces HttpResponse.error() as "Failed to fetch", msw 3 as undici's "fetch failed"
+        /^could not load prow config from https:\/\/config\.example\.com\/prow\.yaml: TypeError: (?:Failed to fetch|fetch failed)$/,
       )
     })
 

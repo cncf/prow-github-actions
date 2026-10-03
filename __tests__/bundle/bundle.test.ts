@@ -5,7 +5,6 @@ import fs from 'node:fs'
 import process from 'node:process'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -14,21 +13,13 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
+import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { bundlePath, runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
-const repo = '/repos/Codertocat/Hello-World'
-const token = { 'github-token': 'some-token' }
 // the read every label command makes before it applies a label
 const labelsRead = `GET ${repo}/labels?per_page=100`
-
-function comment(body: string, author = issueCommentEvent.issue.user.login) {
-  const payload = structuredClone(issueCommentEvent)
-  payload.comment.body = body
-  payload.issue.user.login = author
-  return payload
-}
 
 function openPr(labels: string[], overrides: Record<string, unknown> = {}) {
   const pr = structuredClone(pullReqListPulls[0])
@@ -45,31 +36,9 @@ function yamlFile(text: string) {
   return file
 }
 
-const orgConfigRepos = ['.project', '.github']
-const repoConfigFiles = [
-  '.github/prow.yaml',
-  '.github/prowlabels.yaml',
-  'prow.yaml',
-  '.prowlabels.yaml',
-  '.github/prow.yml',
-  '.github/prowlabels.yml',
-  'prow.yml',
-  '.prowlabels.yml',
-]
-
-// the configuration reads the loader makes before it finds `org` and `repo` (or gives up on a tier)
-function configReads({ org, repo: file }: { org?: string, repo?: string } = {}): string[] {
-  const orgReads = orgConfigRepos
-    .slice(0, org ? orgConfigRepos.indexOf(org) + 1 : orgConfigRepos.length)
-    .map(name => `GET /repos/Codertocat/${name}/contents/prow.yaml`)
-  const repoReads = repoConfigFiles
-    .slice(0, file ? repoConfigFiles.indexOf(file) + 1 : repoConfigFiles.length)
-    .map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`)
-  return [...orgReads, ...repoReads]
-}
-
 describe('dist/index.js', () => {
   let gh: FakeGithub
+  const { expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -79,66 +48,13 @@ describe('dist/index.js', () => {
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
 
-  // the org and repo tiers are probed concurrently, so the reads have no fixed order among themselves
-  function expectRequests(reads: string[], rest: string[]) {
-    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-    expect(calls.slice(0, reads.length).sort()).toEqual([...reads].sort())
-    expect(calls.slice(reads.length)).toEqual(rest)
-  }
-
-  // a label command that never reads the configuration, then the sweep that follows it: the configuration
-  // reads (unordered) for the needs-* re-check and, on a pull request, tide's calls
-  function expectCommandThenSweep(command: string[], sweep: string[] = []) {
-    const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-    expect(calls.slice(0, command.length)).toEqual(command)
-    const reads = configReads()
-    expect(calls.slice(command.length, command.length + reads.length).sort()).toEqual([...reads].sort())
-    expect(calls.slice(command.length + reads.length)).toEqual(sweep)
-  }
-
-  // the pull request, its changed files, the tip of its base branch and the OWNERS files there, as the OWNERS plugins read them
-  function routeOwners(ownersFiles: Record<string, string>, files: string[], pull: Record<string, unknown> = {}) {
-    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'Codertocat' }, requested_reviewers: [], assignees: [], ...pull } })
-    gh.route('GET', `${repo}/pulls/1/files`, {
-      status: 200,
-      body: files.map(filename => ({ filename, status: 'modified' })),
-    })
-    gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
-    gh.route('GET', `${repo}/git/trees/basesha`, {
-      status: 200,
-      body: {
-        sha: 'basesha',
-        truncated: false,
-        tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
-      },
-    })
-    for (const [path, contents] of Object.entries(ownersFiles)) {
-      gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
-        status: 200,
-        body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
-      })
-    }
-  }
-
-  const ownersReads = [
-    `GET ${repo}/pulls/1`,
-    `GET ${repo}/pulls/1/files?per_page=100`,
-    `GET ${repo}/branches/master`,
-    `GET ${repo}/git/trees/basesha?recursive=true`,
-  ]
-
-  // the tide gate learns whether the pull request's base branch (master in every fixture) has OWNERS files from
-  // its tree, once per branch per run, after the pull request read that names the branch; the fake answers 404
-  // (an empty repository) unless a test routes it
-  const ownersProbe = `GET ${repo}/git/trees/master?recursive=true`
-  // tide asks GraphQL once whether the base branch requires a merge queue: once the gate passes, or when it
-  // fails on an event (to dequeue the bot's own entry); the fake answers "no queue" unless a test routes it
-  const queueRead = 'POST /graphql'
-
   it('is a syntactically valid bundle with no unresolved modules', () => {
     expect(fs.existsSync(bundlePath)).toBe(true)
 
-    const check = spawnSync(process.execPath, ['--check', bundlePath], { encoding: 'utf8' })
+    // node re-injects the parent's NODE_V8_COVERAGE into any child env lacking the key, and
+    // `node --check` crashes under it (nodejs v26 source-map cache); an empty value opts out
+    const env = { ...process.env, NODE_V8_COVERAGE: '' }
+    const check = spawnSync(process.execPath, ['--check', bundlePath], { encoding: 'utf8', env })
     expect(check.status, check.stderr).toBe(0)
 
     expect(fs.readFileSync(bundlePath, 'utf8')).not.toContain('webpackMissingModule')
@@ -456,7 +372,7 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
-    expectCommandThenSweep([labelsRead, `POST ${repo}/issues/1/labels`])
+    expectCommandThenConfig([labelsRead, `POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /assign self-assigns an org member', async () => {
@@ -783,11 +699,44 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
       // the membership fallback checks org membership and collaborator status; the sweep then reads the configuration and the pr
-      expectCommandThenSweep([
+      expectCommandThenConfig([
         ...ownersReads,
         `GET /orgs/Codertocat/members/bob`,
         `GET ${repo}/collaborators/bob`,
         `POST ${repo}/pulls/1/reviews`,
+      ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
+    })
+
+    it('on a repository without OWNERS files /approve cancel dismisses the bot\'s latest APPROVED review and touches no label', async () => {
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', `/orgs/Codertocat/members/bob`, { status: 204 })
+      gh.route('GET', `${repo}/pulls/1/reviews`, {
+        status: 200,
+        body: [
+          { id: 10, user: bot, state: 'APPROVED' },
+          { id: 11, user: { login: 'carol', type: 'User' }, state: 'APPROVED' },
+          { id: 12, user: bot, state: 'APPROVED' },
+          { id: 13, user: bot, state: 'DISMISSED' },
+        ],
+      })
+      gh.route('PUT', `${repo}/pulls/1/reviews/12/dismissals`, { status: 200, body: {} })
+
+      const result = await runApprove('/approve cancel', 'bob')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const dismissals = gh.requestsMatching('PUT', /\/dismissals$/)
+      expect(dismissals).toHaveLength(1)
+      expect(dismissals[0].path).toBe(`${repo}/pulls/1/reviews/12/dismissals`)
+      expect(dismissals[0].body).toEqual({ message: 'Canceled through prow-github-actions by @bob' })
+      expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+      expect(gh.requestsMatching('DELETE', /\/issues\/1\/labels\//)).toEqual([])
+      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
+      expectCommandThenConfig([
+        ...ownersReads,
+        ...membershipReads('bob'),
+        `GET ${repo}/pulls/1/reviews`,
+        `PUT ${repo}/pulls/1/reviews/12/dismissals`,
       ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
     })
   })
@@ -813,7 +762,7 @@ describe('dist/index.js', () => {
       gh.route('POST', `${repo}/issues/comments/492700400/reactions`, { status: 201, body: { content: 'rocket' } })
     }
 
-    const authReads = [...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`]
+    const authReads = [...ownersReads, ...membershipReads('Codertocat')]
     const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
     const rocket = `POST ${repo}/issues/comments/492700400/reactions`
 
@@ -878,11 +827,54 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toMatch(/could not remove label foo/)
-    expectCommandThenSweep([
+    expectCommandThenConfig([
       `GET ${repo}/collaborators/Codertocat`,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/foo`,
     ])
+  })
+
+  it('issue_comment /assign with argument users assigns the org member and drops the stranger', async () => {
+    gh.route('GET', '/orgs/Codertocat/members/octocat', { status: 204 })
+    gh.route('GET', `${repo}/collaborators/octocat`, { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', '/orgs/Codertocat/members/stranger', { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', `${repo}/collaborators/stranger`, { status: 404, body: { message: 'Not Found' } })
+    gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+    gh.route('POST', `${repo}/issues/1/assignees`, { status: 201, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/assign @octocat @stranger'),
+      inputs: { ...token, 'prow-commands': '/assign' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    // the argument users' authorization reads are the /cc cases' ground; here only the write matters
+    expect(gh.requestsMatching('POST', /./).map(r => [r.path, r.body])).toEqual([[`${repo}/issues/1/assignees`, { assignees: ['octocat'] }]])
+  })
+
+  it('issue_comment /milestone sets the milestone whose title matches the argument', async () => {
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+    gh.route('GET', `${repo}/milestones`, { status: 200, body: [{ number: 3, title: 'v1.0' }, { number: 7, title: 'Sprint 2' }] })
+    gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
+
+    const result = await runBundle({
+      eventName: 'issue_comment',
+      payload: comment('/milestone Sprint 2'),
+      inputs: { ...token, 'prow-commands': '/milestone' },
+      apiUrl: gh.url,
+    })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      `GET ${repo}/collaborators/Codertocat`,
+      `GET ${repo}/milestones`,
+      `PATCH ${repo}/issues/1`,
+    ])
+    expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ milestone: 7 })
   })
 
   it('issue_comment /milestone clear unsets the milestone for a collaborator', async () => {
@@ -1091,6 +1083,28 @@ describe('dist/index.js', () => {
       expect(requestedReviewers()).toEqual(['alice'])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [requestReviewers])
+    })
+
+    it('synchronize of a pull request carrying ok-to-test approves the runs waiting on its head', async () => {
+      const head = pullReqOpenedEvent.pull_request.head.sha
+      routeOwners({}, ['src/file1.txt'])
+      gh.route('GET', `${repo}/actions/runs`, { status: 200, body: { total_count: 1, workflow_runs: [
+        { id: 9, name: 'CI', path: '.github/workflows/ci.yml', head_sha: head, status: 'action_required', conclusion: 'action_required' },
+      ] } })
+      gh.route('POST', `${repo}/actions/runs/9/approve`, { status: 201 })
+
+      const result = await runBundle({
+        eventName: 'pull_request',
+        payload: { ...pullReqOpenedEvent, action: 'synchronize', pull_request: { ...pullReqOpenedEvent.pull_request, labels: [{ name: 'ok-to-test' }] } },
+        inputs: token,
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`trigger: #1 approved 1 run(s) on ${head.slice(0, 7)}`)
+      // owners-label, approve's probe, then ok-to-test; tide skips synchronize
+      expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([...ownersReads, ownersProbe, `GET ${repo}/actions/runs?head_sha=${head}&per_page=100`, `POST ${repo}/actions/runs/9/approve`])
     })
   })
 
@@ -1505,6 +1519,50 @@ describe('dist/index.js', () => {
         expectRequests(configReads(), [pullRead, ownersProbe, graphql])
       })
 
+      it('a GraphQL error on the state read (a GHES without the queue fields) warns once and falls back to the direct merge', async () => {
+        gh.commitStatuses(repo, head, bound)
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, queryError: 'Field \'isMergeQueueEnabled\' doesn\'t exist on type \'PullRequest\'' })
+
+        const result = await runPullRequest(labeledLgtm())
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('merged pr #1')
+        const warnings = result.stdout.split('\n').filter(line => line.startsWith('::warning::'))
+        expect(warnings.filter(w => w.includes('falling back to a direct merge'))).toHaveLength(1)
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, merge])
+      })
+
+      it('an enqueue the token may not perform fails the run naming the permissions; no PUT merge', async () => {
+        gh.commitStatuses(repo, head, bound)
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, enqueueError: 'Resource not accessible by integration' })
+
+        const result = await runPullRequest(labeledLgtm())
+
+        expect(result.status, result.stdout).toBe(1)
+        expect(result.errors.some(e => e.includes('the token may not enqueue'))).toBe(true)
+        expect(result.errors.some(e => e.includes('automatic-merging.md#merge-queues'))).toBe(true)
+        expect(gh.requestsMatching('PUT', /./)).toEqual([])
+        expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, graphql, graphql])
+      })
+
+      it('pull_request unlabeled lgtm when the dequeue is refused: warns, leaves the entry, exits 0', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, entry: { state: 'AWAITING_CHECKS', position: 1, enqueuer: 'github-actions' }, dequeueError: 'Resource not accessible by integration' })
+
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'unlabeled', label: { name: 'lgtm' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('::warning::could not dequeue pr #1: Resource not accessible by integration')
+        expect(result.stdout).not.toContain('(dequeued)')
+        expect(gh.graphqlCalls('dequeuePullRequest')).toHaveLength(1)
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+      })
+
       it('schedule jobs: lgtm enqueues a queue-branch pr and never dequeues a gate-failing one', async () => {
         gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
         gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
@@ -1557,7 +1615,11 @@ describe('dist/index.js', () => {
       expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
 
-    it('check_suite completed without pull_requests: finds the pr by head sha', async () => {
+    // a check_suite without pull_requests and a legacy commit status name only the commit: both find the pr by its head sha
+    it.each([
+      ['check_suite', checkSuiteCompletedEvent],
+      ['status', { sha: checkSuiteCompletedEvent.check_suite.head_sha, state: 'success', context: 'ci/lint', repository: checkSuiteCompletedEvent.repository }],
+    ])('%s with only a head sha: finds the pr by that sha', async (eventName, payload) => {
       const sha = checkSuiteCompletedEvent.check_suite.head_sha
       gh.commitStatuses(repo, sha, bound)
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
@@ -1567,7 +1629,7 @@ describe('dist/index.js', () => {
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...mergeablePr('clean'), head: { sha } } })
       gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
 
-      const result = await runBundle({ eventName: 'check_suite', payload: checkSuiteCompletedEvent, inputs: token, apiUrl: gh.url })
+      const result = await runBundle({ eventName, payload, inputs: token, apiUrl: gh.url })
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
@@ -1987,6 +2049,25 @@ describe('dist/index.js', () => {
       expect(result.errors.some(e => e.includes('sweep: 1 pull request(s) failed: #1 (tide: Pull Request is not mergeable)'))).toBe(true)
       expect(gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)).toHaveLength(1)
     })
+
+    it('a fork pr carrying ok-to-test: approves its runs awaiting approval before tide reads it', async () => {
+      const pr = forkPr(1, ['ok-to-test'])
+      routeList([pr])
+      gh.route('GET', `${repo}/actions/runs`, { status: 200, body: { total_count: 2, workflow_runs: [
+        { id: 4, name: 'Job 4', path: '.github/workflows/job4.yml', head_sha: 'sha1', status: 'action_required', conclusion: 'action_required' },
+        { id: 5, name: 'CI', path: '.github/workflows/ci.yml', head_sha: 'sha1', status: 'completed', conclusion: 'success' },
+      ] } })
+      gh.route('POST', `${repo}/actions/runs/4/approve`, { status: 201 })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: pr })
+
+      const result = await runSweep()
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('trigger: #1 approved 1 run(s) on sha1')
+      // the one pending run is approved; tide then reads the pr and stops at the missing lgtm
+      expectRequests(configReads(), [listPage(1), ownersProbe, `GET ${repo}/actions/runs?head_sha=sha1&per_page=100`, `POST ${repo}/actions/runs/4/approve`, `GET ${repo}/pulls/1`])
+    })
   })
 
   describe('workflow_dispatch label-sync job', () => {
@@ -2043,6 +2124,66 @@ describe('dist/index.js', () => {
         [...configReads({ org: '.project' }), labelsRead],
         desired.map(name => (name === 'kind/bug' ? `PATCH ${repo}/labels/kind%2Fbug` : `POST ${repo}/labels`)),
       )
+    })
+
+    it('dry-run: true reads the labels, logs the plan and writes nothing', async () => {
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, { name: 'unrelated', color: 'ffffff' }] })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, 'jobs': 'label-sync', 'dry-run': 'true' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`label-sync (dry-run): would create ${builtins.length + 1} [${[...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)).join(', ')}], would update 1 [kind/bug (color)], unchanged 0`)
+      expect(gh.requestsMatching('POST', /./)).toEqual([])
+      expect(gh.requestsMatching('PATCH', /./)).toEqual([])
+      expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+      expectRequests([...configReads({ org: '.project' }), labelsRead], [])
+    })
+
+    it('the config input owner/repo:path@ref replaces the organization lookup, read at that ref with the token', async () => {
+      gh.route('GET', '/repos/Codertocat/shared-config/contents/labels%2Fprow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: 'd73a4a', description: 'Something is not working' }] })
+      gh.route('POST', `${repo}/labels`, { status: 201, body: {} })
+
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync', config: 'Codertocat/shared-config:labels/prow.yaml@v1' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const explicitRead = '/repos/Codertocat/shared-config/contents/labels%2Fprow.yaml?ref=v1'
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/shared-config\//).map(r => r.path)).toEqual([explicitRead])
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/(\.project|\.github)\//)).toEqual([])
+      const posts = gh.requestsMatching('POST', /\/labels$/)
+      expect(posts.map(p => (p.body as { name: string }).name)).toEqual([...builtins, 'kind/cleanup'].sort((a, b) => a.localeCompare(b)))
+      expect(gh.requestsMatching('PATCH', /./)).toEqual([])
+      // the repository tier is still probed, at every path, alongside the explicit source
+      const repoReads = configReads().filter(read => !read.includes('/repos/Codertocat/.'))
+      expectRequests([`GET ${explicitRead}`, ...repoReads, labelsRead], posts.map(() => `POST ${repo}/labels`))
+    })
+
+    it('the config input refuses an http:// source and writes nothing', async () => {
+      const result = await runBundle({
+        eventName: 'workflow_dispatch',
+        payload: {},
+        inputs: { ...token, jobs: 'label-sync', config: 'http://example.invalid/prow.yaml' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status).toBe(1)
+      expect(result.errors.some(e => e.includes('config: http:// sources are not allowed, use https://'))).toBe(true)
+      expect(gh.requestsMatching('GET', /^\/repos\/Codertocat\/(\.project|\.github)\//)).toEqual([])
+      expect(gh.requestsMatching('GET', /\/labels/)).toEqual([])
+      expect(gh.requests.filter(r => r.method !== 'GET')).toEqual([])
     })
   })
 })

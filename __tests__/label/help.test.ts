@@ -11,9 +11,7 @@ import * as utils from '../testUtils'
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 // a label command is followed by the needs-* re-check and the merge gate: no prow.yaml in any tier, no OWNERS files
 beforeEach(() => server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree()))

@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { notifierMarker } from '../../src/plugins/approve'
 
-import issueCommentEventAssign from '../fixtures/issues/assign/issueCommentEventAssign.json'
+import issueCommentEventAssignFixture from '../fixtures/issues/assign/issueCommentEventAssign.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
@@ -16,9 +16,7 @@ import { baseBranch, blobSha, changedFiles, filesHandler, prCommentEvent, prHand
 
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 // a label command is followed by the needs-* re-check and the merge gate: no prow.yaml in any tier, no OWNERS files
 beforeEach(() => server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBranchTree()))
@@ -26,8 +24,11 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 describe('/approve', () => {
+  // tests rewrite the comment body and commenter; a fresh copy per test keeps those edits from leaking into the next
+  let issueCommentEventAssign: typeof issueCommentEventAssignFixture
   beforeEach(() => {
     utils.setupActionsEnv('/approve')
+    issueCommentEventAssign = structuredClone(issueCommentEventAssignFixture)
   })
 
   it('fails if commenter is not an approver in OWNERS', async () => {
@@ -724,6 +725,23 @@ reviewers:
       await expect(writes.listComments.notCalled()).resolves.toBe('not called')
       await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
       expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('you cannot approve your own PR'))
+    })
+
+    it('require_self_approval: a payload whose issue has no user is not treated as the author', async () => {
+      const writes = serve({
+        owners: { OWNERS: 'approvers:\n- alice\n' },
+        files: ['src/a.go'],
+        prowYaml: 'approve:\n  require_self_approval: true\n',
+        comments: [{ body: '/approve', user: { login: 'alice' } }],
+      })
+      const event = prCommentEvent('/approve', 'alice')
+      delete (event.issue as { user?: unknown }).user
+
+      await handleIssueComment(new utils.MockContext(event))
+
+      await expect(writes.addLabels.called()).resolves.toBe('called')
+      expect(await writes.addLabels.body()).toEqual({ labels: ['approved'] })
+      expect(setFailed).not.toHaveBeenCalled()
     })
 
     it('fails when the repository lacks the approved label', async () => {

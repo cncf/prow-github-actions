@@ -13,6 +13,14 @@ type WebhookPayload = Context['payload']
 
 export const api = 'https://api.github.com'
 
+/**
+ * failOnUnhandledRequest makes `server.listen` reject any request no handler
+ * answers instead of passing it through to the network. msw 2 reads
+ * `onUnhandledRequest`, msw 3 reads `onUnhandledFrame`; naming both keeps the
+ * suite offline on either version.
+ */
+export const failOnUnhandledRequest = { onUnhandledRequest: 'error', onUnhandledFrame: 'error' } as const
+
 /** every file the prow configuration loader probes for Codertocat/Hello-World, as `owner/repo:path` */
 export const configProbes = [
   'Codertocat/.project:prow.yaml',
@@ -236,7 +244,10 @@ export interface MergeQueueFixture {
   /** the base branch requires a merge queue; default true */
   enabled?: boolean
   inQueue?: boolean
-  entry?: { state: string, position: number, enqueuer?: string }
+  /** the queue entry; `null` answers `isInMergeQueue: true` with `mergeQueueEntry: null`; `enqueuer: null` reports no enqueuer */
+  entry?: { state: string, position: number, enqueuer?: string | null } | null
+  /** the position the enqueue mutation reports; `null` answers `mergeQueueEntry: null`; default 3 */
+  enqueuePosition?: number | null
   headOid?: string
   pullRequestId?: string
   /** GraphQL error message for the enqueue mutation */
@@ -263,7 +274,7 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
 
     if (body.query.includes('enqueuePullRequest')) {
       return queue.enqueueError === undefined
-        ? respond({ enqueuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 3 } } })
+        ? respond({ enqueuePullRequest: { mergeQueueEntry: queue.enqueuePosition === null ? null : { state: 'QUEUED', position: queue.enqueuePosition ?? 3 } } })
         : respond(null, queue.enqueueError)
     }
     if (body.query.includes('dequeuePullRequest')) {
@@ -275,7 +286,7 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
       return respond(null, queue.queryError)
     }
     const inQueue = queue.inQueue ?? false
-    const entry = queue.entry ?? (inQueue ? { state: 'QUEUED', position: 2, enqueuer: 'github-actions' } : undefined)
+    const entry = queue.entry === undefined ? (inQueue ? { state: 'QUEUED', position: 2, enqueuer: 'github-actions' } : null) : queue.entry
     return respond({
       repository: {
         pullRequest: {
@@ -283,7 +294,7 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
           headRefOid: queue.headOid ?? 'headsha',
           isMergeQueueEnabled: queue.enabled ?? true,
           isInMergeQueue: inQueue,
-          mergeQueueEntry: entry === undefined ? null : { state: entry.state, position: entry.position, enqueuer: { login: entry.enqueuer ?? 'github-actions' } },
+          mergeQueueEntry: entry === null ? null : { state: entry.state, position: entry.position, enqueuer: entry.enqueuer === null ? null : { login: entry.enqueuer ?? 'github-actions' } },
         },
       },
     })

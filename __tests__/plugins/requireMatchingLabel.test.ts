@@ -9,6 +9,7 @@ import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { handleIssues } from '../../src/issues/handleIssues'
 import { applicableRules, checkRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
+import * as labeling from '../../src/utils/labeling'
 import * as sleepModule from '../../src/utils/sleep'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
@@ -18,7 +19,7 @@ import * as utils from '../testUtils'
 import { pullHandler } from '../utils/ownersFixtures'
 
 const server = setupServer()
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -401,6 +402,16 @@ describe('requireMatchingLabel handler', () => {
     await expect(writes.removeLabel.called()).resolves.toBe('called')
     await expect(writes.addLabels.called()).resolves.toBe('called')
     expect(await writes.addLabels.body()).toEqual({ labels: ['needs-area'] })
+  })
+
+  it('reports a non-Error rejection from a rule verbatim', async () => {
+    serveRules([kindRule])
+    serveIssue([])
+    vi.spyOn(labeling, 'labelIssue').mockRejectedValueOnce('rate limited')
+
+    await expect(requireMatchingLabel(new utils.MockContext(issueEvent('opened', [])))).rejects.toThrow(
+      'require-matching-label needs-kind: rate limited',
+    )
   })
 
   it('is registered on the issues event', async () => {

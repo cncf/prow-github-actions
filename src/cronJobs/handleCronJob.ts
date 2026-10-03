@@ -62,7 +62,7 @@ export async function handleCronJobs(context: Context = github.context): Promise
       // Check to see if any of the promises failed
       for (const result of results) {
         if (result instanceof Error) {
-          throw new TypeError(`error handling issue comment: ${result}`)
+          throw new TypeError(`error handling cron job: ${result}`)
         }
       }
     })

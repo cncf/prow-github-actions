@@ -2,7 +2,7 @@ import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   dequeue,
@@ -21,7 +21,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() => {
   utils.setupActionsEnv()
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen(utils.failOnUnhandledRequest)
 })
 beforeEach(() => resetMergeQueueWarnings())
 afterEach(() => server.resetHandlers())
@@ -113,6 +113,14 @@ describe('queueState', () => {
 
     expect(core.warning).toHaveBeenCalledTimes(1)
     expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('could not read the merge queue state of pr #7; falling back to a direct merge: Field isMergeQueueEnabled doesn\'t exist on type PullRequest'))
+  })
+
+  it('reports a non-Error rejection of the query by its string form', async () => {
+    const offline = { graphql: vi.fn().mockRejectedValue('offline') } as unknown as Octokit
+
+    await expect(queueState(offline, context, 7)).resolves.toBeUndefined()
+
+    expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('falling back to a direct merge: offline'))
   })
 
   it('warns again after the warning state is reset', async () => {

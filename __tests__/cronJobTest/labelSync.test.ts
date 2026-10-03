@@ -1,20 +1,24 @@
 import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
+import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
 import { labelSync } from '../../src/cronJobs/labelSync'
+import * as octokitFactory from '../../src/utils/octokit'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import listPullReqs from '../fixtures/pullReq/pullReqListPulls.json'
 import * as utils from '../testUtils'
 
+// the github client only ever rejects with an Error over HTTP, so the
+// non-Error fallback of a refused write is only reachable through a stub
+vi.mock('../../src/utils/octokit', { spy: true })
+
 const server = setupServer()
 beforeAll(() =>
-  server.listen({
-    onUnhandledRequest: 'error',
-  }),
+  server.listen(utils.failOnUnhandledRequest),
 )
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -268,6 +272,38 @@ describe('label-sync job', () => {
 
     expect(writes).toEqual([])
     expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('could not load prow config'))
+  })
+
+  it('logs that only the built-in defaults apply when no configuration is found', async () => {
+    server.use(...utils.noOrgOrRepoConfigExcept())
+    recordWrites([])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+    vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    await labelSync(dispatchContext())
+
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('labels from the built-in defaults only'))
+  })
+
+  it('records a write refused with a non-Error value by its string form', async () => {
+    serveConfig()
+    const writes = recordWrites([])
+    vi.mocked(octokitFactory.newOctokit).mockImplementationOnce((token) => {
+      const real = new Octokit({ auth: token, baseUrl: utils.api })
+      const refused = vi.fn().mockRejectedValue('offline')
+      const issues = Object.create(real.issues, {
+        createLabel: { value: (params: { name: string }) => (params.name === 'kind/bug' ? refused() : real.issues.createLabel(params)) },
+      })
+      return Object.create(real, { issues: { value: issues } })
+    })
+    const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
+    vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    const run = labelSync(dispatchContext())
+
+    await expect(run).rejects.toThrow('1 label(s) could not be synced: kind/bug (offline)')
+    expect(logError).toHaveBeenCalledWith('label-sync: could not sync kind/bug: offline')
+    expect(writes.map(w => (w.body as { name: string }).name)).toEqual(complete.map(l => l.name).filter(n => n !== 'kind/bug'))
   })
 
   it('runs next to an unknown job, which still fails the run', async () => {

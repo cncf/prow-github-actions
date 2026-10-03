@@ -24,6 +24,8 @@
     "test": "vitest run",
     "test-all": "npm run build && npm run pack && npm test",
     "test:coverage": "vitest run --coverage",
+    "pack:coverage": "ncc build __tests__/bundle/coverageEntry/main.ts -o .coverage-bundle --source-map --no-source-map-register",
+    "test:coverage:e2e": "npm run pack:coverage && vitest run --coverage --config vitest.e2e-coverage.config.mjs __tests__/bundle",
     "test:watch": "vitest",
     "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test"
   },
@@ -36,10 +38,10 @@
     "@antfu/eslint-config": "^9.5.1",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
-    "@vitest/coverage-v8": "^5.0.1",
+    "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.11.0",
     "js-yaml": "^5.4.2",
-    "msw": "^2.15.0",
+    "msw": "^3.0.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0"
   }

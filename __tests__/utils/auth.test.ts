@@ -22,9 +22,7 @@ import * as utils from '../testUtils'
 const server = setupServer()
 beforeAll(() => {
   utils.setupActionsEnv()
-  server.listen({
-    onUnhandledRequest: 'error',
-  })
+  server.listen(utils.failOnUnhandledRequest)
 })
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -251,6 +249,44 @@ describe('checkCommenterAuth', () => {
 
     await expect(checkCommenterAuth(octokit, context, 1, 'some-user')).resolves.toBe(true)
   })
+
+  // Each helper swallows API errors and logs them, so the only way an error
+  // escapes into checkCommenterAuth's own catch blocks is the logger throwing.
+  it('wraps an error escaping the org membership check', async () => {
+    vi.spyOn(core, 'warning').mockImplementation(() => {
+      throw new Error('logger down')
+    })
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 500 })
+
+    await expect(checkCommenterAuth(octokit, context, 1, 'some-user')).rejects.toThrow(
+      'error in checking org member: Error: logger down',
+    )
+  })
+
+  it('wraps an error escaping the collaborator check', async () => {
+    vi.spyOn(core, 'warning').mockImplementation(() => {
+      throw new Error('logger down')
+    })
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 404 })
+    vi.spyOn(octokit.repos, 'checkCollaborator').mockRejectedValueOnce({ status: 500 })
+
+    await expect(checkCommenterAuth(octokit, context, 1, 'some-user')).rejects.toThrow(
+      'could not check collaborator: Error: logger down',
+    )
+  })
+
+  it('wraps an error escaping the issue comments check', async () => {
+    vi.spyOn(core, 'warning').mockImplementation(() => {
+      throw new Error('logger down')
+    })
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 404 })
+    vi.spyOn(octokit.repos, 'checkCollaborator').mockRejectedValueOnce({ status: 404 })
+    vi.spyOn(octokit.issues, 'listComments').mockRejectedValueOnce({ status: 500 })
+
+    await expect(checkCommenterAuth(octokit, context, 1, 'some-user')).rejects.toThrow(
+      'could not check issue comments: Error: logger down',
+    )
+  })
 })
 
 describe('getOrgCollabCommentUsers', () => {
@@ -281,6 +317,17 @@ describe('getOrgCollabCommentUsers', () => {
     await expect(
       getOrgCollabCommentUsers(octokit, context, 1, ['some-user', 'nobody']),
     ).resolves.toEqual(['some-user'])
+  })
+
+  it('wraps an error escaping any of the checks', async () => {
+    vi.spyOn(core, 'warning').mockImplementation(() => {
+      throw new Error('logger down')
+    })
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 500 })
+
+    await expect(
+      getOrgCollabCommentUsers(octokit, context, 1, ['some-user']),
+    ).rejects.toThrow('could not get authorized user: Error: logger down')
   })
 })
 
