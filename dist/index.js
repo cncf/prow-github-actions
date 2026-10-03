@@ -45023,7 +45023,7 @@ async function handleCronJobs(context = github_context) {
         // Check to see if any of the promises failed
         for (const result of results) {
             if (result instanceof Error) {
-                throw new TypeError(`error handling issue comment: ${result}`);
+                throw new TypeError(`error handling cron job: ${result}`);
             }
         }
     })
@@ -46423,7 +46423,7 @@ async function handlePullReq(context = github_context) {
         .then((results) => {
         for (const result of results) {
             if (result instanceof Error) {
-                throw new TypeError(`error handling issue comment: ${result}`);
+                throw new TypeError(`error handling pull request: ${result}`);
             }
         }
     })
