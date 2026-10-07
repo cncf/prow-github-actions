@@ -23,6 +23,8 @@ interface CatResponse {
   status: number
   body?: unknown
   headers?: Record<string, string>
+  // drop the connection without answering: the child's fetch rejects with a TypeError
+  destroy?: boolean
 }
 
 // a stand-in for api.thecatapi.com: answers one queued response per request, repeating the last
@@ -32,6 +34,10 @@ async function startCatApi() {
   const server = http.createServer((req, res) => {
     requests.push({ path: req.url ?? '', headers: req.headers })
     const next = queue.length > 1 ? queue.shift()! : queue[0] ?? { status: 500 }
+    if (next.destroy) {
+      req.socket.destroy()
+      return
+    }
     res.writeHead(next.status, { 'content-type': 'application/json', ...next.headers })
     res.end(next.body === undefined ? '' : JSON.stringify(next.body))
   })
@@ -171,6 +177,52 @@ describe('dist/index.js issue_comment /meow', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(cat.requests).toHaveLength(1)
     expect(result.stdout).toContain('::warning::Could not fetch a cat image: Error: cat api returned an image from an unexpected host')
+    expect(postedComments()).toEqual([fallback])
+  })
+
+  // the other parseCatImage refusals: each is a 2xx the bundle must not render, so none is retried
+  it.each([
+    ['an empty list', [], 'cat api returned no images'],
+    ['a record without a url', [{ id: 'MTY3ODIyMQ' }], 'cat api returned an invalid image record'],
+    ['an excessively long url', [{ url: `https://cdn2.thecatapi.com/images/${'a'.repeat(4096)}.jpg` }], 'cat api returned an excessively long image url'],
+    ['an unparsable url', [{ url: 'not a url' }], 'cat api returned an invalid image url'],
+    ['an http: url', [{ url: 'http://cdn2.thecatapi.com/images/MTY3ODIyMQ.jpg' }], 'cat api returned an unusable image url'],
+    ['a url carrying credentials', [{ url: 'https://user:pass@cdn2.thecatapi.com/images/MTY3ODIyMQ.jpg' }], 'cat api returned an unusable image url'],
+  ])('falls back to the note without retrying when the cat api returns %s', async (_, body, message) => {
+    cat.answer({ status: 200, body })
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+    const result = await meow('/meow')
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(cat.requests).toHaveLength(1)
+    expect(result.stdout).toContain(`::warning::Could not fetch a cat image: Error: ${message}`)
+    expect(postedComments()).toEqual([fallback])
+  })
+
+  it('retries a dropped connection to the cat api and posts the image once it answers', async () => {
+    cat.answer({ status: 0, destroy: true }, { status: 200, body: [{ url: image }] })
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+    const result = await meow('/meow')
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.stdout).not.toMatch(/::warning::/)
+    expect(cat.requests).toHaveLength(2)
+    expect(postedComments()).toEqual([`![cat](<${image}>)`])
+  })
+
+  it('gives up after three dropped connections and posts the unavailable note; the run still succeeds', async () => {
+    cat.answer({ status: 0, destroy: true })
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+    const result = await meow('/meow')
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(cat.requests).toHaveLength(3)
+    expect(result.stdout).toMatch(/::warning::Could not fetch a cat image: TypeError: fetch failed/)
     expect(postedComments()).toEqual([fallback])
   })
 
