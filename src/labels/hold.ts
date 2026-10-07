@@ -4,10 +4,12 @@ import * as core from '@actions/core'
 
 import * as github from '@actions/github'
 
+import { assertPolicy } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
-import { loadProwConfig, resolveHoldLabel } from '../utils/config'
+import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
+import { commenter } from './prefixed'
 
 // the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
 export const legacyHoldLabel = 'hold'
@@ -16,6 +18,7 @@ export const legacyHoldLabel = 'hold'
  * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
  * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
  * Note - the label blocks automatic merging through `tide.missing_labels`.
+ * Every form is gated by `authorization.hold`, open to anyone by default.
  *
  * @param context - the github actions event context
  */
@@ -34,6 +37,9 @@ export async function hold(context: Context = github.context): Promise<void> {
 
   const config = await loadProwConfig(octokit, context)
   const holdLabel = resolveHoldLabel(config.hold)
+
+  // cancel, /unhold and /remove-hold are gated like /hold itself
+  await assertPolicy(octokit, context, resolveAuthorization(config.authorization), 'hold', commenter(context), '/hold')
 
   const cancel = hasCommand('/unhold', commentBody)
     || hasCommand('/remove-hold', commentBody)

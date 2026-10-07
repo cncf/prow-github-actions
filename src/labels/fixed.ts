@@ -1,9 +1,12 @@
+import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 
+import { assertPolicy } from '../utils/auth'
+import { loadProwConfig, resolveAuthorization } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
-import { sameLabel } from './prefixed'
+import { commenter, removeCommandFor, sameLabel } from './prefixed'
 
 export interface FixedLabelCommand {
   /** the slash command, ex: '/help' */
@@ -29,8 +32,10 @@ export const fixedLabelCommands: FixedLabelCommand[] = [
 export async function addFixedLabels(context: Context, cmd: FixedLabelCommand): Promise<void> {
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
+  const issueNumber = requireIssueNumber(context)
 
-  await labelIssue(octokit, context, requireIssueNumber(context), cmd.add)
+  await assertLabelsPolicy(octokit, context, cmd.command)
+  await labelIssue(octokit, context, issueNumber, cmd.add)
 }
 
 /**
@@ -43,6 +48,8 @@ export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand
   const token = core.getInput('github-token', { required: true })
   const octokit = newOctokit(token)
   const issueNumber = requireIssueNumber(context)
+
+  await assertLabelsPolicy(octokit, context, removeCommandFor(cmd.command))
 
   let currentLabels: string[] = []
   try {
@@ -61,6 +68,12 @@ export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand
   }
 
   await removeLabels(octokit, context, issueNumber, present)
+}
+
+// unlike the prefixed commands these read no label section, so the configuration is loaded for the policy alone
+async function assertLabelsPolicy(octokit: Octokit, context: Context, command: string): Promise<void> {
+  const { authorization } = await loadProwConfig(octokit, context)
+  await assertPolicy(octokit, context, resolveAuthorization(authorization), 'labels', commenter(context), command)
 }
 
 function requireIssueNumber(context: Context): number {

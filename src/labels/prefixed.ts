@@ -1,10 +1,12 @@
 import type { Octokit } from '@octokit/rest'
+import type { ResolvedAuthorization } from '../utils/config'
 import type { Context } from '../utils/context'
 import type { LabelConfig, LabelSection } from '../utils/labeling'
 import * as core from '@actions/core'
 
+import { assertPolicy } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
-import { loadProwConfig, resolveHoldLabel } from '../utils/config'
+import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
 import { addPrefix, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 
@@ -90,6 +92,7 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
   const commentBody: string = context.payload.comment?.body
 
   const section = await allowlistFor(octokit, context, cmd)
+  await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), cmd.command)
   const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels)
 
   if (section.exclusive) {
@@ -126,6 +129,7 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   const command = removeCommandFor(cmd.command)
 
   const section = await allowlistFor(octokit, context, cmd)
+  await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), command)
   const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels)
   const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command)
 
@@ -137,6 +141,15 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   }
 
   await removeLabels(octokit, context, issueNumber, present)
+}
+
+/**
+ * commenter returns the login of the user who wrote the command comment
+ *
+ * @param context - the github actions event context
+ */
+export function commenter(context: Context): string {
+  return context.payload.comment?.user?.login
 }
 
 function requireIssueNumber(context: Context): number {
@@ -182,6 +195,7 @@ interface Allowlist {
   exclusive: boolean
   /** labels owned by other commands that /label and /remove-label refuse */
   protectedLabels: string[]
+  authorization: ResolvedAuthorization
 }
 
 async function allowlistFor(
@@ -201,8 +215,13 @@ async function allowlistFor(
 
     core.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`)
 
-    const { hold } = await loadProwConfig(octokit, context)
-    return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] }
+    const { hold, authorization } = await loadProwConfig(octokit, context)
+    return {
+      values: section.values,
+      exclusive: section.exclusive ?? false,
+      protectedLabels: [resolveHoldLabel(hold)],
+      authorization: resolveAuthorization(authorization),
+    }
   }
   catch (e) {
     throw new Error(`could not get labels from yaml: ${e}`)

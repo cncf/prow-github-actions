@@ -95,6 +95,38 @@ export interface SweepConfig {
   lookback?: string
 }
 
+/**
+ * who may run a gated command: `anyone`; `collaborators`; `members` (org
+ * member or collaborator); `trusted` (`authorization.users`, org member,
+ * collaborator, or a reviewer or approver in the root OWNERS file)
+ */
+export type AuthorizationPolicy = 'anyone' | 'collaborators' | 'members' | 'trusted'
+
+/** the policies `authorization.review` accepts; it never admits more than members and collaborators by membership alone */
+export type ReviewAuthorizationPolicy = 'members' | 'trusted'
+
+export interface AuthorizationConfig {
+  /** label commands and their `/remove-` forms; default `anyone` */
+  labels?: AuthorizationPolicy
+  /** /hold, /hold cancel, /unhold, /remove-hold; default `anyone` */
+  hold?: AuthorizationPolicy
+  /** /close and /reopen, which the issue author may always run; default `collaborators` */
+  close?: AuthorizationPolicy
+  /** /lgtm, /approve, /retest, /test and /ok-to-test on repositories without OWNERS files; default `members` */
+  review?: ReviewAuthorizationPolicy
+  /** further trusted GitHub logins, compared case-insensitively; unioned across tiers */
+  users?: string[]
+}
+
+/** AuthorizationConfig with every default applied and `users` lower-cased, see resolveAuthorization */
+export interface ResolvedAuthorization {
+  labels: AuthorizationPolicy
+  hold: AuthorizationPolicy
+  close: AuthorizationPolicy
+  review: ReviewAuthorizationPolicy
+  users: string[]
+}
+
 export interface ProwConfig {
   labels: Record<string, LabelSection>
   require_matching_label: RequireMatchingLabel[]
@@ -104,6 +136,7 @@ export interface ProwConfig {
   approve: ApproveConfig
   lgtm: LgtmConfig
   sweep: SweepConfig
+  authorization: AuthorizationConfig
   /** every file that contributed, lowest precedence first, as `owner/repo:path` or a url */
   sources: string[]
 }
@@ -120,7 +153,20 @@ export const defaultOwnersTideLabels = ['lgtm', 'approved']
 export const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold']
 
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep'] as const
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep', 'authorization'] as const
+
+const authorizationPolicies = ['anyone', 'collaborators', 'members', 'trusted'] as const
+const reviewAuthorizationPolicies = ['members', 'trusted'] as const
+const authorizationKeys = ['labels', 'hold', 'close', 'review', 'users'] as const
+
+/** today's gates: label commands and /hold open to anyone, /close collaborators, review members */
+export const defaultAuthorization: ResolvedAuthorization = {
+  labels: 'anyone',
+  hold: 'anyone',
+  close: 'collaborators',
+  review: 'members',
+  users: [],
+}
 
 export const defaultSweepLookback = '1h'
 export const maxSweepLookbackMs = 24 * 3_600_000
@@ -312,7 +358,7 @@ function isNotFound(error: unknown): boolean {
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
  * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
- * `approve`, `lgtm` and `sweep` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * `approve`, `lgtm`, `sweep` and `authorization` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -363,6 +409,9 @@ export function parseProwConfig(source: string, text: string): Partial<ProwConfi
   }
   if (loaded.sweep !== undefined) {
     config.sweep = normalizeSweep(source, loaded.sweep)
+  }
+  if (loaded.authorization !== undefined) {
+    config.authorization = normalizeAuthorization(source, loaded.authorization)
   }
 
   const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !(reservedKeys as readonly string[]).includes(key))
@@ -612,6 +661,39 @@ function normalizeSweep(source: string, raw: unknown): SweepConfig {
   return stripUndefined({ lookback: raw.lookback as string | undefined })
 }
 
+function normalizeAuthorization(source: string, raw: unknown): AuthorizationConfig {
+  if (!isMapping(raw)) {
+    throw new Error(`${source}: authorization must be a mapping`)
+  }
+
+  const unknown = Object.keys(raw).find(key => !(authorizationKeys as readonly string[]).includes(key))
+  if (unknown !== undefined) {
+    throw new Error(`${source}: authorization.${unknown} is not a known key, expected one of ${authorizationKeys.join(', ')}`)
+  }
+
+  for (const field of ['labels', 'hold', 'close'] as const) {
+    if (raw[field] !== undefined && !(authorizationPolicies as readonly unknown[]).includes(raw[field])) {
+      throw new Error(`${source}: authorization.${field} must be one of ${authorizationPolicies.join(', ')}`)
+    }
+  }
+
+  if (raw.review !== undefined && !(reviewAuthorizationPolicies as readonly unknown[]).includes(raw.review)) {
+    throw new Error(`${source}: authorization.review must be one of ${reviewAuthorizationPolicies.join(', ')}`)
+  }
+
+  if (raw.users !== undefined && !isLabelList(raw.users)) {
+    throw new Error(`${source}: authorization.users must be a list of logins`)
+  }
+
+  return stripUndefined({
+    labels: raw.labels as AuthorizationPolicy | undefined,
+    hold: raw.hold as AuthorizationPolicy | undefined,
+    close: raw.close as AuthorizationPolicy | undefined,
+    review: raw.review as ReviewAuthorizationPolicy | undefined,
+    users: raw.users as string[] | undefined,
+  })
+}
+
 /**
  * resolveSweepLookback returns the sweep window in milliseconds: the
  * configured `sweep.lookback`, else 1h, never more than 24h.
@@ -625,7 +707,8 @@ export function resolveSweepLookback(sweep: SweepConfig): number {
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
  * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
- * approve, lgtm and sweep shallow-merge.
+ * approve, lgtm, sweep and authorization shallow-merge, except that
+ * `authorization.users` is the union of both tiers.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -640,7 +723,27 @@ export function mergeProwConfig(base: Partial<ProwConfig>, over: Partial<ProwCon
     approve: { ...base.approve, ...over.approve },
     lgtm: { ...base.lgtm, ...over.lgtm },
     sweep: { ...base.sweep, ...over.sweep },
+    authorization: mergeAuthorization(base.authorization, over.authorization),
   }
+}
+
+// a repository adds its own trusted logins to the organization's instead of replacing them
+function mergeAuthorization(base: AuthorizationConfig = {}, over: AuthorizationConfig = {}): AuthorizationConfig {
+  if (base.users === undefined && over.users === undefined) {
+    return { ...base, ...over }
+  }
+
+  const seen = new Set<string>()
+  const users = [...(base.users ?? []), ...(over.users ?? [])].filter((login) => {
+    const key = login.toLowerCase()
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+
+  return { ...base, ...over, users }
 }
 
 export interface ResolveTideOptions {
@@ -682,6 +785,23 @@ function toMergeMethod(input: string): MergeMethod {
  */
 export function resolveHoldLabel(hold: HoldConfig): string {
   return hold.label ?? defaultHoldLabel
+}
+
+/**
+ * resolveAuthorization applies the defaults to a merged authorization
+ * section, see defaultAuthorization, and lower-cases `users` so callers
+ * compare logins case-insensitively.
+ *
+ * @param authorization - the merged authorization section
+ */
+export function resolveAuthorization(authorization: AuthorizationConfig): ResolvedAuthorization {
+  return {
+    labels: authorization.labels ?? defaultAuthorization.labels,
+    hold: authorization.hold ?? defaultAuthorization.hold,
+    close: authorization.close ?? defaultAuthorization.close,
+    review: authorization.review ?? defaultAuthorization.review,
+    users: (authorization.users ?? defaultAuthorization.users).map(login => login.toLowerCase()),
+  }
 }
 
 export function isMapping(value: unknown): value is Record<string, unknown> {
