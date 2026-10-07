@@ -23,7 +23,7 @@ function deleteRoute(label: string) {
 // command served by Prow's built-in defaults, and the no-configuration failure docs/labeling.md promises
 describe('dist/index.js fixed and built-in prefixed label commands', () => {
   let gh: FakeGithub
-  const { expectCommandThenConfig, expectRequests } = helpersFor(() => gh)
+  const { expectRequests } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -45,7 +45,8 @@ describe('dist/index.js fixed and built-in prefixed label commands', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expectCommandThenConfig([issueRead, deleteRoute('Help Wanted'), deleteRoute('good first issue')])
+    // the gate reads the configuration for authorization.labels first; the needs-* re-check that follows finds it memoized
+    expectRequests(configReads(), [issueRead, deleteRoute('Help Wanted'), deleteRoute('good first issue')])
   })
 
   // .prowlabels.yaml has no lifecycle key, so the command falls back to Prow's built-in values

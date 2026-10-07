@@ -352,7 +352,7 @@ describe('dist/index.js', () => {
     ])
   })
 
-  it('issue_comment /help adds help wanted without reading .prowlabels.yaml', async () => {
+  it('issue_comment /help reads the configuration for authorization.labels, then adds help wanted', async () => {
     gh.route('GET', `${repo}/labels`, repoLabels('help wanted'))
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
 
@@ -368,7 +368,8 @@ describe('dist/index.js', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
-    expectCommandThenConfig([labelsRead, `POST ${repo}/issues/1/labels`])
+    // the gate reads the configuration first; the needs-* re-check that follows finds it memoized
+    expectRequests(configReads(), [labelsRead, `POST ${repo}/issues/1/labels`])
   })
 
   it('issue_comment /assign self-assigns an org member', async () => {
@@ -408,9 +409,11 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+    // only the refusal reads authorization.close, after the collaborator check
+    expect(gh.requests.map(r => `${r.method} ${r.path}`).slice(0, 1)).toEqual([
       `GET ${repo}/collaborators/Codertocat`,
     ])
+    expect(gh.requests.map(r => `${r.method} ${r.path}`).slice(1).sort()).toEqual(configReads().sort())
   })
 
   it('issue_comment /close not-planned by a collaborator closes with state_reason not_planned', async () => {

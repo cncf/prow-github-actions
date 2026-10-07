@@ -40834,7 +40834,18 @@ const defaultOwnersTideLabels = ['lgtm', 'approved'];
 // `hold` stays in the deny-list while repositories still carry the pre-do-not-merge/hold label
 const defaultTideMissingLabels = ['do-not-merge/*', 'needs-rebase', 'hold'];
 // top level keys of the new form other than `labels`
-const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep'];
+const reservedKeys = ['require_matching_label', 'tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep', 'authorization'];
+const authorizationPolicies = ['anyone', 'collaborators', 'members', 'trusted'];
+const reviewAuthorizationPolicies = ['members', 'trusted'];
+const authorizationKeys = ['labels', 'hold', 'close', 'review', 'users'];
+/** today's gates: label commands and /hold open to anyone, /close collaborators, review members */
+const defaultAuthorization = {
+    labels: 'anyone',
+    hold: 'anyone',
+    close: 'collaborators',
+    review: 'members',
+    users: [],
+};
 const defaultSweepLookback = '1h';
 const maxSweepLookbackMs = 24 * 3_600_000;
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
@@ -40986,7 +40997,7 @@ function isNotFound(error) {
  * sections, and one of those sections is commonly named `labels` (the /label
  * allowlist, a plain list). So: a top level `labels` that is a *mapping* marks
  * the new form, where `require_matching_label`, `tide`, `hold`, `blunderbuss`,
- * `approve`, `lgtm` and `sweep` may sit alongside it and the /label allowlist is the section `labels.labels`. A
+ * `approve`, `lgtm`, `sweep` and `authorization` may sit alongside it and the /label allowlist is the section `labels.labels`. A
  * document without `labels` that carries one of those reserved keys is also
  * the new form. Anything else is a legacy document and every key must be a
  * label section.
@@ -41031,6 +41042,9 @@ function parseProwConfig(source, text) {
     }
     if (loaded.sweep !== undefined) {
         config.sweep = normalizeSweep(source, loaded.sweep);
+    }
+    if (loaded.authorization !== undefined) {
+        config.authorization = normalizeAuthorization(source, loaded.authorization);
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
@@ -41230,6 +41244,44 @@ function normalizeSweep(source, raw) {
     }
     return stripUndefined({ lookback: raw.lookback });
 }
+function normalizeAuthorization(source, raw) {
+    if (!isMapping(raw)) {
+        throw new Error(`${source}: authorization must be a mapping`);
+    }
+    const unknown = Object.keys(raw).find(key => !authorizationKeys.includes(key));
+    if (unknown !== undefined) {
+        throw new Error(`${source}: authorization.${unknown} is not a known key, expected one of ${authorizationKeys.join(', ')}`);
+    }
+    for (const field of ['labels', 'hold', 'close']) {
+        if (raw[field] !== undefined && !authorizationPolicies.includes(raw[field])) {
+            throw new Error(`${source}: authorization.${field} must be one of ${authorizationPolicies.join(', ')}`);
+        }
+    }
+    if (raw.review !== undefined && !reviewAuthorizationPolicies.includes(raw.review)) {
+        throw new Error(`${source}: authorization.review must be one of ${reviewAuthorizationPolicies.join(', ')}`);
+    }
+    const users = raw.users === undefined ? undefined : normalizeLogins(raw.users);
+    if (users === null) {
+        throw new Error(`${source}: authorization.users must be a list of logins`);
+    }
+    return stripUndefined({
+        labels: raw.labels,
+        hold: raw.hold,
+        close: raw.close,
+        review: raw.review,
+        users,
+    });
+}
+// a GitHub login, or a GitHub App's `<slug>[bot]`; no leading `@`, no inner spaces
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
+// the trimmed logins, or null when the value is not a list of valid logins
+function normalizeLogins(value) {
+    if (!isStringList(value)) {
+        return null;
+    }
+    const logins = value.map(login => login.trim());
+    return logins.every(login => loginPattern.test(login)) ? logins : null;
+}
 /**
  * resolveSweepLookback returns the sweep window in milliseconds: the
  * configured `sweep.lookback`, else 1h, never more than 24h.
@@ -41242,7 +41294,8 @@ function resolveSweepLookback(sweep) {
 /**
  * mergeProwConfig layers `over` on top of `base`: label sections replace per
  * key, require_matching_label rules concatenate, tide, hold, blunderbuss,
- * approve, lgtm and sweep shallow-merge.
+ * approve, lgtm, sweep and authorization shallow-merge, except that
+ * `authorization.users` is the union of both tiers.
  *
  * @param base - the lower precedence tier
  * @param over - the higher precedence tier
@@ -41257,7 +41310,24 @@ function mergeProwConfig(base, over) {
         approve: { ...base.approve, ...over.approve },
         lgtm: { ...base.lgtm, ...over.lgtm },
         sweep: { ...base.sweep, ...over.sweep },
+        authorization: mergeAuthorization(base.authorization, over.authorization),
     };
+}
+// a repository adds its own trusted logins to the organization's instead of replacing them
+function mergeAuthorization(base = {}, over = {}) {
+    if (base.users === undefined && over.users === undefined) {
+        return { ...base, ...over };
+    }
+    const seen = new Set();
+    const users = [...(base.users ?? []), ...(over.users ?? [])].filter((login) => {
+        const key = login.toLowerCase();
+        if (seen.has(key)) {
+            return false;
+        }
+        seen.add(key);
+        return true;
+    });
+    return { ...base, ...over, users };
 }
 /**
  * resolveTide applies the defaults to a parsed tide section: `labels`
@@ -41291,6 +41361,22 @@ function toMergeMethod(input) {
  */
 function resolveHoldLabel(hold) {
     return hold.label ?? defaultHoldLabel;
+}
+/**
+ * resolveAuthorization applies the defaults to a merged authorization
+ * section, see defaultAuthorization, and lower-cases `users` so callers
+ * compare logins case-insensitively.
+ *
+ * @param authorization - the merged authorization section
+ */
+function resolveAuthorization(authorization) {
+    return {
+        labels: authorization.labels ?? defaultAuthorization.labels,
+        hold: authorization.hold ?? defaultAuthorization.hold,
+        close: authorization.close ?? defaultAuthorization.close,
+        review: authorization.review ?? defaultAuthorization.review,
+        users: (authorization.users ?? defaultAuthorization.users).map(login => login.toLowerCase()),
+    };
 }
 function isMapping(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -42096,6 +42182,7 @@ function baseBranchTip(octokit, context, branch) {
 
 
 
+
 function getErrorDetails(error) {
     if (typeof error === 'object' && error !== null) {
         const status = 'status' in error ? error.status : 'unknown';
@@ -42274,8 +42361,93 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
         const isOrgMember = await checkOrgMember(octokit, context, username);
         const isCollaborator = await checkCollaborator(octokit, context, username);
         if (!isOrgMember && !isCollaborator) {
-            throw new Error(`${username} is not a org member or collaborator`);
+            // every review policy admits members and collaborators, so only a refusal needs the configuration
+            const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization);
+            if (review === 'members') {
+                throw new Error(`${username} is not a org member or collaborator`);
+            }
+            if (!users.includes(username.toLowerCase())) {
+                throw new Error(`${username} is not a org member, collaborator or listed in authorization.users`);
+            }
         }
+    }
+}
+/**
+ * policyAllows reports whether an `authorization` policy admits the user,
+ * cheapest check first: `anyone` makes no API call; `trusted` tries
+ * `users`, then org membership, then the collaborator check, then the root
+ * OWNERS file of the default branch (reviewers and approvers alike).
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param policy - the policy to apply
+ * @param user - the user to authorize
+ * @param users - the lower-cased `authorization.users`
+ * @param refused - checks that already refused the user and are skipped
+ */
+async function policyAllows(octokit, context, policy, user, users, refused = {}) {
+    if (!user) {
+        return false;
+    }
+    if (policy === 'anyone') {
+        return true;
+    }
+    if (policy === 'trusted' && users.includes(user.toLowerCase())) {
+        return true;
+    }
+    if (policy !== 'collaborators' && refused.member !== true && await checkOrgMember(octokit, context, user)) {
+        return true;
+    }
+    if (refused.collaborator !== true && await checkCollaborator(octokit, context, user)) {
+        return true;
+    }
+    return policy === 'trusted' && rootOwnersIncludes(octokit, context, user);
+}
+/**
+ * assertPolicy throws unless the `authorization.<key>` policy admits the user.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param auth - the resolved authorization section
+ * @param key - the policy to apply
+ * @param user - the user to authorize
+ * @param command - the command the user ran, for the error message
+ */
+async function assertPolicy(octokit, context, auth, key, user, command) {
+    if (!await policyAllows(octokit, context, auth[key], user, auth.users)) {
+        throw new Error(`${user} is not authorized to run ${command}: authorization.${key} is ${auth[key]}`);
+    }
+}
+/**
+ * closePolicyAllows decides /close and /reopen for a user who is neither the
+ * author nor a collaborator: every `close` policy admits collaborators, so
+ * the configuration is read only on this path, and the collaborator check
+ * is not repeated. A configuration that cannot be loaded refuses, with a
+ * warning, so the refusal stays silent.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the user the collaborator check refused
+ */
+async function closePolicyAllows(octokit, context, user) {
+    let auth;
+    try {
+        auth = await loadAuthorization(octokit, context);
+    }
+    catch {
+        return false;
+    }
+    return policyAllows(octokit, context, auth.close, user, auth.users, { collaborator: true });
+}
+// a configuration that cannot be loaded admits nobody new: the caller falls back to today's gate, and the
+// error goes to the log only, never into a public refusal comment
+async function loadAuthorization(octokit, context) {
+    try {
+        return resolveAuthorization((await loadProwConfig(octokit, context)).authorization);
+    }
+    catch (e) {
+        warning(`authorization: could not load prow config: ${e}`);
+        throw e;
     }
 }
 /**
@@ -42320,6 +42492,20 @@ async function assertPullRequestOwner(octokit, context, role, username) {
         throw new Error(`${username} is not a reviewer or approver for any changed file`);
     }
     return true;
+}
+/**
+ * Whether the root OWNERS file of the default branch lists the user as a
+ * reviewer or an approver.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function rootOwnersIncludes(octokit, context, user) {
+    const contents = await retrieveOwnersFile(octokit, context);
+    if (contents === '') {
+        return false;
+    }
+    const owners = parseOwners('OWNERS', contents);
+    const login = user.toLowerCase();
+    return owners.reviewers.includes(login) || owners.approvers.includes(login);
 }
 /**
  * Retrieve the contents of the OWNERS file at the root of the repository.
@@ -42769,64 +42955,8 @@ function statusOf(error) {
     return typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
 }
 
-;// CONCATENATED MODULE: ./lib/labels/hold.js
-
-
-
-
-
-
-// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
-const legacyHoldLabel = 'hold';
-/**
- * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
- * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
- * Note - the label blocks automatic merging through `tide.missing_labels`.
- *
- * @param context - the github actions event context
- */
-async function hold(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const issueNumber = context.payload.issue?.number;
-    const commentBody = context.payload.comment?.body;
-    if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
-    }
-    const config = await loadProwConfig(octokit, context);
-    const holdLabel = resolveHoldLabel(config.hold);
-    const cancel = hasCommand('/unhold', commentBody)
-        || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
-    if (cancel) {
-        await cancelHold(octokit, context, issueNumber, holdLabel);
-        return;
-    }
-    await labelIssue(octokit, context, issueNumber, [holdLabel]);
-}
-async function cancelHold(octokit, context, issueNumber, holdLabel) {
-    let currentLabels;
-    try {
-        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-    }
-    catch (e) {
-        throw new Error(`could not get labels from issue: ${e}`);
-    }
-    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
-    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
-    if (present.length === 0) {
-        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
-        return;
-    }
-    try {
-        await removeLabels(octokit, context, issueNumber, present);
-    }
-    catch (e) {
-        throw new Error(`could not remove the hold label: ${e}`);
-    }
-}
-
 ;// CONCATENATED MODULE: ./lib/labels/prefixed.js
+
 
 
 
@@ -42893,6 +43023,7 @@ async function addPrefixedLabels(context, cmd) {
     const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const section = await allowlistFor(octokit, context, cmd);
+    await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), cmd.command);
     const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
     if (section.exclusive) {
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
@@ -42922,6 +43053,7 @@ async function removePrefixedLabels(context, cmd) {
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
     const section = await allowlistFor(octokit, context, cmd);
+    await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), command);
     const labels = requestedLabels(cmd, command, commentBody, section.values, section.protectedLabels);
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
     const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
@@ -42930,6 +43062,14 @@ async function removePrefixedLabels(context, cmd) {
         return;
     }
     await removeLabels(octokit, context, issueNumber, present);
+}
+/**
+ * commenter returns the login of the user who wrote the command comment
+ *
+ * @param context - the github actions event context
+ */
+function commenter(context) {
+    return context.payload.comment?.user?.login;
 }
 function requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
@@ -42969,8 +43109,13 @@ async function allowlistFor(octokit, context, cmd) {
             throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
         }
         core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
-        const { hold } = await loadProwConfig(octokit, context);
-        return { values: section.values, exclusive: section.exclusive ?? false, protectedLabels: [resolveHoldLabel(hold)] };
+        const { hold, authorization } = await loadProwConfig(octokit, context);
+        return {
+            values: section.values,
+            exclusive: section.exclusive ?? false,
+            protectedLabels: [resolveHoldLabel(hold)],
+            authorization: resolveAuthorization(authorization),
+        };
     }
     catch (e) {
         throw new Error(`could not get labels from yaml: ${e}`);
@@ -43007,6 +43152,68 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
     }
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
+    }
+}
+
+;// CONCATENATED MODULE: ./lib/labels/hold.js
+
+
+
+
+
+
+
+
+// the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
+const legacyHoldLabel = 'hold';
+/**
+ * /hold adds the hold label (`hold.label`, Prow's `do-not-merge/hold` by default).
+ * /hold cancel, /unhold and /remove-hold remove it, and the legacy `hold` label.
+ * Note - the label blocks automatic merging through `tide.missing_labels`.
+ * Every form is gated by `authorization.hold`, open to anyone by default.
+ *
+ * @param context - the github actions event context
+ */
+async function hold(context = github_context) {
+    const token = getInput('github-token', { required: true });
+    const octokit = newOctokit(token);
+    const issueNumber = context.payload.issue?.number;
+    const commentBody = context.payload.comment?.body;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${context.payload}`);
+    }
+    const config = await loadProwConfig(octokit, context);
+    const holdLabel = resolveHoldLabel(config.hold);
+    // cancel, /unhold and /remove-hold are gated like /hold itself
+    await assertPolicy(octokit, context, resolveAuthorization(config.authorization), 'hold', commenter(context), '/hold');
+    const cancel = hasCommand('/unhold', commentBody)
+        || hasCommand('/remove-hold', commentBody)
+        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+    if (cancel) {
+        await cancelHold(octokit, context, issueNumber, holdLabel);
+        return;
+    }
+    await labelIssue(octokit, context, issueNumber, [holdLabel]);
+}
+async function cancelHold(octokit, context, issueNumber, holdLabel) {
+    let currentLabels;
+    try {
+        currentLabels = await getCurrentLabels(octokit, context, issueNumber);
+    }
+    catch (e) {
+        throw new Error(`could not get labels from issue: ${e}`);
+    }
+    const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
+    const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
+    if (present.length === 0) {
+        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
+        return;
+    }
+    try {
+        await removeLabels(octokit, context, issueNumber, present);
+    }
+    catch (e) {
+        throw new Error(`could not remove the hold label: ${e}`);
     }
 }
 
@@ -45248,6 +45455,8 @@ async function handleCronJobs(context = github_context) {
 
 
 
+
+
 // Prow's help plugin: label names contain spaces so they bypass the label configuration
 const fixedLabelCommands = [
     { command: '/help', add: ['help wanted'], remove: ['help wanted', 'good first issue'] },
@@ -45262,7 +45471,9 @@ const fixedLabelCommands = [
 async function addFixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
-    await labelIssue(octokit, context, fixed_requireIssueNumber(context), cmd.add);
+    const issueNumber = fixed_requireIssueNumber(context);
+    await assertLabelsPolicy(octokit, context, cmd.command);
+    await labelIssue(octokit, context, issueNumber, cmd.add);
 }
 /**
  * removeFixedLabels removes the command's fixed labels that are on the issue
@@ -45274,6 +45485,7 @@ async function removeFixedLabels(context, cmd) {
     const token = getInput('github-token', { required: true });
     const octokit = newOctokit(token);
     const issueNumber = fixed_requireIssueNumber(context);
+    await assertLabelsPolicy(octokit, context, removeCommandFor(cmd.command));
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, issueNumber);
@@ -45288,6 +45500,11 @@ async function removeFixedLabels(context, cmd) {
         return;
     }
     await removeLabels(octokit, context, issueNumber, present);
+}
+// unlike the prefixed commands these read no label section, so the configuration is loaded for the policy alone
+async function assertLabelsPolicy(octokit, context, command) {
+    const { authorization } = await loadProwConfig(octokit, context);
+    await assertPolicy(octokit, context, resolveAuthorization(authorization), 'labels', commenter(context), command);
 }
 function fixed_requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
@@ -45774,6 +45991,7 @@ async function close_close(context = github_context) {
     // Only users who:
     // - are the issue / PR author
     // - are collaborators
+    // - pass `authorization.close`, which is read only when the first two refuse
     const isAuthor = commenterId === context.payload.issue?.user?.login;
     let isAuthUser = isAuthor;
     if (!isAuthor) {
@@ -45783,6 +46001,9 @@ async function close_close(context = github_context) {
         catch (e) {
             throw new Error(`could not check commentor auth: ${e}`);
         }
+    }
+    if (!isAuthUser) {
+        isAuthUser = await closePolicyAllows(octokit, context, commenterId);
     }
     if (isAuthUser) {
         const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned');
@@ -46086,6 +46307,7 @@ async function reopen(context = github_context) {
     // Only users who:
     // - are the issue / PR author
     // - are collaborators
+    // - pass `authorization.close`, which is read only when the first two refuse
     const isAuthor = commenterId === context.payload.issue?.user?.login;
     let isAuthUser = isAuthor;
     if (!isAuthor) {
@@ -46095,6 +46317,9 @@ async function reopen(context = github_context) {
         catch (e) {
             throw new Error(`could not check commentor auth: ${e}`);
         }
+    }
+    if (!isAuthUser) {
+        isAuthUser = await closePolicyAllows(octokit, context, commenterId);
     }
     if (isAuthUser) {
         try {
