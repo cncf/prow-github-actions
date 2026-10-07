@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, repo, token } from './helpers'
+import { comment, configReads, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -13,7 +13,7 @@ const issueRead = `GET ${repo}/issues/1`
 // a /remove- form whose labels are not on the issue, and a failed read of the issue's current labels
 describe('dist/index.js fixed label removal arms', () => {
   let gh: FakeGithub
-  const { calls, expectCommandThenConfig } = helpersFor(() => gh)
+  const { calls, expectRequests } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -34,7 +34,8 @@ describe('dist/index.js fixed label removal arms', () => {
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('DELETE', /./)).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expectCommandThenConfig([issueRead])
+    // the gate reads the configuration for authorization.labels first; the needs-* re-check that follows finds it memoized
+    expectRequests(configReads(), [issueRead])
   })
 
   it('/remove-help fails the run naming the labels read when the issue cannot be read', async () => {
