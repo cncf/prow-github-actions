@@ -361,14 +361,15 @@ Field | Default | Meaning
 Who may run the label commands, `/hold`, `/close` and the review commands. Every field is
 optional and the defaults are the gates the commands always had, so a repository without this
 section behaves as before. Like the rest of the file it is read from the default branch, so a
-pull request cannot add its own author to `users`.
+pull request cannot add its own author to `users`, unless the [`config` input](#the-config-input)
+points at a `@ref` or an https URL (chosen by the workflow author).
 
 Field | Default | Meaning
 --- | --- | ---
 `labels` | `anyone` | the [label commands](./commands.md): `/area`, `/kind`, `/priority`, `/label`, `/lifecycle`, `/stage`, `/status`, `/help`, `/good-first-issue`, every dynamic `/<key>` (`/triage`) and all their `/remove-` forms
 `hold` | `anyone` | `/hold`, `/hold cancel`, `/unhold`, `/remove-hold`
 `close` | `collaborators` | `/close`, `/close not-planned`, `/reopen`; the issue or PR author is always allowed
-`review` | `members` | `/lgtm`, `/approve`, `/retest`, `/test`, `/ok-to-test` and their cancel forms, **on repositories without OWNERS files only**; `members` or `trusted`
+`review` | `members` | `/lgtm`, `/approve`, `/retest`, `/test`, `/ok-to-test` and their cancel forms, **on repositories without OWNERS files only** (for issues: without a root OWNERS file); `members` or `trusted`
 `users` | `[]` | further trusted GitHub logins, compared case-insensitively
 
 Who passes | Policy | Accepted by
@@ -393,15 +394,20 @@ no-op. Without OWNERS files the OWNERS part of `trusted` is moot, so `review: tr
 
 `users` is the one key that does not follow the repository-over-organization rule: the
 organization and repository lists are **unioned** (duplicates dropped, case-insensitively), so a
-repository can add its own triagers without copying the organization's. It grants nothing new:
-whoever can edit a repository's `prow.yaml` can already invite collaborators.
+repository can add its own triagers without copying the organization's. The organization tier
+supplies defaults, not floors: a repository can set any key looser than the organization does,
+and `users` can only grow. Organizations that need enforcement should use GitHub rulesets
+(code-owner review, required teams, disallowing GitHub Actions approvals).
 
 A refused label command or `/hold` fails the run with
 `<user> is not authorized to run <command>: authorization.<key> is <policy>`, writes no label and
-posts no comment; a refused `/close` or `/reopen` silently does nothing; a refused review command
-replies and fails the run as it always did, with
-`<user> is not a org member, collaborator or listed in authorization.users` under
-`review: trusted` ([not authorized](./commands.md#what-happens-when-you-are-not-authorized)).
+posts no comment; a refused `/close` or `/reopen` silently does nothing, even when the
+configuration cannot be loaded (a warning is logged), while the label commands and `/hold` fail
+the run when it cannot be loaded; a refused review command replies and fails the run as it always
+did, with `<user> is not a org member, collaborator or listed in authorization.users` under
+`review: trusted` ([not authorized](./commands.md#what-happens-when-you-are-not-authorized)). When
+the configuration cannot be loaded on that path, a warning is logged and the refusal falls back to
+the `members` message, so the configuration error never reaches the public comment.
 
 > [!WARNING]
 > Do not add an OWNERS file just to grant triage through `trusted`. Once a repository has any

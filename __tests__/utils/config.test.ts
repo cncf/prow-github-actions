@@ -355,6 +355,12 @@ describe('parseProwConfig', () => {
       expect(parseProwConfig('x', 'authorization: {}\n')).toEqual({ authorization: {} })
     })
 
+    it('trims logins and accepts GitHub App bots and inner dashes', () => {
+      expect(parseProwConfig('x', 'authorization:\n  users: [" Alice ", "dependabot[bot]", some-user-1, a]\n')).toEqual({
+        authorization: { users: ['Alice', 'dependabot[bot]', 'some-user-1', 'a'] },
+      })
+    })
+
     it('is a reserved key, never a label section of a legacy document', () => {
       expect(parseProwConfig('x', 'authorization:\n  labels: collaborators\n').labels).toBeUndefined()
     })
@@ -388,6 +394,14 @@ describe('parseProwConfig', () => {
       ['users as a string', 'authorization:\n  users: alice\n', 'x: authorization.users must be a list of logins'],
       ['an empty login', 'authorization:\n  users: [alice, ""]\n', 'x: authorization.users must be a list of logins'],
       ['a non-string login', 'authorization:\n  users: [alice, 42]\n', 'x: authorization.users must be a list of logins'],
+      ['a blank login', 'authorization:\n  users: [alice, "  "]\n', 'x: authorization.users must be a list of logins'],
+      ['a leading @', 'authorization:\n  users: ["@alice"]\n', 'x: authorization.users must be a list of logins'],
+      ['a space inside a login', 'authorization:\n  users: [al ice]\n', 'x: authorization.users must be a list of logins'],
+      ['a leading dash', 'authorization:\n  users: [-alice]\n', 'x: authorization.users must be a list of logins'],
+      ['a trailing dash', 'authorization:\n  users: [alice-]\n', 'x: authorization.users must be a list of logins'],
+      ['an underscore', 'authorization:\n  users: [al_ice]\n', 'x: authorization.users must be a list of logins'],
+      ['a team', 'authorization:\n  users: [org/team]\n', 'x: authorization.users must be a list of logins'],
+      ['a [bot] suffix not at the end', 'authorization:\n  users: ["a[bot]b"]\n', 'x: authorization.users must be a list of logins'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })

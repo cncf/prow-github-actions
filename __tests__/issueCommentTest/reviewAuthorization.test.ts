@@ -139,6 +139,28 @@ describe('authorization.review on a repository without OWNERS files', () => {
     expect((await reply.body()).body).toContain('outsider is not a org member, collaborator or listed in authorization.users')
   })
 
+  it.each([
+    ['a failed read', () => [http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'config secret detail' })), ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml')]],
+    ['malformed yaml', () => prowYaml('authorization:\n  review: trusted\n  users: [outsider]\n  extra: config secret detail\n')],
+  ])('/lgtm refused when the configuration cannot be loaded (%s) replies with the members message only', async (_, handlers) => {
+    const reply = new utils.ObserveRequest()
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+    server.use(
+      ...handlers(),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      ...membership('outsider'),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+    )
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await expect(lgtm(issueComment('/lgtm', 'outsider'))).rejects.toThrow(/^outsider is not a org member or collaborator$/)
+    expect((await reply.body()).body).toBe('Cannot apply the lgtm label because Error: outsider is not a org member or collaborator')
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
+    // the organization tier keeps probing after the repository tier failed; let it finish inside this test
+    await vi.waitFor(() => expect(calls).toContain('GET /repos/Codertocat/.github/contents/prow.yaml'))
+    expect(calls.filter(call => call.endsWith('/labels'))).toEqual([])
+  })
+
   it('/approve under trusted on a pull request admits a users login', async () => {
     const review = new utils.ObserveRequest()
     server.use(

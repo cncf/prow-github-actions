@@ -414,19 +414,28 @@ describe('assertAuthorizedByOwnersOrMembership', () => {
 describe('authorization policies', () => {
   const repo = `${utils.api}/repos/Codertocat/Hello-World`
   let calls: string[]
+  let inFlight = 0
   const recordCall = ({ request }: { request: Request }) => {
     calls.push(`${request.method} ${new URL(request.url).pathname}`)
+    inFlight++
+  }
+  const endCall = () => {
+    inFlight--
   }
 
   beforeEach(() => {
     resetProwConfigCache()
     calls = []
     server.events.on('request:start', recordCall)
+    server.events.on('request:end', endCall)
   })
 
-  // the server outlives the test; an unremoved listener would record every later request again
-  afterEach(() => {
+  // the server outlives the test; an unremoved listener would record every later request again. A failed
+  // configuration load rejects while its sibling probes are still in flight, so wait for them first
+  afterEach(async () => {
+    await vi.waitFor(() => expect(inFlight).toBe(0))
     server.events.removeListener('request:start', recordCall)
+    server.events.removeListener('request:end', endCall)
   })
 
   function membership({ member = false, collaborator = false }: { member?: boolean, collaborator?: boolean } = {}, login = 'Alice') {
@@ -455,6 +464,13 @@ describe('authorization policies', () => {
   const prowYamlReads = configReads.slice(0, 3)
 
   describe('policyAllows', () => {
+    it('refuses an empty login under every policy without any API call', async () => {
+      for (const policy of ['anyone', 'collaborators', 'members', 'trusted'] as const) {
+        await expect(policyAllows(octokit, context, policy, '', ['']), policy).resolves.toBe(false)
+      }
+      expect(calls).toEqual([])
+    })
+
     it('anyone admits without any API call', async () => {
       await expect(policyAllows(octokit, context, 'anyone', 'Alice', [])).resolves.toBe(true)
       expect(calls).toEqual([])
@@ -543,6 +559,20 @@ describe('authorization policies', () => {
       expect(calls.sort()).toEqual([...configReads].sort())
     })
 
+    it.each([
+      ['a failed read', [http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'boom' })), ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml')]],
+      ['malformed yaml', prowYaml('authorization:\n  close: everyone\n')],
+    ])('refuses with a warning, and no further call, when the configuration cannot be loaded: %s', async (_, handlers) => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      server.use(...handlers)
+
+      await expect(closePolicyAllows(octokit, context, 'Alice')).resolves.toBe(false)
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
+      // the organization tier keeps probing after the repository tier failed; let it finish inside this test
+      await vi.waitFor(() => expect(calls).toContain('GET /repos/Codertocat/.github/contents/prow.yaml'))
+      expect(calls.filter(call => !call.includes('/contents/'))).toEqual([])
+    })
+
     it('anyone admits after reading the configuration', async () => {
       server.use(...prowYaml('authorization:\n  close: anyone\n'))
 
@@ -596,6 +626,17 @@ describe('authorization policies', () => {
         'GET /repos/Codertocat/Hello-World/collaborators/Alice',
       ])
       expect(calls.slice(3).sort()).toEqual([...prowYamlReads].sort())
+    })
+
+    it('falls back to the members message, with a warning, when the configuration cannot be loaded', async () => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      server.use(rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: anyone\n  users: [alice]\n'))
+
+      await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
+        .rejects
+        .toThrow(/^Alice is not a org member or collaborator$/)
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization.review must be one of members, trusted'))
     })
 
     it('under trusted admits a users login after membership refuses', async () => {

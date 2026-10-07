@@ -41260,7 +41260,8 @@ function normalizeAuthorization(source, raw) {
     if (raw.review !== undefined && !reviewAuthorizationPolicies.includes(raw.review)) {
         throw new Error(`${source}: authorization.review must be one of ${reviewAuthorizationPolicies.join(', ')}`);
     }
-    if (raw.users !== undefined && !isLabelList(raw.users)) {
+    const users = raw.users === undefined ? undefined : normalizeLogins(raw.users);
+    if (users === null) {
         throw new Error(`${source}: authorization.users must be a list of logins`);
     }
     return stripUndefined({
@@ -41268,8 +41269,18 @@ function normalizeAuthorization(source, raw) {
         hold: raw.hold,
         close: raw.close,
         review: raw.review,
-        users: raw.users,
+        users,
     });
+}
+// a GitHub login, or a GitHub App's `<slug>[bot]`; no leading `@`, no inner spaces
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
+// the trimmed logins, or null when the value is not a list of valid logins
+function normalizeLogins(value) {
+    if (!isStringList(value)) {
+        return null;
+    }
+    const logins = value.map(login => login.trim());
+    return logins.every(login => loginPattern.test(login)) ? logins : null;
 }
 /**
  * resolveSweepLookback returns the sweep window in milliseconds: the
@@ -42351,7 +42362,7 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
         const isCollaborator = await checkCollaborator(octokit, context, username);
         if (!isOrgMember && !isCollaborator) {
             // every review policy admits members and collaborators, so only a refusal needs the configuration
-            const { review, users } = resolveAuthorization((await loadProwConfig(octokit, context)).authorization);
+            const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization);
             if (review === 'members') {
                 throw new Error(`${username} is not a org member or collaborator`);
             }
@@ -42375,6 +42386,9 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
  * @param refused - checks that already refused the user and are skipped
  */
 async function policyAllows(octokit, context, policy, user, users, refused = {}) {
+    if (!user) {
+        return false;
+    }
     if (policy === 'anyone') {
         return true;
     }
@@ -42408,15 +42422,33 @@ async function assertPolicy(octokit, context, auth, key, user, command) {
  * closePolicyAllows decides /close and /reopen for a user who is neither the
  * author nor a collaborator: every `close` policy admits collaborators, so
  * the configuration is read only on this path, and the collaborator check
- * is not repeated.
+ * is not repeated. A configuration that cannot be loaded refuses, with a
+ * warning, so the refusal stays silent.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param user - the user the collaborator check refused
  */
 async function closePolicyAllows(octokit, context, user) {
-    const auth = resolveAuthorization((await loadProwConfig(octokit, context)).authorization);
+    let auth;
+    try {
+        auth = await loadAuthorization(octokit, context);
+    }
+    catch {
+        return false;
+    }
     return policyAllows(octokit, context, auth.close, user, auth.users, { collaborator: true });
+}
+// a configuration that cannot be loaded admits nobody new: the caller falls back to today's gate, and the
+// error goes to the log only, never into a public refusal comment
+async function loadAuthorization(octokit, context) {
+    try {
+        return resolveAuthorization((await loadProwConfig(octokit, context)).authorization);
+    }
+    catch (e) {
+        warning(`authorization: could not load prow config: ${e}`);
+        throw e;
+    }
 }
 /**
  * Authorize against the root OWNERS file of the default branch.

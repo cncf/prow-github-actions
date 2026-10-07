@@ -215,6 +215,22 @@ describe('authorization.close for /reopen', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['a failed read', () => [http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'boom' })), ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml')]],
+    ['malformed yaml', () => prowYaml('authorization:\n  close: everyone\n')],
+  ])('refuses an outsider silently, with a warning, when the configuration cannot be loaded: %s', async (_, handlers) => {
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+    server.use(...handlers(), ...membership('outsider'))
+
+    const { update, setFailed } = await run('outsider')
+
+    await expect(update.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
+    // the organization tier keeps probing after the repository tier failed; let it finish inside this test
+    await vi.waitFor(() => expect(calls).toContain('GET /repos/Codertocat/.github/contents/prow.yaml'))
+  })
+
   it('under anyone admits an outsider', async () => {
     server.use(...prowYaml('authorization:\n  close: anyone\n'), ...membership('outsider'))
 

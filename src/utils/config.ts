@@ -681,7 +681,8 @@ function normalizeAuthorization(source: string, raw: unknown): AuthorizationConf
     throw new Error(`${source}: authorization.review must be one of ${reviewAuthorizationPolicies.join(', ')}`)
   }
 
-  if (raw.users !== undefined && !isLabelList(raw.users)) {
+  const users = raw.users === undefined ? undefined : normalizeLogins(raw.users)
+  if (users === null) {
     throw new Error(`${source}: authorization.users must be a list of logins`)
   }
 
@@ -690,8 +691,20 @@ function normalizeAuthorization(source: string, raw: unknown): AuthorizationConf
     hold: raw.hold as AuthorizationPolicy | undefined,
     close: raw.close as AuthorizationPolicy | undefined,
     review: raw.review as ReviewAuthorizationPolicy | undefined,
-    users: raw.users as string[] | undefined,
+    users,
   })
+}
+
+// a GitHub login, or a GitHub App's `<slug>[bot]`; no leading `@`, no inner spaces
+const loginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/
+
+// the trimmed logins, or null when the value is not a list of valid logins
+function normalizeLogins(value: unknown): string[] | null {
+  if (!isStringList(value)) {
+    return null
+  }
+  const logins = value.map(login => login.trim())
+  return logins.every(login => loginPattern.test(login)) ? logins : null
 }
 
 /**

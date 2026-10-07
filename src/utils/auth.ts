@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
-import { loadProwConfig, resolveAuthorization } from './config'
+import { defaultAuthorization, loadProwConfig, resolveAuthorization } from './config'
 import { parseOwners } from './owners'
 import { loadPullRequestOwners } from './pullRequestOwners'
 
@@ -262,7 +262,7 @@ export async function assertAuthorizedByOwnersOrMembership(
 
     if (!isOrgMember && !isCollaborator) {
       // every review policy admits members and collaborators, so only a refusal needs the configuration
-      const { review, users } = resolveAuthorization((await loadProwConfig(octokit, context)).authorization)
+      const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization)
       if (review === 'members') {
         throw new Error(`${username} is not a org member or collaborator`)
       }
@@ -300,6 +300,9 @@ export async function policyAllows(
   users: string[],
   refused: RefusedChecks = {},
 ): Promise<boolean> {
+  if (!user) {
+    return false
+  }
   if (policy === 'anyone') {
     return true
   }
@@ -342,7 +345,8 @@ export async function assertPolicy(
  * closePolicyAllows decides /close and /reopen for a user who is neither the
  * author nor a collaborator: every `close` policy admits collaborators, so
  * the configuration is read only on this path, and the collaborator check
- * is not repeated.
+ * is not repeated. A configuration that cannot be loaded refuses, with a
+ * warning, so the refusal stays silent.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -353,8 +357,26 @@ export async function closePolicyAllows(
   context: Context,
   user: string,
 ): Promise<boolean> {
-  const auth = resolveAuthorization((await loadProwConfig(octokit, context)).authorization)
+  let auth: ResolvedAuthorization
+  try {
+    auth = await loadAuthorization(octokit, context)
+  }
+  catch {
+    return false
+  }
   return policyAllows(octokit, context, auth.close, user, auth.users, { collaborator: true })
+}
+
+// a configuration that cannot be loaded admits nobody new: the caller falls back to today's gate, and the
+// error goes to the log only, never into a public refusal comment
+async function loadAuthorization(octokit: Octokit, context: Context): Promise<ResolvedAuthorization> {
+  try {
+    return resolveAuthorization((await loadProwConfig(octokit, context)).authorization)
+  }
+  catch (e) {
+    core.warning(`authorization: could not load prow config: ${e}`)
+    throw e
+  }
 }
 
 /**
