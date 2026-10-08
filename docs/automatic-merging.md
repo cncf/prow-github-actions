@@ -206,8 +206,11 @@ jobs:
 Locked and closed PRs are skipped. Every eligible PR is attempted, so one un-mergeable PR does
 not stop the others. A PR GitHub reports as not mergeable is skipped with the state logged; a
 stale `lgtm` is stripped. Each refused merge is logged as an error annotation
-(`could not merge pr #<n>: <reason>`); once all pages are processed the run fails if any merge
-was refused, listing the PRs: `2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (...)`.
+(`could not merge pr #<n>: <reason>`), and so is a PR whose evaluation fails (`could not evaluate
+pr #<n>: <error>`, for example a `500` reading it); the remaining PRs and pages are still
+evaluated. Once all pages are processed the run fails if any merge was refused or any evaluation
+failed, listing the PRs: `2 pull request(s) could not be merged: #1 (Pull Request is not mergeable), #7 (could not evaluate: ...)`.
+Only a listing of the open pull requests that cannot be read stops the run early.
 With event-driven merging in place an hourly or daily schedule is plenty; drop the cron entirely
 if a missed event is acceptable.
 

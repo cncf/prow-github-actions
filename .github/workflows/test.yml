@@ -17,6 +17,24 @@ jobs:
       - run: npm run build
       - run: npm run lint
       - run: npm run test:coverage
+      - name: Coverage summary
+        if: always()
+        run: |
+          [ -f coverage/coverage-summary.json ] || exit 0
+          # shellcheck disable=SC2016
+          node -e '
+            const t = require("./coverage/coverage-summary.json").total;
+            const row = k => `| ${k} | ${t[k].pct}% | ${t[k].covered}/${t[k].total} |`;
+            console.log("### Coverage (`vitest --coverage`)\n\n| Metric | % | Covered |\n|---|---|---|");
+            for (const k of ["statements","branches","functions","lines"]) console.log(row(k));
+          ' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Verify committed dist/ matches source
         run: |
           npm run pack

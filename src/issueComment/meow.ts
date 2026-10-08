@@ -33,7 +33,7 @@ export async function meow(context: Context = github.context): Promise<void> {
   const issueNumber: number | undefined = context.payload.issue?.number
   if (issueNumber === undefined) {
     throw new Error(
-      `github context payload missing issue number: ${context.payload}`,
+      `github context payload missing issue number: ${JSON.stringify(context.payload)}`,
     )
   }
 
