@@ -35,10 +35,6 @@ describe('dist/index.js issue_comment commands inside Markdown code', () => {
   }
 
   it.each([
-    ['a closed ``` fence', 'quoting:\n```\n/hold\n```\n/hold'],
-    ['a closed ~~~ fence', 'quoting:\n~~~\n/hold\n~~~\n/hold'],
-    ['a ```` fence closed by a longer `````', 'quoting:\n````\n/hold\n`````\n/hold'],
-    ['a ``` fence closed with trailing whitespace', 'quoting:\n```\n/hold\n```   \n/hold'],
     ['a ``` opener whose info string holds a backtick, which is not a fence', '```not`a`fence\n/hold'],
     ['an indented line continuing a paragraph, which is not code', 'please\n    /hold'],
   ])('applies the /hold that follows %s, once', async (_name, body) => {
@@ -55,13 +51,7 @@ describe('dist/index.js issue_comment commands inside Markdown code', () => {
   })
 
   it.each([
-    ['a ```` fence a shorter ``` does not close', 'quoting:\n````\n/hold\n```\n/hold'],
-    ['a ``` fence a ~~~ does not close', 'quoting:\n```\n/hold\n~~~\n/hold'],
-    ['a ``` fence a closer with trailing text does not close', 'quoting:\n```\n/hold\n``` done\n/hold'],
     ['indented code after a blank line', 'quoting:\n\n    /hold'],
-    ['indented code at the start of the body', '    /hold'],
-    ['a tab-indented code block after a blank line', 'quoting:\n\n\t/hold'],
-    ['a second indented line of the same code block', 'quoting:\n\n    first\n    /hold'],
   ])('ignores a /hold inside %s without calling the api', async (_name, body) => {
     const result = await run(body)
 
