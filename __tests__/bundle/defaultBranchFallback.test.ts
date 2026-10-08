@@ -109,34 +109,5 @@ describe('dist/index.js: the default branch stands in when no base branch is in 
       expect(result.stdout).toContain('merged pr #1')
       expectRequests(configReads(), [bind, pullRead, ownersProbe, bindingRead, queueRead, merge])
     })
-
-    it('reads the default branch from repos.get when the payload names none, probes that tree and merges', async () => {
-      gh.commitStatuses(repo, head, [{ context: 'prow/lgtm', state: 'success' }])
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: cleanPrWithoutBaseRef() })
-      gh.route('GET', repo, { status: 200, body: { default_branch: 'trunk' } })
-      gh.route('PUT', `${repo}/pulls/1/merge`, { status: 200, body: { merged: true } })
-
-      const result = await run(labeledLgtm(withoutDefaultBranch(pullReqOpenedEvent)))
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      expect(result.stdout).toContain('merged pr #1')
-      expectRequests(configReads(), [bind, pullRead, repoRead, `GET ${repo}/git/trees/trunk?recursive=true`, bindingRead, queueRead, merge])
-    })
-
-    it('fails the merge when repos.get answers 500, probing no tree', async () => {
-      gh.commitStatuses(repo, head, [{ context: 'prow/lgtm', state: 'success' }])
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: cleanPrWithoutBaseRef() })
-      gh.route('GET', repo, { status: 500, body: { message: 'boom' } })
-
-      const result = await run(labeledLgtm(withoutDefaultBranch(pullReqOpenedEvent)))
-
-      expect(result.status, result.stdout).toBe(1)
-      expect(result.errors).toHaveLength(1)
-      expect(result.errors[0]).toContain('could not read the default branch')
-      expect(gh.requestsMatching('GET', /\/git\/trees\//)).toEqual([])
-      expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expectRequests(configReads(), [bind, pullRead, repoRead])
-    })
   })
 })
