@@ -91,7 +91,7 @@ describe('dynamic label commands from .prowlabels.yaml keys', () => {
 
     expect(mutations).toEqual([])
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('level: command args missing from body'),
+      expect.stringContaining('level: no allowed value in "foo"; allowed: sandbox, incubation, graduation, archived'),
     )
   })
 

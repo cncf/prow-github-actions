@@ -83,15 +83,35 @@ describe('dist/index.js schedule lgtm job failure arms', () => {
     ])
   })
 
-  it('fails the run when a listed pull request cannot be re-read for evaluation, and stops paging', async () => {
-    routePage([openPr(['lgtm'])])
+  it('keeps evaluating the later pull requests and pages when one cannot be re-read, and fails the run naming it', async () => {
+    gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+      const page = new URL(req.path, gh.url).searchParams.get('page')
+      return { status: 200, body: page === '1' ? [openPr(['lgtm'])] : page === '2' ? [openPr(['lgtm'], { number: 4 })] : [] }
+    })
     gh.route('GET', `${repo}/pulls/2`, { status: 500, body: { message: 'Internal Server Error' } })
+    gh.route('GET', `${repo}/pulls/4`, { status: 200, body: { ...openPr(['lgtm'], { number: 4 }), mergeable: true, mergeable_state: 'clean' } })
+    gh.commitStatuses(repo, head, [{ context: 'prow/lgtm', state: 'success' }])
+    gh.route('PUT', `${repo}/pulls/4/merge`, { status: 200, body: { merged: true } })
 
     const result = await runCron()
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes('error handling cron job: TypeError: error processing pr: HttpError: Internal Server Error'))).toBe(true)
-    expect(gh.requestsMatching('PUT', /./)).toEqual([])
-    expectRequests(configReads(), [page1, ownersProbe, `GET ${repo}/pulls/2`])
+    expect(result.errors.some(e => e.includes('could not evaluate pr #2: HttpError: Internal Server Error'))).toBe(true)
+    expect(result.errors.some(e => e.includes('error handling cron job: Error: 1 pull request(s) could not be merged: #2 (could not evaluate: HttpError: Internal Server Error)'))).toBe(true)
+    expect(result.stdout).toContain('merged pr #4')
+    const merges = gh.requestsMatching('PUT', /./)
+    expect(merges).toHaveLength(1)
+    expect(merges[0].path).toBe(`${repo}/pulls/4/merge`)
+    expectRequests(configReads(), [
+      page1,
+      ownersProbe,
+      `GET ${repo}/pulls/2`,
+      page2,
+      `GET ${repo}/pulls/4`,
+      `GET ${repo}/commits/${head}/status?per_page=100`,
+      queueRead,
+      `PUT ${repo}/pulls/4/merge`,
+      `GET ${repo}/pulls?state=open&page=3`,
+    ])
   })
 })

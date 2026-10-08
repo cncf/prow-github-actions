@@ -31,7 +31,8 @@ Every label section can be used as a `/<key>` command once it is
 listed in `prow-commands`, so a repository needs no code changes to add its own label
 families. `/<key> value` adds the label `<key>/value` and `/remove-<key> value` removes it.
 Only values listed under the key are accepted; anything else is ignored and, when nothing
-is left, the run fails with `<key>: command args missing from body`. Values are matched
+is left, the run fails with `<key>: no allowed value in "<values>"; allowed: <a>, <b>, ...`
+(`<key>: command args missing from body` when no value was given at all). Values are matched
 case-insensitively and applied with the casing written in the yaml, so `/kind Bug` adds
 `kind/bug`. Labels already on the issue are compared the same way when deciding what an
 exclusive command replaces or a `/remove-` form deletes.
