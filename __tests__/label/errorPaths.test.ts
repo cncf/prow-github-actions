@@ -146,6 +146,7 @@ describe('fixed label command error paths', () => {
   })
 
   it('removeFixedLabels wraps a failed label lookup', async () => {
+    server.use(...utils.noOrgOrRepoConfigExcept())
     issueLookupFails()
 
     await expect(removeFixedLabels(comment('/remove-help'), helpCommand)).rejects.toThrow(
