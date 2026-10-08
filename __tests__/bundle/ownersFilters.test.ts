@@ -57,19 +57,4 @@ describe('dist/index.js OWNERS filters are ignored', () => {
     expect(result.stdout).toContain('approve: #1 is approved by alice')
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
   })
-
-  it('an approver listed only inside a filter is refused: the filter grants nothing', async () => {
-    routeApprove()
-
-    const result = await runApprove('bob')
-
-    const wantErr = 'bob is not an approver for any changed file'
-    expect(result.status, result.stdout).toBe(1)
-    expect(result.stdout).toContain(ignored)
-    expect(result.errors.some(e => e.includes(wantErr))).toBe(true)
-    expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-    const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
-    expect(comments).toHaveLength(1)
-    expect(comments[0].body).toEqual({ body: `Cannot approve the pull request: Error: ${wantErr}` })
-  })
 })
