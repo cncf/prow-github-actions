@@ -249,6 +249,7 @@ describe('/retest', () => {
     server.use(
       ...outsiderAuth(),
       http.post(`${repo}/issues/1/comments`, utils.mockResponse(500, { message: 'boom' })),
+      ...utils.noOrgOrRepoConfigExcept(),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     const error = vi.spyOn(core, 'error').mockImplementation(() => {})
@@ -365,6 +366,7 @@ describe('/retest', () => {
       ...outsiderAuth(),
       serveRuns(mixedRuns, runs),
       http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      ...utils.noOrgOrRepoConfigExcept(),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     vi.spyOn(core, 'error').mockImplementation(() => {})
