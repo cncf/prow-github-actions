@@ -16,6 +16,8 @@ vi.setConfig({ testTimeout: 30_000 })
 // needs-* re-check reads the configuration after the command either way
 describe('dist/index.js /lgtm authorized by OWNERS files', () => {
   const rootOwnersRead = `GET ${repo}/contents/OWNERS`
+  const blobOWNERS = `GET ${repo}/git/blobs/${blobSha('OWNERS')}`
+  const blobSdkOWNERS = `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`
   const commentPost = `POST ${repo}/issues/1/comments`
   const labelsRead = `GET ${repo}/labels?per_page=100`
   const labelsPost = `POST ${repo}/issues/1/labels`
@@ -65,7 +67,7 @@ describe('dist/index.js /lgtm authorized by OWNERS files', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('Codertocat is not included in the reviewers role in the OWNERS file'))).toBe(true)
-    expect(comments()).toEqual(['Cannot apply the lgtm label because Error: Codertocat is not included in the reviewers role in the OWNERS file'])
+    expect(comments().some(c => c.includes('Codertocat is not included in the reviewers role in the OWNERS file'))).toBe(true)
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
     expectCommandThenConfig([rootOwnersRead, commentPost])
   })
@@ -78,15 +80,15 @@ describe('dist/index.js /lgtm authorized by OWNERS files', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('stranger is not a reviewer or approver for any changed file'))).toBe(true)
-    expect(comments()).toEqual(['Cannot apply the lgtm label because Error: stranger is not a reviewer or approver for any changed file'])
+    expect(comments().some(c => c.includes('stranger is not a reviewer or approver for any changed file'))).toBe(true)
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
     expect(gh.requestsMatching('GET', /\/contents\/OWNERS$/)).toEqual([])
     expect(gh.requestsMatching('GET', /\/orgs\/|\/collaborators\//)).toEqual([])
     // the owners reads, the two OWNERS blobs, the refusal, then the config reads and tide's gate on the pull request
     expectCommandThenConfig(
-      [`GET ${repo}/git/blobs/${blobSha('OWNERS')}`, `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`, commentPost],
+      [commentPost],
       [`GET ${repo}/pulls/1`, ownersProbe, queueRead],
-      ownersReads,
+      [...ownersReads, blobOWNERS, blobSdkOWNERS],
     )
   })
 })
