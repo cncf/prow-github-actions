@@ -15,7 +15,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      reporter: ['text', 'text-summary'],
+      // lcovonly + json-summary are machine-readable for CI artifacts and job summaries
+      reporter: ['text', 'text-summary', 'lcovonly', 'json-summary'],
       thresholds: {
         lines: 95,
         branches: 93,
