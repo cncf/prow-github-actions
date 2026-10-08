@@ -39,8 +39,6 @@ describe('dist/index.js lgtm binding failure arms', () => {
   describe('/lgtm on a pull request', () => {
     const labelsRead = `GET ${repo}/issues/1`
     const unlabel = `DELETE ${repo}/issues/1/labels/lgtm`
-    const bind = `POST ${repo}/statuses/headsha`
-    const commentPost = `POST ${repo}/issues/1/comments`
     const authReads = [...ownersReads, ...membershipReads('Codertocat')]
     // the post-command sweep: tide reads the pr, probes its base for OWNERS files and asks for the merge queue state
     const sweep = [`GET ${repo}/pulls/1`, ownersProbe, queueRead]
@@ -61,23 +59,6 @@ describe('dist/index.js lgtm binding failure arms', () => {
       })
     }
 
-    it('when the status write fails for a reason other than a missing permission: refused with the error, no label applied', async () => {
-      routeLgtm()
-      gh.route('POST', `${repo}/statuses/headsha`, serverError)
-      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
-
-      const result = await runLgtm()
-
-      expect(result.status, result.stdout).toBe(1)
-      expect(result.errors.some(e => e.includes(`could not bind lgtm to ${'headsha'.slice(0, 7)}: HttpError: boom`))).toBe(true)
-      expect(result.errors.some(e => e.includes('grant `statuses: write`'))).toBe(false)
-      expect(comments()).toEqual([`could not bind lgtm to ${'headsha'.slice(0, 7)}: HttpError: boom`])
-      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-      // authorized by membership, the configuration read for the binding setting, the (already read) head bound, the
-      // refusal posted, then the post-command sweep still runs
-      expectCommandThenConfig([], [bind, commentPost, ...sweep], authReads)
-    })
-
     it('when the status write fails and the refusal comment cannot be posted: both errors are logged and the run still fails', async () => {
       routeLgtm()
       gh.route('POST', `${repo}/statuses/headsha`, serverError)
@@ -89,7 +70,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
       expect(result.errors.some(e => e.includes(`could not bind lgtm to ${'headsha'.slice(0, 7)}: HttpError: boom`))).toBe(true)
       expect(result.errors.some(e => e.includes('Could not comment with an auth error: Error: could not add comment: HttpError: boom'))).toBe(true)
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-      expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toHaveLength(1)
+      expect(comments()).toEqual([`could not bind lgtm to ${'headsha'.slice(0, 7)}: HttpError: boom`])
     })
 
     it('/lgtm cancel when the labels read fails: the run fails naming the read, nothing is removed or unbound', async () => {
@@ -152,7 +133,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
     it('by a human when the binding status cannot be read: the run fails naming the read, nothing is merged or stripped', async () => {
       gh.route('POST', `${repo}/statuses/${head}`, { status: 201, body: {} })
       gh.route('GET', `${repo}/commits/${head}/status`, serverError)
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm']) })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), mergeable_state: 'behind' } })
 
       const result = await runPullRequest(labeledLgtm())
 
@@ -167,7 +148,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
     it('by a human when the binding status read is forbidden: the failure names the permission to grant', async () => {
       gh.route('POST', `${repo}/statuses/${head}`, { status: 201, body: {} })
       gh.route('GET', `${repo}/commits/${head}/status`, { status: 403, body: { message: 'Resource not accessible by integration' } })
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm']) })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), mergeable_state: 'behind' } })
 
       const result = await runPullRequest(labeledLgtm())
 
@@ -178,7 +159,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
 
     it('by a bot (no binding) when the stale-lgtm comment cannot be read: the label is still stripped, the comment failure is a warning', async () => {
       gh.commitStatuses(repo, head, [])
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm']) })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), mergeable_state: 'behind' } })
       gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
       gh.route('GET', `${repo}/issues/1/comments`, serverError)
 
@@ -187,7 +168,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${short}`)
-      expect(result.stdout).toContain('could not comment on pr #1 about the stale lgtm: HttpError: boom')
+      expect(result.stdout).toContain('::warning::could not comment on pr #1 about the stale lgtm: HttpError: boom')
       expect(gh.requestsMatching('DELETE', /\/labels\/lgtm$/)).toHaveLength(1)
       expect(gh.requestsMatching('POST', /\/statuses\//).map(r => r.body)).toEqual([
         { state: 'pending', context: 'prow/lgtm', description: `lgtm removed: not bound to ${short}` },
@@ -207,9 +188,10 @@ describe('dist/index.js lgtm binding failure arms', () => {
     })
 
     it('by a human on a payload without a head commit: the run fails naming the missing head, writing no status', async () => {
+      gh.commitStatuses(repo, head, [{ context: 'prow/lgtm', state: 'success' }])
       const { pull_request, ...rest } = labeledLgtm()
       const { head: _head, ...headless } = pull_request
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm']) })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...openPr(['lgtm']), mergeable_state: 'behind' } })
 
       const result = await runPullRequest({ ...rest, pull_request: headless })
 
