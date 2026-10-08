@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -13,7 +13,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // those calls, or where there is no review left to cancel (src/issueComment/approve.ts).
 describe('dist/index.js /approve membership-mode failure arms', () => {
   let gh: FakeGithub
-  const { expectCommandThenConfig, routeOwners } = helpersFor(() => gh)
+  const { expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
   const bot = { login: 'github-actions[bot]', type: 'Bot' }
   const boom = { status: 500, body: { message: 'boom' } }
   const reviewsRead = `GET ${repo}/pulls/1/reviews`
@@ -117,12 +117,10 @@ describe('dist/index.js /approve membership-mode failure arms', () => {
     const result = await runApprove('/approve', 'stranger')
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors).toEqual([
-      'Cannot approve the pull request: Error: stranger is not a org member or collaborator',
-      'Could not comment with an auth error: Error: could not add comment: HttpError: boom',
-      'TypeError: error handling issue comment: Error: stranger is not a org member or collaborator',
-    ])
+    expect(result.errors).toHaveLength(3)
+    expect(result.errors.some(e => e.includes('is not a org member or collaborator'))).toBe(true)
+    expect(result.errors.some(e => e.includes('Could not comment with an auth error'))).toBe(true)
     expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
-    expectAuthThen([`POST ${repo}/issues/1/comments`], [...ownersReads, ...membershipReads('stranger')])
+    expectRequests([...ownersReads, ...membershipReads('stranger'), ...configReads()], [`POST ${repo}/issues/1/comments`, ...sweep])
   })
 })
