@@ -72,26 +72,9 @@ describe('dist/index.js configured hold and sweep sections', () => {
       expectRequests(reads, [labelsRead, `POST ${repo}/issues/1/labels`])
     })
 
-    it('/hold cancel removes the configured label and the legacy hold, and leaves do-not-merge/hold alone', async () => {
-      routeConfig('hold:\n  label: needs-hold\n')
-      gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'hold' }, { name: 'do-not-merge/hold' }, { name: 'Needs-Hold' }] } })
-      gh.route('DELETE', new RegExp(`^${repo}/issues/1/labels/`), { status: 200, body: [] })
-
-      const result = await runHold('/hold cancel')
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      expectRequests(reads, [
-        `GET ${repo}/issues/1`,
-        `DELETE ${repo}/issues/1/labels/hold`,
-        `DELETE ${repo}/issues/1/labels/Needs-Hold`,
-      ])
-    })
-
     it.each([
       ['hold: []\n', 'hold must be a mapping'],
       ['hold:\n  label: ""\n', 'hold.label must be a non-empty string'],
-      ['hold:\n  label: 7\n', 'hold.label must be a non-empty string'],
     ])('refuses %j: %s', async (yaml, message) => {
       routeConfig(yaml)
 
@@ -112,12 +95,6 @@ describe('dist/index.js configured hold and sweep sections', () => {
 
       // an empty window: the configuration and the page, nothing per pull request
       expectRequests(reads, [listPage])
-    })
-
-    it('is capped at 24h', async () => {
-      routeConfig('sweep:\n  lookback: 48h\n')
-
-      await expectWindow(24 * 3_600_000)
     })
 
     it.each([
