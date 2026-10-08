@@ -1,8 +1,23 @@
 name: Build and test code
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # lets a maintainer re-run the main baseline on demand
+  workflow_dispatch:
+  # tide merges with github.token don't trigger push runs on main;
+  # the daily schedule keeps a build-test baseline on the merged result
+  schedule:
+    - cron: '17 6 * * *'
 
 permissions:
   contents: read
+
+# One run per branch: a newer push to a pull request supersedes its pending run.
+# Runs on main are never cancelled, so every merge keeps its own result.
+concurrency:
+  group: test-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-test:
