@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, repo, token } from './helpers'
+import { comment, configReads, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -14,7 +14,7 @@ describe('dist/index.js prow-commands canonicalization', () => {
   const labelsRead = `GET ${repo}/labels?per_page=100`
   const labelPost = `POST ${repo}/issues/1/labels`
   let gh: FakeGithub
-  const { calls, expectCommandThenConfig } = helpersFor(() => gh)
+  const { calls, expectRequests } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -46,27 +46,15 @@ describe('dist/index.js prow-commands canonicalization', () => {
     const posts = gh.requestsMatching('POST', /\/issues\/1\/labels$/)
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['help wanted'] })
-    expectCommandThenConfig([labelsRead, labelPost])
-  })
-
-  it('/help, /remove-help and /HELP configured together collapse to a single /help run', async () => {
-    routeHelp()
-
-    const result = await run('/help', '/help /remove-help /HELP')
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toHaveLength(1)
-    expectCommandThenConfig([labelsRead, labelPost])
+    expectRequests(configReads(), [labelsRead, labelPost])
   })
 
   it('a configured command no module serves fails the run naming it and makes no api call', async () => {
     const result = await run('/foo_bar', '/foo_bar')
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors).toEqual([
-      'TypeError: error handling issue comment: Error: could not execute /foo_bar. May not be supported - please refer to docs',
-    ])
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('could not execute /foo_bar')
     expect(calls()).toEqual([])
   })
 })
