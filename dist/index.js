@@ -43129,8 +43129,11 @@ function requestedLabels(cmd, command, commentBody, allowed, protectedExtra) {
         .filter((value) => value !== undefined);
     const labels = addPrefix(cmd.prefix, [...new Set(values)]);
     // no arguments after command provided
-    if (labels.length === 0) {
+    if (args.length === 0) {
         throw new Error(`${command.slice(1)}: command args missing from body`);
+    }
+    if (labels.length === 0) {
+        throw new Error(`${command.slice(1)}: no allowed value in "${args.join(' ')}"; allowed: ${allowed.join(', ') || 'none'}`);
     }
     if (cmd.prefix === '') {
         const offender = labels.find(label => isProtectedLabel(label, protectedExtra));
