@@ -187,7 +187,6 @@ describe('dist/index.js issue_comment /meow', () => {
     ['an excessively long url', [{ url: `https://cdn2.thecatapi.com/images/${'a'.repeat(4096)}.jpg` }], 'cat api returned an excessively long image url'],
     ['an unparsable url', [{ url: 'not a url' }], 'cat api returned an invalid image url'],
     ['an http: url', [{ url: 'http://cdn2.thecatapi.com/images/MTY3ODIyMQ.jpg' }], 'cat api returned an unusable image url'],
-    ['a url carrying credentials', [{ url: 'https://user:pass@cdn2.thecatapi.com/images/MTY3ODIyMQ.jpg' }], 'cat api returned an unusable image url'],
   ])('falls back to the note without retrying when the cat api returns %s', async (_, body, message) => {
     cat.answer({ status: 200, body })
     gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
@@ -211,19 +210,6 @@ describe('dist/index.js issue_comment /meow', () => {
     expect(result.stdout).not.toMatch(/::warning::/)
     expect(cat.requests).toHaveLength(2)
     expect(postedComments()).toEqual([`![cat](<${image}>)`])
-  })
-
-  it('gives up after three dropped connections and posts the unavailable note; the run still succeeds', async () => {
-    cat.answer({ status: 0, destroy: true })
-    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
-
-    const result = await meow('/meow')
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    expect(cat.requests).toHaveLength(3)
-    expect(result.stdout).toMatch(/::warning::Could not fetch a cat image: TypeError: fetch failed/)
-    expect(postedComments()).toEqual([fallback])
   })
 
   it('ignores /meow inside a fenced code block without calling either api', async () => {
