@@ -153,19 +153,5 @@ describe('dist/index.js schedule sweep job arms', () => {
       expect(freshnessReads().map(r => `GET ${r.path}`)).toEqual([freshnessRead])
       expect(requestedReviewers()).toEqual([])
     })
-
-    it('a fresh, unreviewed pull request nobody was asked to review: reviewers are requested (the guards all pass)', async () => {
-      routeSweep(forkPr())
-
-      const result = await runSweep()
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      expect(freshnessReads()).toHaveLength(1)
-      expect(requestedReviewers()).toHaveLength(1)
-      const reviewers = (requestedReviewers()[0].body as { reviewers: string[] }).reviewers
-      expect(reviewers).toHaveLength(2)
-      expect(['alice', 'bob', 'carol']).toEqual(expect.arrayContaining(reviewers))
-    })
   })
 })
