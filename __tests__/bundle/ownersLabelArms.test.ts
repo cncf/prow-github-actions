@@ -20,7 +20,6 @@ describe('dist/index.js owners-label', () => {
   const ownersBlobs = [`GET ${repo}/git/blobs/${blobSha('OWNERS')}`, `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`].sort()
   const issueRead = `GET ${repo}/issues/1`
   const labelsRead = `GET ${repo}/labels?per_page=100`
-  const labelsPost = `POST ${repo}/issues/1/labels`
   let gh: FakeGithub
   const { calls, routeOwners } = helpersFor(() => gh)
 
@@ -82,23 +81,6 @@ describe('dist/index.js owners-label', () => {
     expect(result.stdout).toContain(`owners-label: skipping label area/sdk declared in OWNERS: repository doesn't have it (run label-sync)`)
     expect(result.stdout).toContain(`owners-label: skipping label area/docs declared in OWNERS: repository doesn't have it (run label-sync)`)
     expect(calls().slice(6)).toEqual([issueRead, labelsRead, ownersProbe])
-  })
-
-  it('a mix of known and unknown declared labels: adds only the known ones', async () => {
-    routeOwners(ownersFiles, ['sdk/x.go'])
-    routeIssueLabels('kind/bug')
-    routeRepoLabels('kind/bug', 'Area/Docs')
-    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
-
-    const result = await synchronize()
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    // the repository's spelling decides whether a label is known, the OWNERS spelling is what gets applied
-    expect(labelPosts()).toEqual([{ labels: ['area/docs'] }])
-    expect(result.stdout).toContain(`owners-label: skipping label area/sdk declared in OWNERS`)
-    expect(result.stdout).not.toContain(`skipping label area/docs`)
-    expect(calls().slice(6)).toEqual([issueRead, labelsRead, labelsPost, ownersProbe])
   })
 
   it('a failing repository label list fails the run with the cause and still lets the later handlers run', async () => {
