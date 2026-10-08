@@ -157,7 +157,7 @@ function requireIssueNumber(context: Context): number {
 
   if (issueNumber === undefined) {
     throw new Error(
-      `github context payload missing issue number: ${context.payload}`,
+      `github context payload missing issue number: ${JSON.stringify(context.payload)}`,
     )
   }
 
@@ -243,8 +243,12 @@ function requestedLabels(
   const labels = addPrefix(cmd.prefix, [...new Set(values)])
 
   // no arguments after command provided
-  if (labels.length === 0) {
+  if (args.length === 0) {
     throw new Error(`${command.slice(1)}: command args missing from body`)
+  }
+
+  if (labels.length === 0) {
+    throw new Error(`${command.slice(1)}: no allowed value in "${args.join(' ')}"; allowed: ${allowed.join(', ') || 'none'}`)
   }
 
   if (cmd.prefix === '') {

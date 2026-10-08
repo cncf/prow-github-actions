@@ -41,10 +41,20 @@ describe('dist/index.js prefixed label and /remove arms', () => {
     expectRequests(configReads({ repo: '.prowlabels.yaml' }), [])
   })
 
-  it('/kind with only values outside the allowlist fails as missing args without reading or writing labels', async () => {
+  it('/kind with only values outside the allowlist fails naming them and the allowed values, without reading or writing labels', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
 
     const result = await run('/kind not-allowed', '/kind')
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('kind: no allowed value in "not-allowed"; allowed: failing-test, cleanup'))).toBe(true)
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [])
+  })
+
+  it('/kind without a value fails as missing args without reading or writing labels', async () => {
+    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: labelFileContents })
+
+    const result = await run('/kind', '/kind')
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('kind: command args missing from body'))).toBe(true)
