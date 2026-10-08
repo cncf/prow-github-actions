@@ -19,6 +19,8 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
 const repo = `${utils.api}/repos/Codertocat/Hello-World`
+// the repository tier probes; the organization tier probes are not traced
+const repoConfigReads = utils.configProbes.filter(source => source.startsWith('Codertocat/Hello-World:')).map(() => 'GET yaml')
 
 function issueWithLabels(...names: string[]) {
   const payload = structuredClone(issuePayload)
@@ -63,13 +65,13 @@ async function run(config: string, body: string) {
 }
 
 describe('/help and /good-first-issue', () => {
-  it('/help adds help wanted without reading .prowlabels.yaml; only the needs-* re-check that follows reads it', async () => {
+  it('/help reads the configuration once, for authorization.labels, then adds help wanted; the needs-* re-check that follows reuses it', async () => {
     const { mutations, trace } = serveIssueAndRecordMutations([])
 
     const setFailed = await run('/help', '/help')
 
     expect(mutations).toEqual(['POST help wanted'])
-    expect(trace[0]).toBe('POST')
+    expect(trace).toEqual([...repoConfigReads, 'POST'])
     expect(setFailed).not.toHaveBeenCalled()
   })
 
@@ -79,7 +81,7 @@ describe('/help and /good-first-issue', () => {
     const setFailed = await run('/good-first-issue', '/good-first-issue')
 
     expect(mutations).toEqual(['POST good first issue,help wanted'])
-    expect(trace[0]).toBe('POST')
+    expect(trace).toEqual([...repoConfigReads, 'POST'])
     expect(setFailed).not.toHaveBeenCalled()
   })
 
