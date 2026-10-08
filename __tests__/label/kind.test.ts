@@ -163,7 +163,7 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('kind: command args missing from body'),
+      expect.stringContaining('kind: no allowed value in "not-a-real-label"; allowed: failing-test, cleanup'),
     )
   })
 
@@ -226,7 +226,7 @@ describe('kind', () => {
     await handleIssueComment(commentContext)
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('remove-kind: command args missing from body'),
+      expect.stringContaining('remove-kind: no allowed value in "not-a-real-label"; allowed: failing-test, cleanup'),
     )
   })
 

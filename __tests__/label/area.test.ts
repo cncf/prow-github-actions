@@ -136,7 +136,7 @@ describe('area', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('area: command args missing from body'),
+      expect.stringContaining('area: no allowed value in "not-a-real-label"; allowed: bug, important'),
     )
   })
 
@@ -273,7 +273,7 @@ describe('area', () => {
     await handleIssueComment(commentContext)
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('remove-area: command args missing from body'),
+      expect.stringContaining('remove-area: no allowed value in "not-a-real-label"; allowed: bug, important'),
     )
   })
 
