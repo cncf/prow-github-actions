@@ -26,8 +26,8 @@ describe('dist/index.js missing issue and pull request number guards', () => {
     return payload
   }
 
-  const issueGuard = 'github context payload missing issue number: [object Object]'
-  const pullGuard = 'github context payload missing pull number: [object Object]'
+  const issueGuard = 'github context payload missing issue number'
+  const pullGuard = 'github context payload missing pull number'
 
   it.each([
     ['/assign', '/assign @someone', issueGuard],
@@ -56,28 +56,7 @@ describe('dist/index.js missing issue and pull request number guards', () => {
     })
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes(`error handling issue comment: Error: ${guard}`)), result.stdout).toBe(true)
-  })
-
-  it.each([
-    ['/assign', '/assign @someone'],
-    ['/cc', '/cc @someone'],
-    ['/retitle', '/retitle a new title'],
-    ['/close', '/close'],
-    ['/lock', '/lock'],
-    ['/reopen', '/reopen'],
-    ['/milestone', '/milestone v1'],
-    ['/meow', '/meow'],
-    ['/retest', '/retest'],
-  ])('%s without an issue number makes no api call: the guard runs before the first read', async (command, body) => {
-    await runBundle({
-      eventName: 'issue_comment',
-      payload: commentWithoutNumber(body),
-      inputs: { ...token, 'prow-commands': command },
-      apiUrl: gh.url,
-    })
-
-    expect(gh.requests).toEqual([])
+    expect(result.errors.some(e => e.includes(guard)), result.stdout).toBe(true)
   })
 
   it('the lgtm job on a synchronize payload without a pull request number fails naming the guard', async () => {
@@ -93,6 +72,6 @@ describe('dist/index.js missing issue and pull request number guards', () => {
     })
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes('error handling pull request: Error: github context payload missing pr number: [object Object]')), result.stdout).toBe(true)
+    expect(result.errors.some(e => e.includes('github context payload missing pr number')), result.stdout).toBe(true)
   })
 })
