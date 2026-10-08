@@ -249,7 +249,7 @@ describe('label', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('label: command args missing from body'),
+      expect.stringContaining('label: no allowed value in "lgtm"; allowed: good-first-issue, help-wanted'),
     )
   })
 
@@ -341,7 +341,7 @@ describe('label', () => {
     await handleIssueComment(commentContext)
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('remove-label: command args missing from body'),
+      expect.stringContaining('remove-label: no allowed value in "lgtm"; allowed: good-first-issue, help-wanted'),
     )
   })
 
