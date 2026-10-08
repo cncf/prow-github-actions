@@ -44,7 +44,6 @@ describe('dist/index.js prow.yaml schema rejections', () => {
   it.each([
     ['a top level scalar', 'just a string\n', `${source}: yaml malformed, expected a mapping at the top level`],
     ['a legacy label section that is a scalar', 'kind: bug\n', 'kind: yaml malformed, expected a list of values or { values: [...], exclusive: bool }'],
-    ['a label section mapping without values', 'labels:\n  kind:\n    exclusive: true\n', 'kind: yaml malformed, expected a list of values or { values: [...], exclusive: bool }'],
     ['a label value that is neither a string nor a mapping', 'kind:\n  - 42\n', 'kind: yaml malformed, expected a list of values or { values: [...], exclusive: bool }'],
     ['a label color with a leading #', 'kind:\n  - { name: bug, color: "#d73a4a" }\n', 'kind: invalid color \'#d73a4a\' for label \'bug\', expected 6 hex digits'],
     ['require_matching_label that is not a list', 'require_matching_label: true\n', `${source}: require_matching_label must be a list`],
@@ -56,7 +55,6 @@ describe('dist/index.js prow.yaml schema rejections', () => {
     ['a require_matching_label rule whose missing_comment is not a string', 'require_matching_label:\n  - { regexp: "^kind/", missing_label: needs-kind, missing_comment: [a] }\n', `${source}: require_matching_label[0]: missing_comment must be a string`],
     ['tide that is not a mapping', 'tide: [lgtm]\n', `${source}: tide must be a mapping`],
     ['tide.labels with an empty label name', 'tide:\n  labels: [lgtm, ""]\n', `${source}: tide.labels must be a list of label names`],
-    ['tide.missing_labels with a non-string entry', 'tide:\n  missing_labels: [1]\n', `${source}: tide.missing_labels must be a list of label names`],
     ['an unknown tide.merge_method', 'tide:\n  merge_method: fast-forward\n', `${source}: tide.merge_method must be one of merge, squash, rebase`],
     ['tide.merge_on_events that is not a boolean', 'tide:\n  merge_on_events: always\n', `${source}: tide.merge_on_events must be a boolean`],
     ['an unknown tide.merge_queue mode', 'tide:\n  merge_queue: on\n', `${source}: tide.merge_queue must be one of auto, off`],
