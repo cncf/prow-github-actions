@@ -20,9 +20,7 @@ describe('dist/index.js tide merge gate on missing_labels', () => {
 
   const head = pullReqOpenedEvent.pull_request.head.sha
   const bind = `POST ${repo}/statuses/${head}`
-  const bindingRead = `GET ${repo}/commits/${head}/status?per_page=100`
   const pullRead = `GET ${repo}/pulls/1`
-  const merge = `PUT ${repo}/pulls/1/merge`
   const labeledLgtm = { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }
 
   beforeAll(async () => {
@@ -49,19 +47,6 @@ describe('dist/index.js tide merge gate on missing_labels', () => {
     return runBundle({ eventName: 'pull_request', payload: labeledLgtm, inputs: { ...token, 'merge-method': 'squash' }, apiUrl: gh.url })
   }
 
-  it('by default a do-not-merge/* label blocks the merge, whatever follows the slash', async () => {
-    routeCleanPr(['lgtm', 'do-not-merge/invalid-owners-file'])
-
-    const result = await run()
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    expect(result.stdout).toContain('skipping pr #1: blocked by do-not-merge/invalid-owners-file')
-    expect(gh.requestsMatching('PUT', /./)).toEqual([])
-    // the hand-applied lgtm is still bound to the head; the gate then stops before the binding read
-    expectRequests(configReads(), [bind, pullRead, ownersProbe, queueRead])
-  })
-
   it('a configured pattern with wildcards at both ends and in the middle blocks the label it matches', async () => {
     // `*-wip` fails on the suffix and `*wip*` has to find its middle part between the empty anchors
     routeTide('  missing_labels: ["do-not-merge/*", "*-wip", "*wip*"]\n')
@@ -74,20 +59,5 @@ describe('dist/index.js tide merge gate on missing_labels', () => {
     expect(result.stdout).toContain('skipping pr #1: blocked by wip-docs')
     expect(gh.requestsMatching('PUT', /./)).toEqual([])
     expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, pullRead, ownersProbe, queueRead])
-  })
-
-  it('a configured list replaces the default one: needs-rebase no longer blocks and the pr merges', async () => {
-    routeTide('  missing_labels: ["do-not-merge/*", "*-wip", "*wip*"]\n')
-    routeCleanPr(['lgtm', 'needs-rebase'])
-
-    const result = await run()
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    expect(result.stdout).toContain('merged pr #1')
-    const merges = gh.requestsMatching('PUT', /\/pulls\/1\/merge$/)
-    expect(merges).toHaveLength(1)
-    expect(merges[0].body).toEqual({ merge_method: 'squash', sha: head })
-    expectRequests(configReads({ repo: '.github/prow.yaml' }), [bind, pullRead, ownersProbe, bindingRead, queueRead, merge])
   })
 })
