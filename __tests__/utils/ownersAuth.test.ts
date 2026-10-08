@@ -135,6 +135,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
       ...prHandlers({}, ['src/file1.txt']),
       http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(404)),
       http.get(`${repo}/collaborators/alice`, utils.mockResponse(404)),
+      ...utils.noOrgOrRepoConfigExcept(),
     )
     await expect(authorize('approvers', 'alice')).rejects.toThrow(
       'alice is not a org member or collaborator',
