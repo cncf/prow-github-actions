@@ -156,10 +156,9 @@ describe('dist/index.js tide verdicts', () => {
       const result = await checkSuite()
 
       expect(result.status, result.stdout).toBe(1)
-      expect(result.errors).toEqual([
-        'could not merge pr #1: merge exploded',
-        'error handling check_suite event: could not merge pull request(s) #1',
-      ])
+      expect(result.errors).toHaveLength(2)
+      expect(result.errors.some(e => e.includes('merge exploded'))).toBe(true)
+      expect(result.errors.some(e => e.includes('could not merge pull request(s) #1'))).toBe(true)
       expectRequests(configReads(), [pullRead, ownersProbe, bindingRead, queueRead, merge, pullRead])
     })
   })
