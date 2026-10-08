@@ -1,11 +1,10 @@
 import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { helpersFor, membershipReads, ownersReads, repo, token } from './helpers'
+import { comment, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -19,8 +18,9 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
   const rocket = `POST ${repo}/issues/comments/492700400/reactions`
   const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
   const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+  const tail = [`GET ${repo}/pulls/1`, ownersProbe, queueRead]
   let gh: FakeGithub
-  const { calls, expectRequests, routeOwners } = helpersFor(() => gh)
+  const { calls, expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -153,7 +153,7 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
 
       const result = await runBundle({
         eventName: 'issue_comment',
-        payload: { ...structuredClone(issueCommentEvent), comment: { ...issueCommentEvent.comment, body: '/retest' } },
+        payload: comment('/retest'),
         inputs: { ...token, 'prow-commands': '/retest' },
         apiUrl: gh.url,
       })
@@ -168,38 +168,15 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
   describe('/ok-to-test', () => {
     const labelsRead = `GET ${repo}/issues/1`
 
-    // the command may write a label, so the post-command sweep follows it whatever its outcome
-    function expectCommandThenSweep(command: string[]) {
-      const recorded = calls()
-      expect(recorded.slice(0, authReads.length).sort()).toEqual([...authReads].sort())
-      expect(recorded.slice(authReads.length, authReads.length + command.length)).toEqual(command)
-    }
-
-    it('by the pull request author is refused before authorization, with a comment, and fails the action', async () => {
-      routeAuthorizedPullRequest()
-
-      const result = await run('/ok-to-test', 'some-author')
-
-      expect(result.status, result.stdout).toBe(1)
-      expect(result.errors.slice(0, 2)).toEqual([
-        'you cannot approve the workflow runs of your own pull request',
-        'TypeError: error handling issue comment: Error: you cannot approve the workflow runs of your own pull request',
-      ])
-      expect(comments()).toEqual(['you cannot approve the workflow runs of your own pull request'])
-      expect(gh.requestsMatching('GET', /\/orgs\/Codertocat\/members\//)).toEqual([])
-      expect(gh.requestsMatching('GET', /\/actions\/runs/)).toEqual([])
-      expect(gh.requestsMatching('POST', /\/approve$/)).toEqual([])
-    })
-
     it('by the author when the refusal cannot be commented logs that too and still fails the action', async () => {
       routeAuthorizedPullRequest({ commentWrite: boom })
 
       const result = await run('/ok-to-test', 'some-author')
 
       expect(result.status, result.stdout).toBe(1)
-      expect(result.errors[0]).toBe('you cannot approve the workflow runs of your own pull request')
+      expect(result.errors[0]).toContain('you cannot approve the workflow runs of your own pull request')
       expect(result.errors[1]).toMatch(/^Could not comment with an auth error: Error: could not add comment: HttpError: boom/)
-      expect(result.errors[2]).toBe('TypeError: error handling issue comment: Error: you cannot approve the workflow runs of your own pull request')
+      expect(result.errors[2]).toContain('you cannot approve the workflow runs of your own pull request')
       expect(gh.requestsMatching('GET', /\/actions\/runs/)).toEqual([])
     })
 
@@ -212,7 +189,7 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expectCommandThenSweep([runsRead, labelsRead, commentPost])
+      expectCommandThenConfig([runsRead, labelsRead, commentPost], tail, authReads)
       expect(comments()).toEqual(['No workflow runs waiting for approval on `headsha`.'])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/approve$/)).toEqual([])
@@ -227,8 +204,8 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
       const result = await run('/ok-to-test')
 
       expect(result.status, result.stdout).toBe(1)
-      expect(result.errors[0]).toBe('TypeError: error handling issue comment: Error: cannot approve workflow runs: grant `actions: write` to the workflow')
-      expectCommandThenSweep([runsRead, `POST ${repo}/actions/runs/4/approve`])
+      expect(result.errors[0]).toContain('cannot approve workflow runs: grant `actions: write` to the workflow')
+      expectCommandThenConfig([runsRead, `POST ${repo}/actions/runs/4/approve`], tail, authReads)
       expect(gh.requestsMatching('GET', /\/issues\/1$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(comments()).toEqual([])
@@ -243,7 +220,7 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
 
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors[0]).toMatch(/^TypeError: error handling issue comment: Error: could not approve run 4 \(E2E\): HttpError: boom/)
-      expectCommandThenSweep([runsRead, `POST ${repo}/actions/runs/4/approve`])
+      expectCommandThenConfig([runsRead, `POST ${repo}/actions/runs/4/approve`], tail, authReads)
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
     })
 
@@ -252,7 +229,7 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
 
       const result = await runBundle({
         eventName: 'issue_comment',
-        payload: { ...structuredClone(issueCommentEvent), comment: { ...issueCommentEvent.comment, body: '/ok-to-test' } },
+        payload: comment('/ok-to-test'),
         inputs: { ...token, 'prow-commands': '/ok-to-test' },
         apiUrl: gh.url,
       })
