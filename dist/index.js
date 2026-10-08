@@ -46606,7 +46606,8 @@ async function handleIssueComment(context = github_context) {
             .split(/\s+/)
             .filter(command => command !== '')
             .map(command => canonicalCommand(command.toLowerCase())))];
-    const commentBody = context.payload.comment?.body;
+    // GitHub allows an empty comment, whose body arrives as null
+    const commentBody = context.payload.comment?.body ?? '';
     if (commandConfig.length === 0) {
         setFailed(`please provide a list of space delimited commands / jobs to run. None found`);
         return;
