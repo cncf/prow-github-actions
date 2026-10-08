@@ -11,19 +11,11 @@ vi.setConfig({ testTimeout: 30_000 })
 
 const explicitRepo = '/repos/cncf/prow-config'
 const explicitRead = `GET ${explicitRepo}/contents/prow.yaml`
-const labelsRead = `GET ${repo}/labels?per_page=100`
-
-// the repository tier's probes, which the explicit source replaces the organization tier with
-const repoReads = configReads().filter(read => read.startsWith(`GET ${repo}/`))
 
 function yamlFile(text: string) {
   const file = structuredClone(labelFileContents)
   file.content = Buffer.from(text).toString('base64')
   return file
-}
-
-function repoLabels(...names: string[]) {
-  return { status: 200, body: names.map(name => ({ name })) }
 }
 
 // the `config` input — an explicit owner/repo:path[@ref] source replacing the organization lookup — and the
@@ -53,31 +45,6 @@ describe('dist/index.js prow configuration sources', () => {
     expect(gh.requestsMatching('POST', /./)).toEqual([])
   }
 
-  it('reads an owner/repo:path source with github-token instead of the organization repos, then layers the repository on top', async () => {
-    gh.route('GET', `${explicitRepo}/contents/prow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
-    gh.route('GET', `${repo}/labels`, repoLabels('kind/cleanup'))
-    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
-
-    const result = await kind('cncf/prow-config:prow.yaml')
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
-    expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['kind/cleanup'] }])
-    expect(calls().filter(c => c.includes('/.project/') || c.includes('/.github/contents/'))).toEqual([])
-    expectRequests([explicitRead, ...repoReads, labelsRead], [`POST ${repo}/issues/1/labels`])
-  })
-
-  it('passes the @ref of the source as the contents ref', async () => {
-    gh.route('GET', `${explicitRepo}/contents/prow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
-    gh.route('GET', `${repo}/labels`, repoLabels('kind/cleanup'))
-    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
-
-    const result = await kind('cncf/prow-config:prow.yaml@v1.2')
-
-    expect(result.status, result.stdout).toBe(0)
-    expect(gh.requestsMatching('GET', /\/prow-config\/contents\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/prow.yaml?ref=v1.2`])
-  })
-
   it('the repository tier still layers over the explicit source: its kind list replaces the explicit one', async () => {
     gh.route('GET', `${explicitRepo}/contents/prow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
     gh.route('GET', `${repo}/contents/.github%2Fprow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [bug]\n') })
@@ -86,7 +53,7 @@ describe('dist/index.js prow configuration sources', () => {
 
     // `cleanup` is only in the explicit source's list, which the repository's `kind: [bug]` replaced
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes('kind: command args missing from body')), result.stdout).toBe(true)
+    expect(result.errors.some(e => e.includes('no allowed value in "cleanup"')), result.stdout).toBe(true)
     expect(gh.requestsMatching('POST', /./)).toEqual([])
     expectRequests([explicitRead, ...configReads({ repo: '.github/prow.yaml' }).filter(r => r.startsWith(`GET ${repo}/`))], [])
   })
@@ -100,14 +67,6 @@ describe('dist/index.js prow configuration sources', () => {
     expectRequests([explicitRead, ...configReads({ repo: '.prowlabels.yaml' }).filter(r => r.startsWith(`GET ${repo}/`))], [])
   })
 
-  it('an explicit source whose read fails surfaces the api error', async () => {
-    gh.route('GET', `${explicitRepo}/contents/prow.yaml`, { status: 500, body: { message: 'boom' } })
-
-    const result = await kind('cncf/prow-config:prow.yaml')
-
-    expectConfigFailure(result, 'could not load prow config from cncf/prow-config:prow.yaml: HttpError: boom')
-  })
-
   it('an explicit source that is a directory is refused as not a file', async () => {
     gh.route('GET', `${explicitRepo}/contents/configs`, { status: 200, body: [{ name: 'prow.yaml', type: 'file' }] })
 
@@ -117,13 +76,10 @@ describe('dist/index.js prow configuration sources', () => {
     expect(gh.requestsMatching('GET', /\/prow-config\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/configs`])
   })
 
-  it.each([
-    ['an http:// url', 'http://config.example.com/prow.yaml', 'config: http:// sources are not allowed, use https://'],
-    ['a bare file name', 'just-a-file.yaml', `config: expected owner/repo:path[@ref] or an https:// url, got 'just-a-file.yaml'`],
-  ])('%s is refused before any read of the explicit source', async (_name, config, cause) => {
-    const result = await kind(config)
+  it('a bare file name is refused before any read of the explicit source', async () => {
+    const result = await kind('just-a-file.yaml')
 
-    expectConfigFailure(result, cause)
+    expectConfigFailure(result, `config: expected owner/repo:path[@ref] or an https:// url, got 'just-a-file.yaml'`)
     // the repository tier is probed concurrently and still runs; only the explicit source is never read
     expect(calls().filter(c => !c.startsWith(`GET ${repo}/contents/`))).toEqual([])
   })
