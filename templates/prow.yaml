@@ -128,3 +128,14 @@ lgtm:
 # window; this is the default
 sweep:
   lookback: 1h
+
+# who may run the label commands, /hold, /close and the review commands; these are the defaults.
+# users is unioned with the organization's list; review only applies without OWNERS files.
+# Do not add an OWNERS file just to grant triage: it changes who may /lgtm and /approve and the
+# merge gate. See docs/configuration.md#authorization.
+# authorization:
+#   labels: anyone        # anyone, collaborators, members or trusted
+#   hold: anyone
+#   close: collaborators  # the issue or PR author may always /close
+#   review: members       # members or trusted
+#   users: []             # extra trusted logins, case-insensitive

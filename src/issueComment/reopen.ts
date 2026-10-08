@@ -2,7 +2,7 @@ import type { Context } from '../utils/context'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
-import { checkCollaborator } from '../utils/auth'
+import { checkCollaborator, closePolicyAllows } from '../utils/auth'
 import { newOctokit } from '../utils/octokit'
 
 /**
@@ -19,13 +19,14 @@ export async function reopen(context: Context = github.context): Promise<void> {
 
   if (issueNumber === undefined) {
     throw new Error(
-      `github context payload missing issue number: ${context.payload}`,
+      `github context payload missing issue number: ${JSON.stringify(context.payload)}`,
     )
   }
 
   // Only users who:
   // - are the issue / PR author
   // - are collaborators
+  // - pass `authorization.close`, which is read only when the first two refuse
   const isAuthor = commenterId === context.payload.issue?.user?.login
   let isAuthUser: boolean = isAuthor
   if (!isAuthor) {
@@ -35,6 +36,9 @@ export async function reopen(context: Context = github.context): Promise<void> {
     catch (e) {
       throw new Error(`could not check commentor auth: ${e}`)
     }
+  }
+  if (!isAuthUser) {
+    isAuthUser = await closePolicyAllows(octokit, context, commenterId)
   }
 
   if (isAuthUser) {
