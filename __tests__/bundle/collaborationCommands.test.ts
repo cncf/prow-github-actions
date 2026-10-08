@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, configReads, helpersFor, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -272,7 +272,9 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([collaboratorRead])
+      // only the refusal reads authorization.close, after the collaborator check
+      expect(calls().slice(0, 1)).toEqual([collaboratorRead])
+      expect(calls().slice(1).sort()).toEqual(configReads().sort())
     })
   })
 

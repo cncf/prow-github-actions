@@ -14,6 +14,8 @@ export interface PullRequestOwners {
   headSha: string
   author: string
   draft: boolean
+  /** the pull request is open (not closed or merged) */
+  open: boolean
   requestedReviewers: string[]
   assignees: string[]
   labels: string[]
@@ -89,6 +91,7 @@ async function load(
     headSha: pull.head.sha,
     author: (pull.user?.login ?? '').toLowerCase(),
     draft: pull.draft === true,
+    open: pull.state === 'open',
     requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
     assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
     labels: (pull.labels ?? []).map(label => label.name),

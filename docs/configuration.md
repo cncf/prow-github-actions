@@ -110,6 +110,7 @@ approve:
   require_self_approval: false
   ignore_review_state: false
   lgtm_acts_as_approve: false
+  github_review: false
 
 # /lgtm records the reviewed commit as a prow/lgtm commit status; this is the default
 lgtm:
@@ -118,6 +119,14 @@ lgtm:
 # the sweep job evaluates the pull requests updated within this window; this is the default
 sweep:
   lookback: 1h
+
+# who may run the label, /hold, /close and review commands; these are the defaults
+authorization:
+  labels: anyone
+  hold: anyone
+  close: collaborators
+  review: members
+  users: []
 ```
 
 ### `labels`
@@ -333,6 +342,7 @@ Field | Default | Meaning
 `require_self_approval` | `false` | `false`: the PR author implicitly approves every changed file their OWNERS entries cover (Prow's default). `true`: the author never counts, implicitly or through `/approve`
 `ignore_review_state` | `false` | `true`: GitHub reviews neither add (`APPROVED`) nor remove (`CHANGES_REQUESTED`) approvers
 `lgtm_acts_as_approve` | `false` | `true`: `/lgtm` counts as `/approve` and `/lgtm cancel` as `/approve cancel` when computing approval; the `lgtm` label is unaffected
+`github_review` | `false` | `true`: while the PR carries `approved`, the token keeps an `APPROVE` review on the PR's head commit, and dismisses it when `approved` goes away, so that a required approving review is met by the Prow decision ([mirrored review](./commands.md#mirroring-approved-as-a-github-review)). Needs "Allow GitHub Actions to create and approve pull requests" with `GITHUB_TOKEN`; that setting is repo-wide and lets **any** workflow approve PRs with `GITHUB_TOKEN`, so a dedicated GitHub App or machine-user `token` is the safer setup ([repository setting](./automatic-merging.md#required-reviews-and-openssf-scorecard)). `false`: no review is written and no extra API call is made
 
 ### `lgtm`
 
@@ -345,6 +355,70 @@ Field | Default | Meaning
 Field | Default | Meaning
 --- | --- | ---
 `lookback` | `1h` | how far back a pull request's `updated_at` may be for the [`sweep` job](./cron-jobs.md#sweep) to evaluate it; a Go style duration (`30m`, `2h`), longer than `0`, capped at `24h`
+
+### `authorization`
+
+Who may run the label commands, `/hold`, `/close` and the review commands. Every field is
+optional and the defaults are the gates the commands always had, so a repository without this
+section behaves as before. Like the rest of the file it is read from the default branch, so a
+pull request cannot add its own author to `users`, unless the [`config` input](#the-config-input)
+points at a `@ref` or an https URL (chosen by the workflow author).
+
+Field | Default | Meaning
+--- | --- | ---
+`labels` | `anyone` | the [label commands](./commands.md): `/area`, `/kind`, `/priority`, `/label`, `/lifecycle`, `/stage`, `/status`, `/help`, `/good-first-issue`, every dynamic `/<key>` (`/triage`) and all their `/remove-` forms
+`hold` | `anyone` | `/hold`, `/hold cancel`, `/unhold`, `/remove-hold`
+`close` | `collaborators` | `/close`, `/close not-planned`, `/reopen`; the issue or PR author is always allowed
+`review` | `members` | `/lgtm`, `/approve`, `/retest`, `/test`, `/ok-to-test` and their cancel forms, **on repositories without OWNERS files only** (for issues: without a root OWNERS file); `members` or `trusted`
+`users` | `[]` | further trusted GitHub logins, compared case-insensitively
+
+Who passes | Policy | Accepted by
+--- | --- | ---
+everybody, with no API call | `anyone` | `labels`, `hold`, `close`
+repository collaborators | `collaborators` | `labels`, `hold`, `close`
+org members and collaborators | `members` | `labels`, `hold`, `close`, `review`
+`users`, org members, collaborators, and the `reviewers` and `approvers` of the root `OWNERS` file of the default branch | `trusted` | `labels`, `hold`, `close`, `review`
+
+Checks run cheapest first and stop at the first that passes: `users` (no API call), org
+membership, the collaborator check, then the root `OWNERS` file. `/close` and `/reopen` keep
+their order (author, then collaborator) and read this section only when both refuse; the review
+commands keep theirs (org member and collaborator) and read it only when both refuse. Any other
+value fails the run; `review` accepts neither `anyone` nor `collaborators`, so this section never
+widens who may merge beyond members, collaborators and `users`.
+
+`review` only applies where the org-member/collaborator fallback does, on a repository without
+any [OWNERS file](./commands.md#owners). Where OWNERS files exist they alone decide `/lgtm`,
+`/approve` and the trigger commands, `users` grants nothing there, and `review: trusted` is a
+no-op. Without OWNERS files the OWNERS part of `trusted` is moot, so `review: trusted` admits
+`users`, org members and collaborators.
+
+`users` is the one key that does not follow the repository-over-organization rule: the
+organization and repository lists are **unioned** (duplicates dropped, case-insensitively), so a
+repository can add its own triagers without copying the organization's. The organization tier
+supplies defaults, not floors: a repository can set any key looser than the organization does,
+and `users` can only grow. Organizations that need enforcement should use GitHub rulesets
+(code-owner review, required teams, disallowing GitHub Actions approvals).
+
+A refused label command or `/hold` fails the run with
+`<user> is not authorized to run <command>: authorization.<key> is <policy>`, writes no label and
+posts no comment; a refused `/close` or `/reopen` silently does nothing, even when the
+configuration cannot be loaded (a warning is logged), while the label commands and `/hold` fail
+the run when it cannot be loaded; a refused review command replies and fails the run as it always
+did, with `<user> is not a org member, collaborator or listed in authorization.users` under
+`review: trusted` ([not authorized](./commands.md#what-happens-when-you-are-not-authorized)). When
+the configuration cannot be loaded on that path, a warning is logged and the refusal falls back to
+the `members` message, so the configuration error never reaches the public comment.
+
+> [!WARNING]
+> Do not add an OWNERS file just to grant triage through `trusted`. Once a repository has any
+> OWNERS file, `/lgtm` and `/approve` are authorized by OWNERS alone (org members it does not list
+> lose them), the [`tide.labels`](#tide) default becomes `[lgtm, approved]`,
+> [blunderbuss](#blunderbuss) requests reviews from the listed people and the
+> [approve plugin](./commands.md#approve) posts `[APPROVALNOTIFIER]` comments. Use `users` instead.
+
+When `labels` is not `anyone`, a [`require_matching_label`](#require_matching_label)
+`missing_comment` should not tell authors to run label commands such as `/kind` they may no longer
+run.
 
 ### `owners-label`
 
@@ -378,8 +452,8 @@ Both forms share one parser. The top level `labels` key decides which form a doc
 `labels` is | Form | The `/label` allowlist is
 --- | --- | ---
 a **list** | legacy: every top level key is a label section | the top level `labels` list
-a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep` may sit alongside | `labels.labels`
-absent, and `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm` or `sweep` is present | new | `labels.labels`
+a **mapping** | new: `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep`, `authorization` may sit alongside | `labels.labels`
+absent, and `require_matching_label`, `tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep` or `authorization` is present | new | `labels.labels`
 absent otherwise | legacy | none
 
 ```yaml
@@ -410,7 +484,8 @@ Key | Rule
 --- | ---
 `labels` | per section: a repository section replaces the organization section of the same name; other organization sections survive
 `require_matching_label` | lists concatenate, organization rules first
-`tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep` | shallow merge; a repository field wins
+`tide`, `hold`, `blunderbuss`, `approve`, `lgtm`, `sweep`, `authorization` | shallow merge; a repository field wins
+`authorization.users` | lists union, organization logins first, duplicates dropped case-insensitively
 
 ```yaml
 # <owner>/.project prow.yaml

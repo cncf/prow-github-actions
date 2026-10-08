@@ -16,7 +16,7 @@ These docs describe `main`; the latest release is `v3.0.1` ([releasing](./releas
 
 Commands | Policy | Description
 --- | --- | ---
-`/approve` | [OWNERS](#owners) approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators | on a repo with OWNERS files: records the commenter's approval for the files they own and re-evaluates the [approve plugin](#approve), which adds `approved` once every changed file is covered and posts/edits the `[APPROVALNOTIFIER]` comment; no GitHub review is submitted. Otherwise: the bot submits an approving review. The [merge gate](./automatic-merging.md#event-driven-merging) is evaluated right after
+`/approve` | [OWNERS](#owners) approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators, or per [`authorization.review`](./configuration.md#authorization) | on a repo with OWNERS files: records the commenter's approval for the files they own and re-evaluates the [approve plugin](#approve), which adds `approved` once every changed file is covered and posts/edits the `[APPROVALNOTIFIER]` comment; no GitHub review is submitted. Otherwise: the bot submits an approving review. The [merge gate](./automatic-merging.md#event-driven-merging) is evaluated right after
 `/approve no-issue` | same as `/approve` | same as `/approve`; accepted for Prow compatibility
 `/approve cancel` | same as `/approve` | on a repo with OWNERS files: withdraws the commenter's approval and re-evaluates (`approved` is removed if the files they covered are no longer covered). Otherwise: dismisses the bot's latest approval
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
@@ -24,9 +24,9 @@ Commands | Policy | Description
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Self-cc requires Collaborator; targets must be an Org Member, Collaborator, or have previously commented.
 `/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must already have had a review requested.
-`/close` | Collaborators **or the issue/PR author** | closes the issue / PR
-`/close not-planned` | Collaborators **or the issue/PR author** | closes the issue / PR with the `not planned` state reason
-`/reopen` | Collaborators **or the issue/PR author** | reopens a closed issue / PR
+`/close` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR
+`/close not-planned` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR with the `not planned` state reason
+`/reopen` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | reopens a closed issue / PR
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason (case-insensitive; an unknown reason fails the run without locking)
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. With no title the run fails. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
@@ -42,37 +42,37 @@ Commands | Policy | Description
 
 Label Commands | Policy | Description
 --- | --- | ---
-`/area [label1 label2 ...]` | anyone | adds an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/remove-area [label1 label2 ...]` | anyone | removes an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/kind [label1 label2 ...]` | anyone | adds a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/remove-kind [label1 label2 ...]` | anyone | removes a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators; **not the PR author** | on a PR, records the head commit as a `prow/lgtm` commit status, then adds the `lgtm` label and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after: a `clean` PR merges in the same run. The label only merges while it is [bound to the head](./automatic-merging.md#lgtm-is-bound-to-a-commit); needs `statuses: write`. Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
+`/area [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/remove-area [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes an area/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/kind [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/remove-kind [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes a kind/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/lgtm` | [OWNERS](#owners) reviewer or approver for **at least one** changed file if the repo has OWNERS files, otherwise Org members and Collaborators, or per [`authorization.review`](./configuration.md#authorization); **not the PR author** | on a PR, records the head commit as a `prow/lgtm` commit status, then adds the `lgtm` label and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after: a `clean` PR merges in the same run. The label only merges while it is [bound to the head](./automatic-merging.md#lgtm-is-bound-to-a-commit); needs `statuses: write`. Like Prow, you cannot LGTM your own PR; the guard also applies to issues since the label has no meaning there either
 `/lgtm cancel` | same as `/lgtm`, **or the PR author** | removes the `lgtm` label and sets the head's `prow/lgtm` status to `pending`
 `/remove-lgtm` | same as `/lgtm`, **or the PR author** | same as `/lgtm cancel`
-`/hold` | anyone | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
-`/hold cancel` | anyone | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present, and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after
-`/unhold`, `/remove-hold` | anyone | same as `/hold cancel`
-`/priority [label1 label2 ...]` | anyone | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
-`/remove-priority [label1 label2 ...]` | anyone | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
-`/label [label1 label2 ...]` | anyone | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
-`/remove-label [label1 label2 ...]` | anyone | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
-`/lifecycle [frozen / stale / rotten]` | anyone | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
-`/remove-lifecycle [frozen / stale / rotten]` | anyone | removes the `lifecycle/<>` label
-`/stage [alpha / beta / stable]` | anyone | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
-`/remove-stage [alpha / beta / stable]` | anyone | removes the `stage/<>` label
-`/status [approved-for-milestone / in-progress / in-review]` | anyone | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
-`/remove-status [approved-for-milestone / in-progress / in-review]` | anyone | removes the `status/<>` label
-`/help` | anyone | adds the `help wanted` label
-`/remove-help` | anyone | removes the `help wanted` and `good first issue` labels
-`/good-first-issue` | anyone | adds the `good first issue` and `help wanted` labels
-`/remove-good-first-issue` | anyone | removes the `good first issue` label
-`/<key> [value1 value2 ...]` | anyone | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
-`/remove-<key> [value1 value2 ...]` | anyone | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
+`/hold` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
+`/hold cancel` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present, and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after
+`/unhold`, `/remove-hold` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | same as `/hold cancel`
+`/priority [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
+`/remove-priority [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
+`/label [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
+`/remove-label [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
+`/lifecycle [frozen / stale / rotten]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `lifecycle/<>` label and removes any other `lifecycle/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-lifecycle [frozen / stale / rotten]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `lifecycle/<>` label
+`/stage [alpha / beta / stable]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `stage/<>` label and removes any other `stage/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-stage [alpha / beta / stable]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `stage/<>` label
+`/status [approved-for-milestone / in-progress / in-review]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `status/<>` label and removes any other `status/*`. Values come from Prow and can be [overridden in the prow configuration](./labeling.md#lifecycle-stage-and-status-labels)
+`/remove-status [approved-for-milestone / in-progress / in-review]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `status/<>` label
+`/help` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `help wanted` label
+`/remove-help` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `help wanted` and `good first issue` labels
+`/good-first-issue` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `good first issue` and `help wanted` labels
+`/remove-good-first-issue` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `good first issue` label
+`/<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
+`/remove-<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 
 Every label-writing command that ran (`/lgtm`, `/approve`, `/hold`, `/remove`, `/ok-to-test` and the label commands below) is followed by a re-check of the [`require_matching_label`](./configuration.md#require_matching_label) rules (`/kind cleanup` clears `needs-kind` in the same run) and, on an open PR, by the merge gate; see [events](./events.md#the-bots-writes-fire-no-events) for why.
 
-Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them. `lgtm`, `hold`, `approved`, `do-not-merge/*` and a configured `hold.label` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
+Every label command applies only labels the repository already defines ([labeling](./labeling.md#labels-must-exist-in-the-repository)); a missing label fails the run with `the label(s) <names> cannot be applied because the repository doesn't have them`. The `/remove-<key>` commands are enabled together with their base command and only remove values listed in the prow configuration ([configuration](./configuration.md)), so anyone may use them unless [`authorization.labels`](./configuration.md#authorization) restricts the label commands. `lgtm`, `hold`, `approved`, `do-not-merge/*` and a configured `hold.label` are always refused by `/label` and `/remove-label`, even when listed under `labels:`; the run fails with `<label> is managed by its own command`. Use `/lgtm`, `/hold` and `/approve` for those, and `/remove` for arbitrary labels.
 
 ## What happens when you are not authorized
 
@@ -81,6 +81,13 @@ Failure behaviour differs per command:
 - `/close`, `/reopen` and `/retitle` silently do nothing.
 - `/lock`, `/remove` and `/milestone` fail the run.
 - `/lgtm`, `/approve`, `/retest`, `/test` and `/ok-to-test` reply with a comment and fail the run.
+  On a repository without OWNERS files the message is `<user> is not a org member or collaborator`,
+  or `<user> is not a org member, collaborator or listed in authorization.users` under
+  [`authorization.review: trusted`](./configuration.md#authorization).
+- The label commands (`/kind`, `/label`, `/help`, `/<key>`, their `/remove-` forms, ...) and `/hold` in all its forms
+  are open to anyone unless [`authorization.labels` or `authorization.hold`](./configuration.md#authorization)
+  restricts them; a refused command fails the run with
+  `<user> is not authorized to run <command>: authorization.<key> is <policy>`, writes no label and posts no comment.
 
 ## `/lgtm` and the reviewed commit
 
@@ -109,7 +116,8 @@ Command | Does | Runs it acts on
 `/ok-to-test` | `POST .../runs/{id}/approve`, then the `ok-to-test` label | runs with `status` or `conclusion` `action_required` (awaiting approval)
 
 - **Who may**: whoever may `/lgtm` (an OWNERS reviewer or approver of a changed file, otherwise an org
-  member or collaborator). For `/retest` and `/test` the pull request author is not excluded: an
+  member or collaborator, or an [`authorization.users`](./configuration.md#authorization) login under
+  `authorization.review: trusted`). For `/retest` and `/test` the pull request author is not excluded: an
   org-member author may retest their own PR. `/ok-to-test` refuses the author (`you cannot approve the
   workflow runs of your own pull request`): it is the trust decision. Refusals reply with a comment and
   fail the run, like `/lgtm`.
@@ -232,14 +240,62 @@ which the [`lgtm` PR job](./pr-jobs.md) removes on every push.
 vouches for); a changed file no OWNERS file covers can never be approved and is listed as such in
 the notifier. `/approve cancel` by someone who never approved is a no-op re-evaluation.
 
-**No bot review.** On repositories with OWNERS files the bot submits no GitHub review any more:
-a review by `github-actions[bot]` would satisfy branch protection's "required approving reviews"
-on its own, which is the wrong signal once `approved` is what the [merge gate](./automatic-merging.md#the-merge-gate)
-requires. `/approve cancel` therefore dismisses nothing; it just recomputes.
+**No bot review by default.** On repositories with OWNERS files the bot submits no GitHub review
+of its own accord: a review by `github-actions[bot]` would satisfy branch protection's "required
+approving reviews" on its own, which is the wrong signal once `approved` is what the
+[merge gate](./automatic-merging.md#the-merge-gate) requires. `/approve cancel` therefore dismisses
+nothing; it just recomputes. A repository that wants a required review to follow the Prow decision
+opts in with [`approve.github_review`](#mirroring-approved-as-a-github-review).
 
-Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `labeled`/`unlabeled` of
-`approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
+Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review`,
+`labeled`/`unlabeled` of `approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
 See [events](./events.md).
+
+#### Mirroring `approved` as a GitHub review
+
+With [`approve.github_review: true`](./configuration.md#approve) (default `false`) the token keeps
+an `APPROVE` review on the pull request's head commit for as long as the PR carries `approved`,
+and dismisses it when `approved` goes away. Humans keep using `/approve` (and `/lgtm`); a branch
+protection rule or ruleset that requires one approving review is then met by the Prow decision,
+without anyone approving twice. It is the plugin's verdict mirrored, not an extra human review
+([required reviews and OpenSSF Scorecard](./automatic-merging.md#required-reviews-and-openssf-scorecard)).
+Only repositories with OWNERS files are affected; without them `/approve` submits a bot review
+anyway ([below](#repositories-without-owners-files)).
+
+Situation | Action
+--- | ---
+the evaluation ends with `approved` | one `APPROVED` review by the token on the **current head** (`commit_id`); none is written when it already exists. Body: `Approved via /approve by <approvers> (OWNERS).`, an explanation and the hidden marker `<!-- prow-github-actions/approve-review -->`. The approvers are named without `@`, so a fresh review after each push notifies nobody
+the evaluation ends without `approved` (`/approve cancel`, a `CHANGES_REQUESTED` review, files no longer covered, ...) | every `APPROVED` review by the token that carries the marker is dismissed, on any commit, with `approved removed: <reason>`, ex: `approved removed: no approver covers sdk/x.go; withdrawn by bob (/approve cancel)`
+`synchronize` (a new head) while `approved` stays | a fresh review on the new head; the one on the old commit is left as it is (GitHub may have dismissed it as stale). Reviews without the marker are never touched
+the PR's author is the token's own identity (a PR the bot opened, or a `token` secret of the author) | GitHub does not let an author approve their own pull request: warning `cannot submit the approval review: #<n> was opened by the token's own identity (<login>), and GitHub does not let an author approve their own pull request (approve.github_review)`, no review
+GitHub refuses with `GitHub Actions is not permitted to approve pull requests.` (reported as a 422 when "Allow GitHub Actions to create and approve pull requests" is off; GitHub does not document the status) | warning, not failure: `cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review): <GitHub's message>`
+GitHub refuses with any other 403 (ex: the workflow lacks `pull-requests: write`) | warning, not failure: ``cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review): <GitHub's message>``
+any other API error | `could not submit the approval review: <error>` or `could not dismiss the approval review <id>: <error>`, an error annotation; the run fails at the end, after the merge evaluation
+the pull request is closed | nothing
+the pull request is a draft | no review is submitted until it is marked ready for review (`ready_for_review` re-evaluates); dismissals still happen
+GitHub refuses the dismissal (ex: "Restrict who can dismiss pull request reviews" excludes the token) | `could not dismiss the approval review <id>: <error>` on every evaluation of the pull request until the review is dismissed by hand
+
+The order inside one run is: compute the approval → write the label → edit the notifier →
+submit or dismiss the review → the merge evaluation, so the merge evaluation of the same run starts
+after the review exists (whether GitHub's `mergeable_state` already reflects it is another matter,
+see [required reviews](./automatic-merging.md#required-reviews-and-openssf-scorecard)).
+
+**The bot's review never approves.** It is an output, never an input: a review carrying the
+marker never counts as an approval, and with the setting on neither does any review by the
+token's own user (when `token` is a user's PAT; `GITHUB_TOKEN` and GitHub App reviews are by a
+`Bot` and never count anyway). Otherwise `approved` would hold itself up. To find that user the
+bot reads `GET /user` once per run; an installation token is answered with 403 and needs no login.
+Use a dedicated machine user, not a maintainer's PAT, or that maintainer's own reviews stop
+counting. A `pull_request_review` event for the bot's review (only a user token fires one)
+evaluates nothing in the approve plugin; the merge gate still runs, which is harmless.
+
+Dismissing the bot's review by hand does not withdraw approval: the next evaluation submits it
+again. Use `/approve cancel`. Turning the setting off leaves the reviews already submitted in
+place; dismiss them by hand. Two runs evaluating the same pull request at the same moment (a push
+and a review, say) may both submit a review; the duplicate is harmless.
+
+With the setting off nothing changes: no `GET /user`, no review read beyond what
+`ignore_review_state` already reads, no review written.
 
 ### Repositories without OWNERS files
 
@@ -257,7 +313,7 @@ Authorization fails closed:
 
 - a changed file with no covering `OWNERS` file fails the command with an error naming the file;
 - an `OWNERS` file that cannot be fetched or parsed (for example `approvers` is not a list) fails the command;
-- the org-member/collaborator fallback applies only when the repository has **no** `OWNERS` file at all.
+- the org-member/collaborator fallback (and [`authorization.review`](./configuration.md#authorization), which only widens it) applies only when the repository has **no** `OWNERS` file at all.
 
 ### File format
 

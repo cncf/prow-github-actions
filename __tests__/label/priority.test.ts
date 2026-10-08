@@ -261,7 +261,7 @@ describe('priority', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('priority: command args missing from body'),
+      expect.stringContaining('priority: no allowed value in "not-a-real-label"; allowed: low, high'),
     )
   })
 
@@ -330,7 +330,7 @@ describe('priority', () => {
     await handleIssueComment(commentContext)
     await expect(observeDelete.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('remove-priority: command args missing from body'),
+      expect.stringContaining('remove-priority: no allowed value in "mid"; allowed: low, high'),
     )
   })
 

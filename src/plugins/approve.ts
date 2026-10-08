@@ -13,11 +13,13 @@ import { labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokit } from '../utils/octokit'
 import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
+import { reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from './approveReview'
 
 export interface ApproveSettings {
   require_self_approval: boolean
   ignore_review_state: boolean
   lgtm_acts_as_approve: boolean
+  github_review: boolean
 }
 
 export type ApprovalEventKind = 'approve' | 'cancel' | 'review-approved' | 'review-changes' | 'lgtm' | 'lgtm-cancel'
@@ -49,15 +51,17 @@ export interface IssueComment {
 export interface Review {
   id: number
   state: string
+  body?: string | null
   user?: { login?: string, type?: string } | null
   submitted_at?: string | null
+  commit_id?: string | null
 }
 
 export const approvedLabel = 'approved'
 export const notifierMarker = '<!-- prow-github-actions/approve -->'
 const commandsDoc = 'https://github.com/cncf/prow-github-actions/blob/main/docs/commands.md'
 
-const pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'labeled', 'unlabeled'])
+const pullRequestActions = new Set(['opened', 'reopened', 'synchronize', 'ready_for_review', 'labeled', 'unlabeled'])
 const reviewActions = new Set(['submitted', 'dismissed'])
 
 /**
@@ -72,6 +76,7 @@ export function approveSettings(config: ProwConfig): ApproveSettings {
     require_self_approval: raw.require_self_approval ?? false,
     ignore_review_state: raw.ignore_review_state ?? false,
     lgtm_acts_as_approve: raw.lgtm_acts_as_approve ?? false,
+    github_review: raw.github_review ?? false,
   }
 }
 
@@ -80,11 +85,15 @@ export function approveSettings(config: ProwConfig): ApproveSettings {
  * comments and the APPROVED / CHANGES_REQUESTED reviews of humans into events,
  * logins lowercased. Bots, other review states and comments without a command
  * yield nothing; a comment carrying both a command and its cancel is a cancel.
+ * The approval review this action mirrors (`approve.github_review`) never
+ * counts: a review carrying its marker is skipped, and so is every review by
+ * `tokenLogin`, the token's own user, so that `approved` cannot hold itself up.
  *
  * @param comments - the issue comments of the pull request
  * @param reviews - the reviews of the pull request
+ * @param tokenLogin - the login behind the workflow token, when it is a user token
  */
-export function approvalEvents(comments: IssueComment[], reviews: Review[]): ApprovalEvent[] {
+export function approvalEvents(comments: IssueComment[], reviews: Review[], tokenLogin?: string): ApprovalEvent[] {
   const events: ApprovalEvent[] = []
 
   for (const comment of comments) {
@@ -106,7 +115,7 @@ export function approvalEvents(comments: IssueComment[], reviews: Review[]): App
 
   for (const review of reviews) {
     const login = humanLogin(review.user)
-    if (login === undefined || review.submitted_at == null) {
+    if (login === undefined || review.submitted_at == null || login === tokenLogin || (review.body ?? '').includes(reviewMarker)) {
       continue
     }
     const at = new Date(review.submitted_at)
@@ -350,8 +359,10 @@ function ownersEntries(state: ApprovalState, owners: PullRequestOwners): OwnersE
  * evaluateApproval recomputes the approval of a pull request from its
  * comments and reviews, then makes the `approved` label and the notifier
  * comment match: the label is added or removed only when it changes, the
- * notifier is posted once and edited in place afterwards. A pull request
- * whose base branch has no OWNERS files is left alone.
+ * notifier is posted once and edited in place afterwards. With
+ * `approve.github_review` the token's own APPROVE review then follows the
+ * label, before any merge evaluation of the same run. A pull request whose
+ * base branch has no OWNERS files is left alone.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
@@ -366,8 +377,11 @@ export async function evaluateApproval(octokit: Octokit, context: Context, pullN
 
   const settings = approveSettings(await loadProwConfig(octokit, context))
   const comments = await listComments(octokit, context, pullNumber)
-  const reviews = settings.ignore_review_state ? [] : await listReviews(octokit, context, pullNumber)
-  const state = computeApproval(owners, approvalEvents(comments, reviews), settings)
+  // the mirrored review needs the reviews and the token's identity; without it neither is read
+  const identity = settings.github_review ? await tokenIdentity(octokit) : undefined
+  const reviews = settings.ignore_review_state && identity === undefined ? [] : await listReviews(octokit, context, pullNumber)
+  const events = approvalEvents(comments, settings.ignore_review_state ? [] : reviews, identity?.login)
+  const state = computeApproval(owners, events, settings)
 
   core.info(state.approved
     ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
@@ -375,6 +389,9 @@ export async function evaluateApproval(octokit: Octokit, context: Context, pullN
 
   await syncLabel(octokit, context, owners, state.approved)
   await upsertNotifier(octokit, context, pullNumber, comments, renderNotifier(state, owners, context.repo))
+  if (identity !== undefined) {
+    await syncApprovalReview(octokit, context, { owners, state, reviews, identity, reason: () => withdrawalReason(owners, state, events, settings) })
+  }
 }
 
 async function syncLabel(octokit: Octokit, context: Context, owners: PullRequestOwners, approved: boolean): Promise<void> {
@@ -434,8 +451,9 @@ async function listReviews(octokit: Octokit, context: Context, pullNumber: numbe
 
 /**
  * approveOnPullRequest is the `pull_request` handler: on `opened`,
- * `reopened` and `synchronize`, and when a human adds or removes the
- * `approved` label, it re-evaluates the approval. Approval is sticky across
+ * `reopened`, `synchronize` and `ready_for_review` (a draft gets no mirrored
+ * review until then), and when a human adds or removes the `approved` label,
+ * it re-evaluates the approval. Approval is sticky across
  * pushes; a push only matters because the changed files may differ.
  *
  * @param context - the github context of the current action event
@@ -457,6 +475,8 @@ export async function approveOnPullRequest(context: Context = github.context): P
 /**
  * approveOnReview is the `pull_request_review` handler: a submitted or
  * dismissed review may add (APPROVED) or remove (CHANGES_REQUESTED) an approver.
+ * The approval review this action mirrors is an output, never an input: its
+ * own events (fired when the token is a user token) evaluate nothing.
  *
  * @param context - the github context of the current action event
  */
@@ -464,6 +484,10 @@ export async function approveOnReview(context: Context = github.context): Promis
   const action: string | undefined = context.payload.action
   if (action === undefined || !reviewActions.has(action)) {
     core.debug(`approve: skipping ${action} review action`)
+    return
+  }
+  if (String(context.payload.review?.body ?? '').includes(reviewMarker)) {
+    core.debug(`approve: review ${context.payload.review?.id} is the approval review this action mirrors; nothing to evaluate`)
     return
   }
 

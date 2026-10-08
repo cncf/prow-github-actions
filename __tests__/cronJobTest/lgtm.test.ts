@@ -506,20 +506,46 @@ describe('cronLgtm', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('fails the run when evaluating a pr throws instead of returning a verdict', async () => {
+  it('keeps evaluating the other prs when evaluating one throws, and fails the run naming it', async () => {
     utils.setupJobsEnv('lgtm')
     const context = new utils.MockContext(pullReqOpenedEvent)
-    routePulls([lgtmPr(7)])
-    const merge = new utils.ObserveRequest()
+    routePulls([lgtmPr(7), lgtmPr(8)])
+    const broken = new utils.ObserveRequest()
+    const merged = observeMerge(8)
     server.use(
       http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/7`, utils.mockResponse(500, { message: 'Server Error' })),
-      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/7/merge`, utils.mockResponse(200, null, merge)),
+      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/7/merge`, utils.mockResponse(200, null, broken)),
     )
 
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
     await expect(handleCronJobs(context)).resolves.not.toThrow()
-    await expect(merge.notCalled()).resolves.toBe('not called')
+    await expect(broken.notCalled()).resolves.toBe('not called')
+    await expect(merged.called()).resolves.toBe('called')
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('could not evaluate pr #7: HttpError: Server Error'))
     expect(setFailed).toHaveBeenCalledTimes(1)
-    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('error processing pr'))
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('1 pull request(s) could not be merged: #7 (could not evaluate: HttpError: Server Error)'))
+    expect(setFailed).not.toHaveBeenCalledWith(expect.stringContaining('#8'))
+  })
+
+  it('keeps paging after a pr whose evaluation throws, and names every pr that failed', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    const pages: Record<string, typeof listPullReqs> = { 1: [lgtmPr(7)], 2: [lgtmPr(9)] }
+    server.use(
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
+        const page = new URL(request.url).searchParams.get('page') ?? ''
+        return utils.mockResponse(200, pages[page] ?? [])({ request })
+      }),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/7`, utils.mockResponse(500, { message: 'Server Error' })),
+      servePullsByNumber([lgtmPr(9)]),
+      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/9/merge`, utils.mockResponse(405, { message: 'Pull Request is not mergeable' })),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('2 pull request(s) could not be merged: #7 (could not evaluate: HttpError: Server Error), #9 (Pull Request is not mergeable)'))
   })
 })

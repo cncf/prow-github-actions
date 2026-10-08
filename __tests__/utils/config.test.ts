@@ -1,7 +1,7 @@
 import * as core from '@actions/core'
 import { describe, expect, it, vi } from 'vitest'
 
-import { defaultHoldLabel, mergeProwConfig, parseProwConfig, resolveHoldLabel, resolveTide } from '../../src/utils/config'
+import { defaultAuthorization, defaultHoldLabel, mergeProwConfig, parseProwConfig, resolveAuthorization, resolveHoldLabel, resolveTide } from '../../src/utils/config'
 
 const legacy = `
 area:
@@ -306,8 +306,8 @@ describe('parseProwConfig', () => {
 
   describe('approve', () => {
     it('accepts every flag', () => {
-      expect(parseProwConfig('x', 'approve:\n  require_self_approval: true\n  ignore_review_state: true\n  lgtm_acts_as_approve: false\n')).toEqual({
-        approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: false },
+      expect(parseProwConfig('x', 'approve:\n  require_self_approval: true\n  ignore_review_state: true\n  lgtm_acts_as_approve: false\n  github_review: true\n')).toEqual({
+        approve: { require_self_approval: true, ignore_review_state: true, lgtm_acts_as_approve: false, github_review: true },
       })
     })
 
@@ -320,6 +320,7 @@ describe('parseProwConfig', () => {
       ['a non-boolean require_self_approval', 'approve:\n  require_self_approval: yes please\n', 'x: approve.require_self_approval must be a boolean'],
       ['a non-boolean ignore_review_state', 'approve:\n  ignore_review_state: 1\n', 'x: approve.ignore_review_state must be a boolean'],
       ['a non-boolean lgtm_acts_as_approve', 'approve:\n  lgtm_acts_as_approve: [true]\n', 'x: approve.lgtm_acts_as_approve must be a boolean'],
+      ['a non-boolean github_review', 'approve:\n  github_review: \'true\'\n', 'x: approve.github_review must be a boolean'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })
@@ -334,6 +335,73 @@ describe('parseProwConfig', () => {
     it.each([
       ['a non-mapping', 'lgtm: true\n', 'x: lgtm must be a mapping'],
       ['a non-boolean bind_to_commit', 'lgtm:\n  bind_to_commit: yes please\n', 'x: lgtm.bind_to_commit must be a boolean'],
+    ])('rejects %s', (_, text, error) => {
+      expect(() => parseProwConfig('x', text)).toThrow(error)
+    })
+  })
+
+  describe('authorization', () => {
+    it('accepts every key and marks the document as the new form on its own', () => {
+      expect(parseProwConfig('x', [
+        'authorization:',
+        '  labels: trusted',
+        '  hold: members',
+        '  close: anyone',
+        '  review: trusted',
+        '  users: [Alice, bob]',
+      ].join('\n'))).toEqual({
+        authorization: { labels: 'trusted', hold: 'members', close: 'anyone', review: 'trusted', users: ['Alice', 'bob'] },
+      })
+      expect(parseProwConfig('x', 'authorization: {}\n')).toEqual({ authorization: {} })
+    })
+
+    it('trims logins and accepts GitHub App bots and inner dashes', () => {
+      expect(parseProwConfig('x', 'authorization:\n  users: [" Alice ", "dependabot[bot]", some-user-1, a]\n')).toEqual({
+        authorization: { users: ['Alice', 'dependabot[bot]', 'some-user-1', 'a'] },
+      })
+    })
+
+    it('is a reserved key, never a label section of a legacy document', () => {
+      expect(parseProwConfig('x', 'authorization:\n  labels: collaborators\n').labels).toBeUndefined()
+    })
+
+    it.each(['anyone', 'collaborators', 'members', 'trusted'])('accepts %s for labels, hold and close', (policy) => {
+      expect(parseProwConfig('x', `authorization:\n  labels: ${policy}\n  hold: ${policy}\n  close: ${policy}\n`)).toEqual({
+        authorization: { labels: policy, hold: policy, close: policy },
+      })
+    })
+
+    it('resolves to today\'s gates unless configured, with users lower-cased', () => {
+      expect(defaultAuthorization).toEqual({ labels: 'anyone', hold: 'anyone', close: 'collaborators', review: 'members', users: [] })
+      expect(resolveAuthorization({})).toEqual(defaultAuthorization)
+      expect(resolveAuthorization({ labels: 'trusted', users: ['Alice', 'BOB'] })).toEqual({
+        labels: 'trusted',
+        hold: 'anyone',
+        close: 'collaborators',
+        review: 'members',
+        users: ['alice', 'bob'],
+      })
+    })
+
+    it.each([
+      ['a non-mapping', 'authorization: trusted\n', 'x: authorization must be a mapping'],
+      ['an unknown key', 'authorization:\n  lgtm: trusted\n', 'x: authorization.lgtm is not a known key, expected one of labels, hold, close, review, users'],
+      ['an unknown labels policy', 'authorization:\n  labels: everyone\n', 'x: authorization.labels must be one of anyone, collaborators, members, trusted'],
+      ['an unknown hold policy', 'authorization:\n  hold: true\n', 'x: authorization.hold must be one of anyone, collaborators, members, trusted'],
+      ['an unknown close policy', 'authorization:\n  close: [members]\n', 'x: authorization.close must be one of anyone, collaborators, members, trusted'],
+      ['review: anyone', 'authorization:\n  review: anyone\n', 'x: authorization.review must be one of members, trusted'],
+      ['review: collaborators', 'authorization:\n  review: collaborators\n', 'x: authorization.review must be one of members, trusted'],
+      ['users as a string', 'authorization:\n  users: alice\n', 'x: authorization.users must be a list of logins'],
+      ['an empty login', 'authorization:\n  users: [alice, ""]\n', 'x: authorization.users must be a list of logins'],
+      ['a non-string login', 'authorization:\n  users: [alice, 42]\n', 'x: authorization.users must be a list of logins'],
+      ['a blank login', 'authorization:\n  users: [alice, "  "]\n', 'x: authorization.users must be a list of logins'],
+      ['a leading @', 'authorization:\n  users: ["@alice"]\n', 'x: authorization.users must be a list of logins'],
+      ['a space inside a login', 'authorization:\n  users: [al ice]\n', 'x: authorization.users must be a list of logins'],
+      ['a leading dash', 'authorization:\n  users: [-alice]\n', 'x: authorization.users must be a list of logins'],
+      ['a trailing dash', 'authorization:\n  users: [alice-]\n', 'x: authorization.users must be a list of logins'],
+      ['an underscore', 'authorization:\n  users: [al_ice]\n', 'x: authorization.users must be a list of logins'],
+      ['a team', 'authorization:\n  users: [org/team]\n', 'x: authorization.users must be a list of logins'],
+      ['a [bot] suffix not at the end', 'authorization:\n  users: ["a[bot]b"]\n', 'x: authorization.users must be a list of logins'],
     ])('rejects %s', (_, text, error) => {
       expect(() => parseProwConfig('x', text)).toThrow(error)
     })
@@ -415,10 +483,34 @@ describe('mergeProwConfig', () => {
       approve: { require_self_approval: false, lgtm_acts_as_approve: true },
       lgtm: { bind_to_commit: false },
       sweep: {},
+      authorization: {},
     })
   })
 
+  it('merges authorization per key, repo over org, and unions users without case-insensitive duplicates', () => {
+    const org = parseProwConfig('org', 'authorization:\n  labels: trusted\n  hold: trusted\n  review: trusted\n  users: [Alice, bob]\n')
+    const repo = parseProwConfig('repo', 'authorization:\n  hold: anyone\n  close: members\n  users: [alice, Carol]\n')
+
+    expect(mergeProwConfig(org, repo).authorization).toEqual({
+      labels: 'trusted',
+      hold: 'anyone',
+      close: 'members',
+      review: 'trusted',
+      users: ['Alice', 'bob', 'Carol'],
+    })
+    expect(resolveAuthorization(mergeProwConfig(org, repo).authorization).users).toEqual(['alice', 'bob', 'carol'])
+  })
+
+  it('keeps one tier\'s users when the other tier names none', () => {
+    const org = parseProwConfig('org', 'authorization:\n  users: [alice, Alice]\n')
+    const repo = parseProwConfig('repo', 'authorization:\n  labels: members\n')
+
+    expect(mergeProwConfig(org, repo).authorization).toEqual({ labels: 'members', users: ['alice'] })
+    expect(mergeProwConfig(repo, org).authorization).toEqual({ labels: 'members', users: ['alice'] })
+    expect(mergeProwConfig(repo, {}).authorization).toEqual({ labels: 'members' })
+  })
+
   it('fills every section when both sides are empty', () => {
-    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {}, lgtm: {}, sweep: {} })
+    expect(mergeProwConfig({}, {})).toEqual({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, approve: {}, lgtm: {}, sweep: {}, authorization: {} })
   })
 })
