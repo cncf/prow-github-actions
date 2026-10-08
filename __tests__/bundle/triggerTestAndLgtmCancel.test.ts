@@ -5,7 +5,7 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -199,7 +199,9 @@ describe('dist/index.js /test and lgtm cancel', () => {
         'Cannot /test because Error: stranger is not a org member or collaborator',
         'TypeError: error handling issue comment: Error: stranger is not a org member or collaborator',
       ])
-      expectAuthorized([commentPost], 'stranger')
+      // only the refusal reads authorization.review, after the owners and membership reads
+      expectRequests([...ownersReads, ...membershipReads('stranger'), ...configReads()], [commentPost])
+      expect(calls().slice(0, ownersReads.length + 2).sort()).toEqual([...ownersReads, ...membershipReads('stranger')].sort())
       expect(comments()).toEqual(['Cannot /test because Error: stranger is not a org member or collaborator'])
       expect(gh.requestsMatching('GET', /\/actions\/runs/)).toEqual([])
     })

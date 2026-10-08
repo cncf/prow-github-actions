@@ -60,6 +60,11 @@ export function membershipReads(login: string) {
   return [`GET /orgs/Codertocat/members/${login}`, `GET ${repo}/collaborators/${login}`]
 }
 
+// the repository's label list, as the label commands read it before applying a label
+export function repoLabels(...names: string[]) {
+  return { status: 200, body: names.map(name => ({ name })) }
+}
+
 // the helpers that route or inspect a suite's fake GitHub; the suite starts it in beforeAll, after binding these,
 // so `fake` is called on each use
 export function helpersFor(fake: () => FakeGithub) {
