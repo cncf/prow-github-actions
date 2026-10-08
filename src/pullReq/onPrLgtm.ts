@@ -17,7 +17,7 @@ export async function onPrLgtm(context: Context): Promise<void> {
 
   if (prNumber === undefined) {
     throw new Error(
-      `github context payload missing pr number: ${context.payload}`,
+      `github context payload missing pr number: ${JSON.stringify(context.payload)}`,
     )
   }
 

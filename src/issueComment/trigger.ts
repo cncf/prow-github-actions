@@ -204,7 +204,7 @@ async function prepare(context: Context, command: string, options: { refuseAutho
   const commenter: string = context.payload.comment?.user?.login
 
   if (issueNumber === undefined) {
-    throw new Error(`github context payload missing issue number: ${context.payload}`)
+    throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`)
   }
 
   if (context.payload.issue?.pull_request === undefined) {

@@ -42855,7 +42855,7 @@ async function prepare(context, command, options = {}) {
     const issueNumber = context.payload.issue?.number;
     const commenter = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     if (context.payload.issue?.pull_request === undefined) {
         await createComment(octokit, context, issueNumber, `\`${command}\` only applies to pull requests.`);
@@ -43074,7 +43074,7 @@ function commenter(context) {
 function requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     return issueNumber;
 }
@@ -43180,7 +43180,7 @@ async function hold(context = github_context) {
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const config = await loadProwConfig(octokit, context);
     const holdLabel = resolveHoldLabel(config.hold);
@@ -45509,7 +45509,7 @@ async function assertLabelsPolicy(octokit, context, command) {
 function fixed_requireIssueNumber(context) {
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     return issueNumber;
 }
@@ -45546,7 +45546,7 @@ async function lgtm(context = github_context) {
     const isAuthor = commenterId === context.payload.issue?.user?.login;
     const isPullRequest = context.payload.issue?.pull_request !== undefined;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const cancel = hasCommand('/remove-lgtm', commentBody)
         || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
@@ -45637,7 +45637,7 @@ async function remove(context = github_context) {
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     // Only users who:
     // - are collaborators
@@ -45703,7 +45703,7 @@ async function approve(context = github_context) {
     const commentBody = context.payload.comment?.body;
     const commenterLogin = context.payload.comment?.user.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
         || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
@@ -45828,7 +45828,7 @@ async function assign_assign(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const commentArgs = getCommandArgs('/assign', commentBody);
     // no arguments after command provided
@@ -45907,7 +45907,7 @@ async function cc(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull number: ${context.payload}`);
+        throw new Error(`github context payload missing pull number: ${JSON.stringify(context.payload)}`);
     }
     const commentArgs = getCommandArgs('/cc', commentBody);
     // no arguments after command provided
@@ -45986,7 +45986,7 @@ async function close_close(context = github_context) {
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     // Only users who:
     // - are the issue / PR author
@@ -46055,7 +46055,7 @@ async function lock(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const commentArgs = getCommandArgs('/lock', commentBody);
     // Only users who:
@@ -46119,7 +46119,7 @@ async function meow(context = github_context) {
     const octokit = newOctokit(token);
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     // a provider outage degrades to a note; only the github write can fail the action
     let body;
@@ -46244,7 +46244,7 @@ async function milestone(context = github_context) {
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     // Only users who:
     // - are collaborators
@@ -46302,7 +46302,7 @@ async function reopen(context = github_context) {
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     // Only users who:
     // - are the issue / PR author
@@ -46354,7 +46354,7 @@ async function retitle(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const title = getLineArgs('/retitle', commentBody);
     // no arguments after command provided. Can't retitle!
@@ -46402,7 +46402,7 @@ async function unassign(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
-        throw new Error(`github context payload missing issue number: ${context.payload}`);
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const commentArgs = getCommandArgs('/unassign', commentBody);
     // no arguments after command provided
@@ -46458,7 +46458,7 @@ async function uncc(context = github_context) {
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
-        throw new Error(`github context payload missing pull number: ${context.payload}`);
+        throw new Error(`github context payload missing pull number: ${JSON.stringify(context.payload)}`);
     }
     const commentArgs = getCommandArgs('/uncc', commentBody);
     // no arguments after command provided
@@ -46786,7 +46786,7 @@ async function onPrLgtm(context) {
     const octokit = newOctokit(token);
     const prNumber = context.payload.pull_request?.number;
     if (prNumber === undefined) {
-        throw new Error(`github context payload missing pr number: ${context.payload}`);
+        throw new Error(`github context payload missing pr number: ${JSON.stringify(context.payload)}`);
     }
     let currentLabels = [];
     try {
