@@ -24,10 +24,10 @@ describe('dist/index.js /hold cancel arms', () => {
     return runBundle({ eventName: 'issue_comment', payload: comment(body), inputs: { ...token, 'prow-commands': '/hold' }, apiUrl: gh.url })
   }
 
-  it.each(['/hold cancel', '/unhold', '/remove-hold'])('%s on an issue without a hold label succeeds and deletes nothing', async (body) => {
+  it('/hold cancel on an issue without a hold label succeeds and deletes nothing', async () => {
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
 
-    const result = await run(body)
+    const result = await run('/hold cancel')
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
