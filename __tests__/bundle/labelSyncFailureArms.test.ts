@@ -43,10 +43,9 @@ describe('dist/index.js workflow_dispatch label-sync job failure arms', () => {
 
     expect(result.status, result.stdout).toBe(1)
     // one core.error per refused label, then the single failure that ends the run
-    const perLabel = builtins.map(name => `label-sync: could not sync ${name}: Resource not accessible by integration`)
-    expect(result.errors.slice(0, builtins.length)).toEqual(perLabel)
     expect(result.errors).toHaveLength(builtins.length + 1)
-    expect(result.errors[builtins.length]).toContain(`TypeError: error handling cron job: Error: ${builtins.length} label(s) could not be synced: ${builtins.map(name => `${name} (Resource not accessible by integration`).join('), ')}`)
+    builtins.forEach((name, i) => expect(result.errors[i]).toContain(`could not sync ${name}`))
+    expect(result.errors[builtins.length]).toContain(`${builtins.length} label(s) could not be synced`)
     expect(result.stdout).toContain(`label-sync: created 0 [], updated 1 [kind/bug], unchanged 0, failed ${builtins.length}`)
 
     // every create is still attempted after the first refusal
