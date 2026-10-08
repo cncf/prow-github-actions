@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { configReads, helpersFor, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { helpersFor, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -15,7 +15,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // (probeBranchOwners)
 describe('dist/index.js OWNERS probes', () => {
   let gh: FakeGithub
-  const { routeOwners } = helpersFor(() => gh)
+  const { calls, expectCommandThenConfig, routeOwners } = helpersFor(() => gh)
 
   const rootOwners = 'approvers:\n- bob\n'
   const rootOwnersRead = `GET ${repo}/contents/OWNERS?ref=basesha`
@@ -65,20 +65,6 @@ describe('dist/index.js OWNERS probes', () => {
     })
   }
 
-  function calls() {
-    return gh.requests.map(r => `${r.method} ${r.path}`)
-  }
-
-  // the calls after the OWNERS reads and the configuration probes, which have no fixed order among themselves
-  function afterConfig(ownersTail: string[]) {
-    const recorded = calls()
-    expect(recorded.slice(0, ownersReads.length)).toEqual(ownersReads)
-    const start = ownersReads.length + ownersTail.length
-    expect(recorded.slice(ownersReads.length, start)).toEqual(ownersTail)
-    expect(recorded.slice(start, start + configReads().length).sort()).toEqual(configReads().sort())
-    return recorded.slice(start + configReads().length)
-  }
-
   describe('the base tip\'s tree is truncated: every candidate OWNERS path is read directly', () => {
     function routeTruncatedBase() {
       // the first matching route wins, so the truncated listing goes in before routeOwners' complete one
@@ -99,7 +85,7 @@ describe('dist/index.js OWNERS probes', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
       expect(gh.requestsMatching('GET', /\/git\/blobs\//)).toEqual([])
       // the root is probed first, then the changed file's directory, one at a time
-      expect(afterConfig([rootOwnersRead, sdkOwnersRead])).toEqual([
+      expectCommandThenConfig([...ownersReads, rootOwnersRead, sdkOwnersRead], [
         ...approval,
         `GET ${repo}/pulls/1`,
         ownersProbe,
@@ -135,7 +121,7 @@ describe('dist/index.js OWNERS probes', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).not.toContain('skipping pr #1')
       expect(gh.requestsMatching('GET', /\/contents\/OWNERS/)).toEqual([])
-      expect(afterConfig([`GET ${repo}/git/blobs/${blobSha('OWNERS')}`])).toEqual([
+      expectCommandThenConfig([...ownersReads, `GET ${repo}/git/blobs/${blobSha('OWNERS')}`], [
         ...approval,
         `GET ${repo}/pulls/1`,
         ownersProbe,
@@ -156,7 +142,8 @@ describe('dist/index.js OWNERS probes', () => {
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('skipping pr #1: missing approved')
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
-      expect(afterConfig([`GET ${repo}/git/blobs/${blobSha('OWNERS')}`]).slice(-4)).toEqual([
+      expectCommandThenConfig([...ownersReads, `GET ${repo}/git/blobs/${blobSha('OWNERS')}`], [
+        ...approval,
         `GET ${repo}/pulls/1`,
         ownersProbe,
         baseProbe,
@@ -173,7 +160,9 @@ describe('dist/index.js OWNERS probes', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(result.stdout).not.toContain('skipping pr #1')
-      expect(afterConfig([`GET ${repo}/git/blobs/${blobSha('OWNERS')}`]).slice(-5)).toEqual([
+      expectCommandThenConfig([...ownersReads, `GET ${repo}/git/blobs/${blobSha('OWNERS')}`], [
+        ...approval,
+        `GET ${repo}/pulls/1`,
         ownersProbe,
         baseProbe,
         lgtmBindingRead,
