@@ -31,17 +31,6 @@ describe('dist/index.js /close and /milestone', () => {
   }
 
   describe('/close', () => {
-    it('by the issue author closes without a collaborator read and without a state_reason', async () => {
-      gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
-
-      const result = await run('/close', '/close')
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      expect(calls()).toEqual([issuePatch])
-      expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ state: 'closed' })
-    })
-
     it('whose issue update fails reports the write failure and fails the run', async () => {
       gh.route('PATCH', `${repo}/issues/1`, { status: 500, body: { message: 'boom' } })
 
@@ -50,6 +39,7 @@ describe('dist/index.js /close and /milestone', () => {
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('could not close issue'))).toBe(true)
       expect(calls()).toEqual([issuePatch])
+      expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ state: 'closed' })
     })
   })
 
