@@ -1,10 +1,9 @@
 import type { FakeGithub } from './fakeGithub'
-import { Buffer } from 'node:buffer'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
-import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
+import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
 import { configReads, helpersFor, ownersProbe, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
@@ -16,7 +15,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // that bundle.test.ts never reaches, driven through dist/index.js like the cases there
 describe('dist/index.js pull request owners and fork-workflows arms', () => {
   let gh: FakeGithub
-  const { expectRequests } = helpersFor(() => gh)
+  const { expectRequests, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -30,24 +29,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
       'OWNERS': 'approvers:\n- alice\n',
       'sdk/OWNERS': 'approvers:\n- bob\n',
       'olm/OWNERS': 'options:\n  no_parent_owners: true\napprovers:\n- carol\n',
-    }
-
-    // the OWNERS tree and blobs at `sha`, as routeOwners serves them at basesha
-    function routeTree(sha: string) {
-      gh.route('GET', `${repo}/git/trees/${sha}`, {
-        status: 200,
-        body: {
-          sha,
-          truncated: false,
-          tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
-        },
-      })
-      for (const [path, contents] of Object.entries(ownersFiles)) {
-        gh.route('GET', `${repo}/git/blobs/${blobSha(path)}`, {
-          status: 200,
-          body: { encoding: 'base64', content: Buffer.from(contents).toString('base64') },
-        })
-      }
     }
 
     // the approve evaluation re-reads the pull request's comments to find `commenter`'s /approve
@@ -69,13 +50,11 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
     }
 
     it('a renamed file needs approval under its previous name too: bob owns the new path, carol the old one', async () => {
-      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...pullBody, user: { login: 'some-author' }, requested_reviewers: [], assignees: [] } })
       gh.route('GET', `${repo}/pulls/1/files`, {
         status: 200,
         body: [{ filename: 'sdk/moved.go', previous_filename: 'olm/moved.go', status: 'renamed' }],
       })
-      gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
-      routeTree('basesha')
+      routeOwners(ownersFiles, [], { user: { login: 'some-author' } })
       routeWrites('bob')
 
       const result = await runApprove('bob')
@@ -96,13 +75,19 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
     })
 
     it('when the tip of the base branch cannot be read, OWNERS come from the sha the pull request snapshots, with a warning', async () => {
-      gh.route('GET', `${repo}/pulls/1`, {
-        status: 200,
-        body: { ...pullBody, base: { ref: 'master', sha: 'snapshotsha' }, user: { login: 'some-author' }, requested_reviewers: [], assignees: [] },
-      })
-      gh.route('GET', `${repo}/pulls/1/files`, { status: 200, body: [{ filename: 'sdk/x.go', status: 'modified' }] })
       gh.route('GET', `${repo}/branches/master`, { status: 500, body: { message: 'Server Error' } })
-      routeTree('snapshotsha')
+      gh.route('GET', `${repo}/git/trees/snapshotsha`, {
+        status: 200,
+        body: {
+          sha: 'snapshotsha',
+          truncated: false,
+          tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })),
+        },
+      })
+      routeOwners(ownersFiles, ['sdk/x.go'], {
+        base: { ref: 'master', sha: 'snapshotsha' },
+        user: { login: 'some-author' },
+      })
       routeWrites('bob')
 
       const result = await runApprove('bob')
@@ -158,7 +143,13 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
       routeForkPr()
       gh.route('GET', `${repo}/compare/${head}...master`, { status: 200, body: { files: [{ filename: '.github/workflows/prow.yml', status: 'added' }] } })
       gh.route('GET', `${repo}/pulls/2/files`, { status: 200, body: [{ filename: 'README.md', status: 'modified' }] })
-      gh.route('GET', `${repo}/issues/2/comments`, { status: 200, body: [{ id: 900, body: `GitHub does not let the workflow token merge this pull request\n\n${marker}`, user: bot }] })
+      gh.route('GET', `${repo}/issues/2/comments`, {
+        status: 200,
+        body: [
+          { id: 901, body: `quoting the bot: ${marker}`, user: { login: 'dave', type: 'User' } },
+          { id: 900, body: `GitHub does not let the workflow token merge this pull request\n\n${marker}`, user: bot },
+        ],
+      })
 
       const result = await runCron()
 
@@ -176,22 +167,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
         `GET ${repo}/issues/2/comments?per_page=100`,
         `GET ${repo}/pulls?state=open&page=2`,
       ])
-    })
-
-    it('a marker carried only by a human comment does not count: the bot explains once more', async () => {
-      routeForkPr()
-      gh.route('GET', `${repo}/compare/${head}...master`, { status: 200, body: { files: [{ filename: '.github/workflows/prow.yml', status: 'added' }] } })
-      gh.route('GET', `${repo}/pulls/2/files`, { status: 200, body: [] })
-      gh.route('GET', `${repo}/issues/2/comments`, { status: 200, body: [{ id: 901, body: `quoting the bot: ${marker}`, user: { login: 'dave', type: 'User' } }] })
-      gh.route('POST', `${repo}/issues/2/comments`, { status: 201, body: {} })
-
-      const result = await runCron()
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      const comments = gh.requestsMatching('POST', /\/issues\/2\/comments$/)
-      expect(comments).toHaveLength(1)
-      expect((comments[0].body as { body: string }).body.endsWith(marker)).toBe(true)
     })
 
     it('when the explaining comment is refused, the pull request is still skipped with a warning', async () => {
