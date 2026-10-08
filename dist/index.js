@@ -32176,7 +32176,7 @@ function setCommandEcho(enabled) {
  */
 function setFailed(message) {
     process.exitCode = ExitCode.Failure;
-    error(message);
+    core_error(message);
 }
 //-----------------------------------------------------------------------
 // Logging Commands
@@ -32199,7 +32199,7 @@ function core_debug(message) {
  * @param message error issue message. Errors will be converted to string via toString()
  * @param properties optional properties to add to the annotation.
  */
-function error(message, properties = {}) {
+function core_error(message, properties = {}) {
     command_issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
@@ -42936,12 +42936,12 @@ async function react(octokit, context) {
     }
 }
 async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    error(msg);
+    core_error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        error(`Could not comment with an auth error: ${commentE}`);
+        core_error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -43377,7 +43377,7 @@ async function write(result, name, done, action) {
     }
     catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        error(`label-sync: could not sync ${name}: ${message}`);
+        core_error(`label-sync: could not sync ${name}: ${message}`);
         result.failures.push({ name, message });
     }
 }
@@ -43803,7 +43803,7 @@ async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgt
     if (outcome.status === 403 && first.fork && await explainForkWorkflows(octokit, context, number, first)) {
         return skip(number, 'fork pull request with workflow changes: the token may not merge it');
     }
-    error(`could not merge pr #${number}: ${outcome.message}`);
+    core_error(`could not merge pr #${number}: ${outcome.message}`);
     return outcome;
 }
 let warnedMergeMethodIgnored = false;
@@ -43898,11 +43898,11 @@ async function evaluateInQueue(octokit, context, number, tide, first, queue) {
             return skip(number, `not ready for the merge queue: ${outcome.message}`);
         case 'forbidden': {
             const message = `cannot add pr #${number} to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues): ${outcome.message}`;
-            error(message);
+            core_error(message);
             return { result: 'failed', message };
         }
         default:
-            error(`could not enqueue pr #${number}: ${outcome.message}`);
+            core_error(`could not enqueue pr #${number}: ${outcome.message}`);
             return { result: 'failed', message: outcome.message };
     }
 }
@@ -44123,7 +44123,8 @@ function pullNumber(context) {
  * through the shared merge path: the lgtm binding, GitHub's mergeability,
  * then the merge. It is the backstop of the event-driven tide handlers.
  * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused, listing the affected PRs.
+ * if any merge was refused or any evaluation threw, listing the affected PRs.
+ * Only a listing that cannot be read stops the run early.
  *
  * @param currentPage - the page to return from the github api
  * @param context - The github actions event context
@@ -44153,7 +44154,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
         }
         return progress.jobsDone;
     }
-    const results = await Promise.all(prs.map(async (pr) => {
+    await Promise.all(prs.map(async (pr) => {
         info(`processing pr: ${pr.number}`);
         if (pr.state === 'closed') {
             return;
@@ -44167,14 +44168,11 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
             }
         }
         catch (error) {
-            return error;
+            // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
+            core_error(`could not evaluate pr #${pr.number}: ${error}`);
+            progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
         }
     }));
-    for (const result of results) {
-        if (result instanceof Error) {
-            throw new TypeError(`error processing pr: ${result}`);
-        }
-    }
     // Recurse, continue to next page
     return await cronLgtm(currentPage + 1, context, progress);
 }
@@ -45611,12 +45609,12 @@ async function assertReviewer(octokit, context, issueNumber, commenterId) {
 }
 // refuse logs and replies with msg, then fails the run with cause (or msg)
 async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    error(msg);
+    core_error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        error(`Could not comment with an auth error: ${commentE}`);
+        core_error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -45759,12 +45757,12 @@ async function authorize(octokit, context, issueNumber, commenterLogin) {
 }
 // refuse logs and replies with msg, then fails the run with cause (or msg)
 async function approve_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    error(msg);
+    core_error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        error(`Could not comment with an auth error: ${commentE}`);
+        core_error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -46921,7 +46919,7 @@ async function run() {
         const context = github_context;
         const handler = Object.hasOwn(eventHandlers, context.eventName) ? eventHandlers[context.eventName] : undefined;
         if (!handler) {
-            error(`${context.eventName} not yet supported`);
+            core_error(`${context.eventName} not yet supported`);
             return;
         }
         await handler(context);
