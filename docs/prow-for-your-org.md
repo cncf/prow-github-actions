@@ -42,6 +42,7 @@ code on `main` does today.
 | OWNERS `emeritus_approvers` | ✗ | Accepted but ignored |
 | `/lgtm` via a GitHub "Approve" review | ✗ | Reviews feed `approved` only, never `lgtm` |
 | `/approve` via a GitHub "Approve" review | ✓ | On OWNERS repositories an `APPROVED` review adds the reviewer as approver; `CHANGES_REQUESTED` removes them. [commands](./commands.md#approve) |
+| Who may run label commands, `/hold`, `/close` and the review commands | ✓ (superset) | Deliberately more than Prow, opt-in: the defaults match Prow (label commands and `/hold` open to anyone). The [`authorization`](./configuration.md#authorization) section can restrict them to collaborators, members or `trusted`, and its `users` list keeps people who are not org members or collaborators triaging, closing and, on repositories without OWNERS files, reviewing, with no OWNERS file and no collaborator invite |
 
 ## Before you start
 
