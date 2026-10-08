@@ -113,7 +113,8 @@ export async function handleIssueComment(context: Context = github.context): Pro
       .filter(command => command !== '')
       .map(command => canonicalCommand(command.toLowerCase())),
   )]
-  const commentBody: string = context.payload.comment?.body
+  // GitHub allows an empty comment, whose body arrives as null
+  const commentBody: string = context.payload.comment?.body ?? ''
 
   if (commandConfig.length === 0) {
     core.setFailed(
