@@ -1,10 +1,12 @@
 import type { Octokit } from '@octokit/rest'
+import type { AuthorizationPolicy, ResolvedAuthorization } from './config'
 import type { Context } from './context'
 import type { OwnersRole } from './owners'
 import { Buffer } from 'node:buffer'
 
 import * as core from '@actions/core'
 
+import { defaultAuthorization, loadProwConfig, resolveAuthorization } from './config'
 import { parseOwners } from './owners'
 import { loadPullRequestOwners } from './pullRequestOwners'
 
@@ -259,8 +261,121 @@ export async function assertAuthorizedByOwnersOrMembership(
     const isCollaborator = await checkCollaborator(octokit, context, username)
 
     if (!isOrgMember && !isCollaborator) {
-      throw new Error(`${username} is not a org member or collaborator`)
+      // every review policy admits members and collaborators, so only a refusal needs the configuration
+      const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization)
+      if (review === 'members') {
+        throw new Error(`${username} is not a org member or collaborator`)
+      }
+      if (!users.includes(username.toLowerCase())) {
+        throw new Error(`${username} is not a org member, collaborator or listed in authorization.users`)
+      }
     }
+  }
+}
+
+/** checks the caller already ran that refused the user, so policyAllows does not repeat them */
+export interface RefusedChecks {
+  member?: boolean
+  collaborator?: boolean
+}
+
+/**
+ * policyAllows reports whether an `authorization` policy admits the user,
+ * cheapest check first: `anyone` makes no API call; `trusted` tries
+ * `users`, then org membership, then the collaborator check, then the root
+ * OWNERS file of the default branch (reviewers and approvers alike).
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param policy - the policy to apply
+ * @param user - the user to authorize
+ * @param users - the lower-cased `authorization.users`
+ * @param refused - checks that already refused the user and are skipped
+ */
+export async function policyAllows(
+  octokit: Octokit,
+  context: Context,
+  policy: AuthorizationPolicy,
+  user: string,
+  users: string[],
+  refused: RefusedChecks = {},
+): Promise<boolean> {
+  if (!user) {
+    return false
+  }
+  if (policy === 'anyone') {
+    return true
+  }
+  if (policy === 'trusted' && users.includes(user.toLowerCase())) {
+    return true
+  }
+  if (policy !== 'collaborators' && refused.member !== true && await checkOrgMember(octokit, context, user)) {
+    return true
+  }
+  if (refused.collaborator !== true && await checkCollaborator(octokit, context, user)) {
+    return true
+  }
+  return policy === 'trusted' && rootOwnersIncludes(octokit, context, user)
+}
+
+/**
+ * assertPolicy throws unless the `authorization.<key>` policy admits the user.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param auth - the resolved authorization section
+ * @param key - the policy to apply
+ * @param user - the user to authorize
+ * @param command - the command the user ran, for the error message
+ */
+export async function assertPolicy(
+  octokit: Octokit,
+  context: Context,
+  auth: ResolvedAuthorization,
+  key: 'labels' | 'hold' | 'close',
+  user: string,
+  command: string,
+): Promise<void> {
+  if (!await policyAllows(octokit, context, auth[key], user, auth.users)) {
+    throw new Error(`${user} is not authorized to run ${command}: authorization.${key} is ${auth[key]}`)
+  }
+}
+
+/**
+ * closePolicyAllows decides /close and /reopen for a user who is neither the
+ * author nor a collaborator: every `close` policy admits collaborators, so
+ * the configuration is read only on this path, and the collaborator check
+ * is not repeated. A configuration that cannot be loaded refuses, with a
+ * warning, so the refusal stays silent.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions event context
+ * @param user - the user the collaborator check refused
+ */
+export async function closePolicyAllows(
+  octokit: Octokit,
+  context: Context,
+  user: string,
+): Promise<boolean> {
+  let auth: ResolvedAuthorization
+  try {
+    auth = await loadAuthorization(octokit, context)
+  }
+  catch {
+    return false
+  }
+  return policyAllows(octokit, context, auth.close, user, auth.users, { collaborator: true })
+}
+
+// a configuration that cannot be loaded admits nobody new: the caller falls back to today's gate, and the
+// error goes to the log only, never into a public refusal comment
+async function loadAuthorization(octokit: Octokit, context: Context): Promise<ResolvedAuthorization> {
+  try {
+    return resolveAuthorization((await loadProwConfig(octokit, context)).authorization)
+  }
+  catch (e) {
+    core.warning(`authorization: could not load prow config: ${e}`)
+    throw e
   }
 }
 
@@ -325,6 +440,26 @@ async function assertPullRequestOwner(
   }
 
   return true
+}
+
+/**
+ * Whether the root OWNERS file of the default branch lists the user as a
+ * reviewer or an approver.
+ * @returns false when the repository has no root OWNERS file
+ */
+async function rootOwnersIncludes(
+  octokit: Octokit,
+  context: Context,
+  user: string,
+): Promise<boolean> {
+  const contents = await retrieveOwnersFile(octokit, context)
+  if (contents === '') {
+    return false
+  }
+
+  const owners = parseOwners('OWNERS', contents)
+  const login = user.toLowerCase()
+  return owners.reviewers.includes(login) || owners.approvers.includes(login)
 }
 
 /**

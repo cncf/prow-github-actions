@@ -1,4 +1,5 @@
 import type { MockInstance } from 'vitest'
+import dns from 'node:dns'
 import * as core from '@actions/core'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
@@ -13,9 +14,38 @@ import * as utils from '../testUtils'
 const catApi = 'https://api.thecatapi.com/v1/images/search'
 
 const server = setupServer()
+
+// msw answers every mocked request without resolving its host, so the only
+// way a unit test reaches dns is a socket the interceptor passed through
+// to the real network. Guard against it instead of trusting the mock.
+let lookup: MockInstance<typeof dns.lookup>
+
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
-afterEach(() => server.resetHandlers())
+beforeEach(() => {
+  lookup = vi.spyOn(dns, 'lookup')
+})
+afterEach(async () => {
+  server.resetHandlers()
+  // the passthrough is scheduled one setImmediate after the client attaches
+  // its reader; give a stray socket the chance to show up before asserting
+  await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setImmediate(resolve))
+  expect(lookup.mock.calls.map(call => call[0])).toEqual([])
+})
 afterAll(() => server.close())
+
+// A body-less mock response must still frame its (empty) body: without a
+// content-length, undici reads the body until the connection closes, so the
+// client's `body.cancel()` aborts a request undici still considers running.
+// undici then drops the socket, re-queues, and pre-connects a replacement
+// that never receives a request (the aborted one is discarded) - and
+// @mswjs/interceptors passes that idle socket through to the real host.
+function statusOnly(status: number, headers: Record<string, string> = {}) {
+  return new HttpResponse(null, {
+    status,
+    headers: { 'content-length': '0', ...headers },
+  })
+}
 
 function contextFor(body: string) {
   issueCommentEvent.comment.body = body
@@ -108,7 +138,7 @@ describe('/meow', () => {
       http.get(catApi, () => {
         calls++
         if (calls === 1)
-          return new HttpResponse(null, { status: 503 })
+          return statusOnly(503)
         return HttpResponse.json([{ url: 'https://cdn2.thecatapi.com/images/cat.jpg' }])
       }),
     )
@@ -129,7 +159,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, () => {
         calls++
-        return new HttpResponse(null, { status: 500 })
+        return statusOnly(500)
       }),
     )
     const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
@@ -263,7 +293,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, () => {
         calls++
-        return new HttpResponse(null, { status: 400 })
+        return statusOnly(400)
       }),
     )
     vi.spyOn(core, 'warning').mockImplementation(() => {})
@@ -384,10 +414,7 @@ describe('/meow', () => {
     // fails the test if the request is ever followed there
     server.use(
       http.get(catApi, () =>
-        new HttpResponse(null, {
-          status: 302,
-          headers: { location: 'https://redirect.example/cat' },
-        })),
+        statusOnly(302, { location: 'https://redirect.example/cat' })),
     )
     vi.spyOn(core, 'warning').mockImplementation(() => {})
 
@@ -451,7 +478,7 @@ describe('/meow', () => {
     server.use(
       http.get(catApi, () => {
         calls++
-        return new HttpResponse(null, { status: 429 })
+        return statusOnly(429)
       }),
     )
     vi.spyOn(core, 'warning').mockImplementation(() => {})

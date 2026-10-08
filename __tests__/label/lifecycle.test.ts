@@ -102,7 +102,40 @@ describe('built-in lifecycle, stage and status commands', () => {
 
     expect(mutations).toEqual([])
     expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('lifecycle: no allowed value in "bogus"; allowed: frozen, stale, rotten'),
+    )
+  })
+
+  it('/lifecycle with several values outside the defaults names them all', async () => {
+    const mutations = serveIssueAndRecordMutations([])
+
+    const setFailed = await run('/lifecycle', '/lifecycle bogus nope')
+
+    expect(mutations).toEqual([])
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('lifecycle: no allowed value in "bogus nope"; allowed: frozen, stale, rotten'),
+    )
+  })
+
+  it('/lifecycle without a value still fails as missing args', async () => {
+    const mutations = serveIssueAndRecordMutations([])
+
+    const setFailed = await run('/lifecycle', '/lifecycle')
+
+    expect(mutations).toEqual([])
+    expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('lifecycle: command args missing from body'),
+    )
+  })
+
+  it('/remove-lifecycle without a value still fails as missing args', async () => {
+    const mutations = serveIssueAndRecordMutations(['lifecycle/stale'])
+
+    const setFailed = await run('/lifecycle', '/remove-lifecycle')
+
+    expect(mutations).toEqual([])
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('remove-lifecycle: command args missing from body'),
     )
   })
 
@@ -134,7 +167,7 @@ describe('built-in lifecycle, stage and status commands', () => {
 
       expect(mutations).toEqual([])
       expect(setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('lifecycle: command args missing from body'),
+        expect.stringContaining('lifecycle: no allowed value in "stale"; allowed: frozen'),
       )
     })
 
@@ -145,6 +178,17 @@ describe('built-in lifecycle, stage and status commands', () => {
 
       expect(mutations).toEqual(['POST lifecycle/frozen'])
       expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('an empty section allows no value and says so', async () => {
+      const mutations = serveIssueAndRecordMutations([], yamlFile('lifecycle: []\n'))
+
+      const setFailed = await run('/lifecycle', '/lifecycle frozen')
+
+      expect(mutations).toEqual([])
+      expect(setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('lifecycle: no allowed value in "frozen"; allowed: none'),
+      )
     })
 
     it('a list-form section keeps the registry exclusive flag', async () => {

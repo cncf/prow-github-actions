@@ -23,7 +23,7 @@ export async function uncc(context: Context = github.context): Promise<void> {
 
   if (pullNumber === undefined) {
     throw new Error(
-      `github context payload missing pull number: ${context.payload}`,
+      `github context payload missing pull number: ${JSON.stringify(context.payload)}`,
     )
   }
 
