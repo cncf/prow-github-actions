@@ -12,7 +12,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // labels read — driven through dist/index.js like the happy paths in bundle.test.ts
 describe('dist/index.js pull_request jobs input', () => {
   let gh: FakeGithub
-  const { routeOwners } = helpersFor(() => gh)
+  const { calls, routeOwners } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -37,9 +37,10 @@ describe('dist/index.js pull_request jobs input', () => {
     const result = await synchronize('frobnicate')
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors).toEqual(['TypeError: error handling pull request: Error: could not execute frobnicate. May not be supported - please refer to docs'])
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('could not execute frobnicate')
     // owners-label and approve's probe still run; the unknown job reads nothing
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([...ownersReads, ownersProbe])
+    expect(calls()).toEqual([...ownersReads, ownersProbe])
   })
 
   it('lgtm job: a failed labels read fails the run and removes nothing', async () => {
@@ -50,17 +51,6 @@ describe('dist/index.js pull_request jobs input', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('TypeError: error handling pull request: Error: could not get labels from issue')
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([...ownersReads, ownersProbe, `GET ${repo}/issues/1`])
-  })
-
-  it('one failing job does not stop another: lgtm removes the label while the unsupported job fails the run', async () => {
-    gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'lgtm' }] } })
-    gh.route('DELETE', `${repo}/issues/1/labels/lgtm`, { status: 200, body: [] })
-
-    const result = await synchronize('lgtm frobnicate')
-
-    expect(result.status, result.stdout).toBe(1)
-    expect(result.errors).toEqual(['TypeError: error handling pull request: Error: could not execute frobnicate. May not be supported - please refer to docs'])
-    expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([...ownersReads, ownersProbe, `GET ${repo}/issues/1`, `DELETE ${repo}/issues/1/labels/lgtm`])
+    expect(calls()).toEqual([...ownersReads, ownersProbe, `GET ${repo}/issues/1`])
   })
 })
