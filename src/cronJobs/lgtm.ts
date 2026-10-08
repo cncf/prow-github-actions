@@ -42,7 +42,8 @@ interface MergePolicy {
  * through the shared merge path: the lgtm binding, GitHub's mergeability,
  * then the merge. It is the backstop of the event-driven tide handlers.
  * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused, listing the affected PRs.
+ * if any merge was refused or any evaluation threw, listing the affected PRs.
+ * Only a listing that cannot be read stops the run early.
  *
  * @param currentPage - the page to return from the github api
  * @param context - The github actions event context
@@ -81,7 +82,7 @@ export async function cronLgtm(
     return progress.jobsDone
   }
 
-  const results = await Promise.all(
+  await Promise.all(
     prs.map(async (pr) => {
       core.info(`processing pr: ${pr.number}`)
       if (pr.state === 'closed') {
@@ -98,16 +99,12 @@ export async function cronLgtm(
         }
       }
       catch (error) {
-        return error
+        // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
+        core.error(`could not evaluate pr #${pr.number}: ${error}`)
+        progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` })
       }
     }),
   )
-
-  for (const result of results) {
-    if (result instanceof Error) {
-      throw new TypeError(`error processing pr: ${result}`)
-    }
-  }
 
   // Recurse, continue to next page
   return await cronLgtm(currentPage + 1, context, progress)

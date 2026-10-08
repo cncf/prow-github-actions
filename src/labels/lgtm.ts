@@ -37,7 +37,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
 
   if (issueNumber === undefined) {
     throw new Error(
-      `github context payload missing issue number: ${context.payload}`,
+      `github context payload missing issue number: ${JSON.stringify(context.payload)}`,
     )
   }
 
