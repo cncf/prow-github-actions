@@ -165,8 +165,39 @@ describe('loadProwConfig', () => {
         approve: {},
         lgtm: {},
         sweep: {},
+        authorization: {},
         sources: [],
       })
+    })
+  })
+
+  describe('authorization', () => {
+    it('unions users across the org and repo tiers and lets the repo override the policies', async () => {
+      serve(project, 'authorization:\n  labels: trusted\n  close: trusted\n  users: [Alice, bob]\n')
+      serve('.github/prow.yaml', 'authorization:\n  close: members\n  users: [alice, carol]\n')
+      server.use(...utils.noOrgOrRepoConfigExcept(project, '.github/prow.yaml'))
+
+      const config = await loadProwConfig(octokit, context)
+
+      expect(config.authorization).toEqual({ labels: 'trusted', close: 'members', users: ['Alice', 'bob', 'carol'] })
+    })
+
+    it('reads the repository tier from the default branch, never a ref the event names, so a pull request cannot add its author to users', async () => {
+      const repoFile = new utils.ObserveRequest()
+      const orgFile = new utils.ObserveRequest()
+      serve(project, 'authorization:\n  users: [alice]\n', orgFile)
+      serve('.github/prow.yaml', 'authorization:\n  users: [bob]\n', repoFile)
+      server.use(...utils.noOrgOrRepoConfigExcept(project, '.github/prow.yaml'))
+      const prContext = new utils.MockContext({
+        ...issueCommentEvent,
+        issue: { ...issueCommentEvent.issue, pull_request: { url: 'https://api.github.com/repos/Codertocat/Hello-World/pulls/1' } },
+      })
+
+      const config = await loadProwConfig(octokit, prContext)
+
+      expect(config.authorization.users).toEqual(['alice', 'bob'])
+      expect(new URL(repoFile.ref!.url).searchParams.has('ref')).toBe(false)
+      expect(new URL(orgFile.ref!.url).searchParams.has('ref')).toBe(false)
     })
   })
 
