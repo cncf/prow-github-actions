@@ -43,3 +43,93 @@ jobs:
             git --no-pager diff --stat dist/
             exit 1
           fi
+
+  # Dependabot cannot run `npm run pack`, so bundled-dependency bumps always
+  # fail the dist/ drift gate. The rebuild is split across two jobs so the
+  # write token never coexists with dependency code (the bumped packages run
+  # during npm ci/build/pack): this job holds no secrets — credentials are not
+  # persisted and install scripts are disabled — and hands dist/ to the
+  # token-holding job below as an artifact.
+  repack-dist:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.drift.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm run pack
+      - name: Detect dist/ drift
+        id: drift
+        run: |
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist/ is up to date"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.drift.outputs.changed == 'true'
+        with:
+          name: repacked-dist-${{ github.event.pull_request.head.sha }}
+          path: dist/
+          retention-days: 1
+
+  # Commits the rebuilt dist/ to the dependabot branch. Runs no npm: the only
+  # inputs are the artifact from repack-dist and a short-lived App token,
+  # minted here and scoped by the app installation (contents:write). The App
+  # must be installed on this repository and its id/key stored as the
+  # Dependabot secrets REPACK_APP_ID / REPACK_APP_PRIVATE_KEY (dependabot-
+  # triggered runs only see Dependabot secrets). Pushing with a non-default
+  # token is also what makes the pushed commit re-trigger build-test.
+  push-repacked-dist:
+    needs: repack-dist
+    if: needs.repack-dist.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.REPACK_APP_ID }}
+          private-key: ${{ secrets.REPACK_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Refuse if the branch moved since the rebuild
+        run: |
+          if [ "$(git rev-parse HEAD)" != '${{ github.event.pull_request.head.sha }}' ]; then
+            echo "::error::${{ github.event.pull_request.head.ref }} moved since the rebuild; re-run the workflow"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repacked-dist-${{ github.event.pull_request.head.sha }}
+          path: dist/
+      - name: Commit rebuilt dist/ if it changed
+        run: |
+          # the artifact may only touch dist/; refuse anything else
+          if git status --porcelain | grep -qvE '^.. dist/'; then
+            echo "::error::artifact changed paths outside dist/"
+            git status --porcelain | grep -vE '^.. dist/'
+            exit 1
+          fi
+          if [ -z "$(git status --porcelain dist/)" ]; then
+            echo "dist/ is up to date"; exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dist/
+          git commit -s -m 'chore: repack dist/ for dependency bump'
+          git push --force-with-lease origin 'HEAD:refs/heads/${{ github.event.pull_request.head.ref }}'
