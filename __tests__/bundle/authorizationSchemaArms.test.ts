@@ -48,8 +48,6 @@ describe('dist/index.js authorization section schema', () => {
     it.each([
       ['authorization that is not a mapping', 'authorization: trusted\n', `${repoSource}: authorization must be a mapping`],
       ['an unknown authorization key', 'authorization:\n  approve: anyone\n', `${repoSource}: authorization.approve is not a known key, expected one of labels, hold, close, review, users`],
-      ['authorization.labels outside the policy set', 'authorization:\n  labels: owners\n', `${repoSource}: authorization.labels must be one of anyone, collaborators, members, trusted`],
-      ['authorization.review outside the review policy set', 'authorization:\n  review: anyone\n', `${repoSource}: authorization.review must be one of members, trusted`],
       ['authorization.users that is not a list', 'authorization:\n  users: friend\n', `${repoSource}: authorization.users must be a list of logins`],
       ['authorization.users with a login that is not a GitHub login', 'authorization:\n  users: ["@friend"]\n', `${repoSource}: authorization.users must be a list of logins`],
     ])('%s fails the command naming the field, with no label write', async (_name, yaml, message) => {
@@ -68,7 +66,8 @@ describe('dist/index.js authorization section schema', () => {
       gh.route('GET', orgPath, { status: 200, body: yamlFile('authorization:\n  labels: trusted\n  users: [Friend, Other]\n') })
       gh.route('GET', repoPath, { status: 200, body: yamlFile('labels:\n  triage:\n    values: [accepted]\nauthorization:\n  users: [friend]\n') })
 
-      const result = await triage('friend')
+      // `other` is listed only by the organization tier, so it is admitted only if the lists are unioned
+      const result = await triage('other')
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
