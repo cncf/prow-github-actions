@@ -160,7 +160,7 @@ function isOwnersPath(path: string): boolean {
 
 function decode(data: unknown, path: string): string {
   const file = data as { content?: string, encoding?: string }
-  if (!file.content || !file.encoding) {
+  if (file.content === undefined || !file.encoding) {
     throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`)
   }
   return Buffer.from(file.content, file.encoding as BufferEncoding).toString()

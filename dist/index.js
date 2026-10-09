@@ -41942,7 +41942,7 @@ function isOwnersPath(path) {
 }
 function decode(data, path) {
     const file = data;
-    if (!file.content || !file.encoding) {
+    if (file.content === undefined || !file.encoding) {
         throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
     }
     return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
@@ -42529,7 +42529,7 @@ async function retrieveOwnersFile(octokit, context) {
         }
         throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
     }
-    if (!data.content || !data.encoding) {
+    if (data.content === undefined || !data.encoding) {
         throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
     }
     const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
