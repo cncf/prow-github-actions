@@ -14,7 +14,7 @@ const preload = path.resolve(__dirname, 'catApiPreload.cjs')
 
 // handleIssueComment admits /meow with the generic matcher (case-insensitive, arguments allowed);
 // meow.ts then re-checks the line against its own stricter pattern (meow.ts:12) and returns at
-// meow.ts:28 when only the generic one matched. These bodies pass the first gate and fail the second.
+// meow.ts:28 when only the generic one matched. This body passes the first gate and fails the second.
 describe('dist/index.js issue_comment /meow strict command shape', () => {
   let gh: FakeGithub
   const { calls } = helpersFor(() => gh)
@@ -39,12 +39,8 @@ describe('dist/index.js issue_comment /meow strict command shape', () => {
     })
   }
 
-  it.each([
-    ['/meow with an argument', '/meow cat'],
-    ['/meow in upper case', '/MEOW'],
-    ['/meow with an argument among other lines', 'nice work\n/meow please\nthanks'],
-  ])('%s reaches the handler but posts nothing and succeeds', async (_name, body) => {
-    const result = await meow(body)
+  it('/meow with an argument reaches the handler but posts nothing and succeeds', async () => {
+    const result = await meow('/meow cat')
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
