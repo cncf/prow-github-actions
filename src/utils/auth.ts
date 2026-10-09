@@ -490,7 +490,7 @@ async function retrieveOwnersFile(
     )
   }
 
-  if (!data.content || !data.encoding) {
+  if (data.content === undefined || !data.encoding) {
     throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`)
   }
 
