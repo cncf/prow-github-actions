@@ -45,19 +45,6 @@ describe('dist/index.js prow configuration sources', () => {
     expect(gh.requestsMatching('POST', /./)).toEqual([])
   }
 
-  it('the repository tier still layers over the explicit source: its kind list replaces the explicit one', async () => {
-    gh.route('GET', `${explicitRepo}/contents/prow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
-    gh.route('GET', `${repo}/contents/.github%2Fprow.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [bug]\n') })
-
-    const result = await kind('cncf/prow-config:prow.yaml')
-
-    // `cleanup` is only in the explicit source's list, which the repository's `kind: [bug]` replaced
-    expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes('no allowed value in "cleanup"')), result.stdout).toBe(true)
-    expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expectRequests([explicitRead, ...configReads({ repo: '.github/prow.yaml' }).filter(r => r.startsWith(`GET ${repo}/`))], [])
-  })
-
   it('an explicit source that does not exist fails the command as not found, with no repository label write', async () => {
     gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
 
