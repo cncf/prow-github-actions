@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { blobSha } from '../utils/ownersFixtures'
 import { start } from './fakeGithub'
-import { helpersFor, ownersProbe, ownersReads, repo, token } from './helpers'
+import { helpersFor, ownersProbe, ownersReads, repo, repoLabels, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -43,10 +43,6 @@ describe('dist/index.js owners-label', () => {
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: names.map(name => ({ name })) } })
   }
 
-  function routeRepoLabels(...names: string[]) {
-    gh.route('GET', `${repo}/labels`, { status: 200, body: names.map(name => ({ name })) })
-  }
-
   function labelPosts() {
     return gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)
   }
@@ -54,7 +50,7 @@ describe('dist/index.js owners-label', () => {
   it('already carrying every declared label (compared case-insensitively): reads nothing more and writes nothing', async () => {
     routeOwners(ownersFiles, ['sdk/x.go'])
     routeIssueLabels('Area/SDK', 'AREA/docs', 'kind/bug')
-    routeRepoLabels('area/sdk', 'area/docs')
+    gh.route('GET', `${repo}/labels`, repoLabels('area/sdk', 'area/docs'))
 
     const result = await synchronize()
 
@@ -71,7 +67,7 @@ describe('dist/index.js owners-label', () => {
   it('declared labels the repository does not have: logs each skip and writes nothing', async () => {
     routeOwners(ownersFiles, ['sdk/x.go'])
     routeIssueLabels()
-    routeRepoLabels('kind/bug')
+    gh.route('GET', `${repo}/labels`, repoLabels('kind/bug'))
 
     const result = await synchronize()
 
