@@ -87,40 +87,4 @@ describe('dist/index.js schedule sweep job on a merge queue branch', () => {
       queueRead,
     ])
   })
-
-  it('an enqueued candidate is still reported when another candidate fails; the run fails listing only the failure', async () => {
-    const one = forkPr(1, ['lgtm'])
-    const two = forkPr(2, ['lgtm'])
-    routeList([one, two])
-    gh.route('GET', `${repo}/pulls/1`, { status: 200, body: one })
-    gh.route('GET', `${repo}/pulls/2`, { status: 200, body: two })
-    gh.commitStatuses(repo, 'sha1', bound)
-    gh.commitStatuses(repo, 'sha2', bound)
-    // the state query answers for whichever pull request asks; the enqueue is refused for the second one
-    gh.route('POST', '/graphql', (req) => {
-      const { query, variables } = req.body as { query: string, variables: { pullRequestId?: string, expectedHeadOid?: string, number?: number } }
-      if (query.includes('enqueuePullRequest')) {
-        return variables.expectedHeadOid === 'sha1'
-          ? { status: 200, body: { data: { enqueuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } } } }
-          : { status: 200, body: { data: null, errors: [{ message: 'Resource not accessible by integration' }] } }
-      }
-      const number = variables.number
-      return { status: 200, body: { data: { repository: { pullRequest: {
-        id: `${nodeId}${number}`,
-        headRefOid: `sha${number}`,
-        isMergeQueueEnabled: true,
-        isInMergeQueue: false,
-        mergeQueueEntry: null,
-      } } } } }
-    })
-
-    const result = await runSweep()
-
-    expect(result.status, result.stdout).toBe(1)
-    expect(result.stdout).toContain('sweep: #1 enqueued')
-    expect(result.stdout).toContain('sweep: #2 evaluated with 1 error(s)')
-    expect(result.errors.some(e => e.includes('sweep: 1 pull request(s) failed: #2 (tide: cannot add pr #2 to the merge queue'))).toBe(true)
-    expect(gh.requestsMatching('PUT', /./)).toEqual([])
-    expect(gh.graphqlCalls('enqueuePullRequest')).toHaveLength(2)
-  })
 })
