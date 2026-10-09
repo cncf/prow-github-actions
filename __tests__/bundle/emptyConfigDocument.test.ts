@@ -21,7 +21,7 @@ function yamlFile(text: string) {
 
 // the empty-document arm of parseProwConfig (src/utils/config.ts: `loaded === undefined || loaded === null` ->
 // `{}`), driven through dist/index.js: a blank .github/prow.yaml is a found configuration source with no
-// sections, which is not the same as having no file at all
+// sections, which is not the same as having no file at all; a comment-only file is the same case (issue #393)
 describe('dist/index.js with an empty .github/prow.yaml', () => {
   let gh: FakeGithub
   const { expectRequests } = helpersFor(() => gh)
@@ -45,10 +45,11 @@ describe('dist/index.js with an empty .github/prow.yaml', () => {
     })
   }
 
-  // a comment-only file belongs here too, but js-yaml 5 throws on zero-document input and the loader's
-  // `trim()` guard does not catch it (issue #393); add that case once parseProwConfig handles it
-  it('a blank file stops the repository tier search and serves /lifecycle from the built-in defaults', async () => {
-    const result = await run('', '/lifecycle stale', '/lifecycle')
+  it.each([
+    ['a blank file', ''],
+    ['a comment-only file', '# prow configuration\n# nothing enabled yet\n'],
+  ])('%s stops the repository tier search and serves /lifecycle from the built-in defaults', async (_name, yaml) => {
+    const result = await run(yaml, '/lifecycle stale', '/lifecycle')
 
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
