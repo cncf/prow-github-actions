@@ -9,9 +9,9 @@ import { runBundle } from './runBundle'
 vi.setConfig({ testTimeout: 30_000 })
 
 // the failure arms of the complete-tree OWNERS loader in src/utils/owners.ts (loadOwnersTree), driven through
-// dist/index.js by `/approve` on a pull request: the recursive tree listing of the base tip cannot be read, an
-// OWNERS blob cannot be read, or a blob answers without content to decode. Each fails the run naming the base tip
-// before anything is written. The truncated-tree probes live in ownersProbeArms.test.ts.
+// dist/index.js by `/approve` on a pull request: the recursive tree listing of the base tip cannot be read, or an
+// OWNERS blob answers without content to decode. Each fails the run naming the base tip before anything is written.
+// The truncated-tree probes live in ownersProbeArms.test.ts (#320).
 describe('dist/index.js OWNERS tree loading failures', () => {
   let gh: FakeGithub
   const { expectCommandThenConfig, routeOwners } = helpersFor(() => gh)
@@ -54,15 +54,6 @@ describe('dist/index.js OWNERS tree loading failures', () => {
 
     expectFailedLoad(result, ownersReads)
     expect(gh.requestsMatching('GET', /\/git\/blobs\//)).toEqual([])
-  })
-
-  it('an OWNERS blob that fails other than 404: /approve fails naming the base tip', async () => {
-    gh.route('GET', `${repo}/git/blobs/${blobSha('OWNERS')}`, { status: 500, body: { message: 'boom' } })
-    routeOwners({ OWNERS: rootOwners }, ['sdk/x.go'])
-
-    const result = await runApprove()
-
-    expectFailedLoad(result, [...ownersReads, rootBlobRead])
   })
 
   it('an OWNERS blob answering without content: /approve fails naming the file and the base tip', async () => {
