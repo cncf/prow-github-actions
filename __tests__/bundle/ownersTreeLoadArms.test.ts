@@ -11,7 +11,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // the failure arms of the complete-tree OWNERS loader in src/utils/owners.ts (loadOwnersTree), driven through
 // dist/index.js by `/approve` on a pull request: the recursive tree listing of the base tip cannot be read, or an
 // OWNERS blob answers without content to decode. Each fails the run naming the base tip before anything is written.
-// The truncated-tree probes live in ownersProbeArms.test.ts (#320).
+// The truncated-tree probes are covered by the owners probe arms test added in #320 (not yet merged).
 describe('dist/index.js OWNERS tree loading failures', () => {
   let gh: FakeGithub
   const { expectCommandThenConfig, routeOwners } = helpersFor(() => gh)
