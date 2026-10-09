@@ -41006,7 +41006,8 @@ function isNotFound(error) {
  * @param text - the yaml text
  */
 function parseProwConfig(source, text) {
-    const loaded = text.trim() === '' ? undefined : load(text);
+    // a comment-only file holds zero documents, which yaml.load rejects
+    const loaded = loadAll(text).length === 0 ? undefined : load(text);
     if (loaded === undefined || loaded === null) {
         return {};
     }
