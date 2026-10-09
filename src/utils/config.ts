@@ -367,7 +367,8 @@ function isNotFound(error: unknown): boolean {
  * @param text - the yaml text
  */
 export function parseProwConfig(source: string, text: string): Partial<ProwConfig> {
-  const loaded: unknown = text.trim() === '' ? undefined : yaml.load(text)
+  // a comment-only file holds zero documents, which yaml.load rejects
+  const loaded: unknown = yaml.loadAll(text).length === 0 ? undefined : yaml.load(text)
 
   if (loaded === undefined || loaded === null) {
     return {}
