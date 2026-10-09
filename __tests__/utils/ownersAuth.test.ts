@@ -297,6 +297,13 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     )
   })
 
+  it('treats a 0-byte OWNERS file as listing nobody', async () => {
+    server.use(...prHandlers({ OWNERS: '' }, ['src/file1.txt']))
+    await expect(authorize('approvers', 'alice')).rejects.toThrow(
+      'alice is not an approver for any changed file',
+    )
+  })
+
   it('requests the tree recursively and only fetches OWNERS blobs in ancestor directories', async () => {
     const observeTree = new utils.ObserveRequest()
     const observeDocsBlob = new utils.ObserveRequest()
