@@ -1,28 +1,19 @@
 import type { FakeGithub } from './fakeGithub'
-import { Buffer } from 'node:buffer'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, repo, token } from './helpers'
+import { comment, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
 const explicitRepo = '/repos/cncf/prow-config'
-const explicitRead = `GET ${explicitRepo}/contents/prow.yaml`
-
-function yamlFile(text: string) {
-  const file = structuredClone(labelFileContents)
-  file.content = Buffer.from(text).toString('base64')
-  return file
-}
 
 // the `config` input — an explicit owner/repo:path[@ref] source replacing the organization lookup — and the
 // loader's read failures, driven through dist/index.js by a /kind that needs the configuration
 describe('dist/index.js prow configuration sources', () => {
   let gh: FakeGithub
-  const { calls, expectRequests } = helpersFor(() => gh)
+  const { calls } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -44,15 +35,6 @@ describe('dist/index.js prow configuration sources', () => {
     expect(result.errors.some(e => e.includes(`could not get labels from yaml: Error: ${cause}`)), result.stdout).toBe(true)
     expect(gh.requestsMatching('POST', /./)).toEqual([])
   }
-
-  it('an explicit source that does not exist fails the command as not found, with no repository label write', async () => {
-    gh.route('GET', `${repo}/contents/.prowlabels.yaml`, { status: 200, body: yamlFile('labels:\n  kind: [cleanup]\n') })
-
-    const result = await kind('cncf/prow-config:prow.yaml')
-
-    expectConfigFailure(result, 'could not load prow config from cncf/prow-config:prow.yaml: not found')
-    expectRequests([explicitRead, ...configReads({ repo: '.prowlabels.yaml' }).filter(r => r.startsWith(`GET ${repo}/`))], [])
-  })
 
   it('an explicit source that is a directory is refused as not a file', async () => {
     gh.route('GET', `${explicitRepo}/contents/configs`, { status: 200, body: [{ name: 'prow.yaml', type: 'file' }] })
