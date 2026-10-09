@@ -126,6 +126,8 @@ describe('dist/index.js authorization policy arms', () => {
       expect(warnings(result.stdout).some(w => w.includes('authorization.close'))).toBe(true)
       expect(gh.requestsMatching('PATCH', /./)).toEqual([])
       expect(gh.requestsMatching('GET', /\/orgs\//)).toEqual([])
+      // the authorization section is read only once the collaborator read refused
+      expect(calls()[0]).toBe(`GET ${repo}/collaborators/stranger`)
       expectRequests([`GET ${repo}/collaborators/stranger`, ...configReads({ repo: '.github/prow.yaml' })], [])
     })
   })
@@ -171,6 +173,11 @@ describe('dist/index.js authorization policy arms', () => {
       expect(warnings(result.stdout).some(w => w.includes('authorization.review'))).toBe(true)
       expect(gh.requestsMatching('POST', /\/statuses\//)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
+      // the configuration error never reaches the public comment
+      const replies = gh.requestsMatching('POST', /\/issues\/1\/comments$/).map(r => (r.body as { body: string }).body)
+      expect(replies).toHaveLength(1)
+      expect(replies[0]).toContain('not a org member or collaborator')
+      expect(replies[0]).not.toContain('authorization')
     })
   })
 })
