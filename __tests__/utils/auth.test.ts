@@ -483,6 +483,7 @@ describe('authorization policies', () => {
       ['a root OWNERS reviewer', { owners: 'reviewers:\n  - alice\n' }, { anyone: true, collaborators: false, members: false, trusted: true }],
       ['a root OWNERS approver', { owners: 'approvers:\n  - alice\n' }, { anyone: true, collaborators: false, members: false, trusted: true }],
       ['nobody in particular', { owners: 'approvers:\n  - bob\n' }, { anyone: true, collaborators: false, members: false, trusted: false }],
+      ['nobody, with a 0-byte root OWNERS file', { owners: '' }, { anyone: true, collaborators: false, members: false, trusted: false }],
       ['nobody, with no root OWNERS file', {}, { anyone: true, collaborators: false, members: false, trusted: false }],
     ] as const)('%s', async (_, who, want) => {
       const fixture: { users?: readonly string[], member?: boolean, collaborator?: boolean, owners?: string } = who
