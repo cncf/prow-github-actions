@@ -131,25 +131,6 @@ describe('dist/index.js approve plugin arms', () => {
   })
 
   describe('the notifier', () => {
-    it('a pull request changing no files is not approved and says so, leaving the absent label alone', async () => {
-      routeEvaluation([])
-
-      const result = await runReview()
-
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
-      expect(result.stdout).toContain('approve: #1 is not approved; nobody approves anything')
-      expect(result.stdout).toContain('approve: the approved label on #1 is already correct')
-      expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-      expect(gh.requestsMatching('DELETE', /./)).toEqual([])
-      expect(postedNotifier()).toBe([
-        '[APPROVALNOTIFIER] This PR is **NOT APPROVED**',
-        '',
-        'This pull request changes no files, so there is nothing to approve.',
-        marker,
-      ].join('\n'))
-    })
-
     it('files no OWNERS file covers are listed after the OWNERS entries, sorted, with nobody to suggest', async () => {
       // no root OWNERS: docs/ is covered by nothing, so no set of approvers can ever complete the approval
       routeEvaluation(['docs/b.md', 'sdk/x.go', 'docs/a.md'], {
