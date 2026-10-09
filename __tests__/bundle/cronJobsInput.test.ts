@@ -8,7 +8,8 @@ import { runBundle } from './runBundle'
 vi.setConfig({ testTimeout: 30_000 })
 
 // the `jobs` input validation of the cron dispatcher, driven through dist/index.js: the push event routes to the
-// cron jobs like schedule and workflow_dispatch do, and a blank list fails the run before anything talks to the api
+// cron jobs like schedule and workflow_dispatch do, a blank list fails the run before anything talks to the api,
+// and a name the dispatcher does not know fails the run
 describe('dist/index.js cron jobs input', () => {
   let gh: FakeGithub
 
@@ -31,6 +32,15 @@ describe('dist/index.js cron jobs input', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => /please provide a list of space delimited/.test(e))).toBe(true)
+    expect(gh.requests).toEqual([])
+  })
+
+  it('an unknown job name fails the run lowercased, naming the docs, and calls no api', async () => {
+    const result = await runBundle({ eventName: 'workflow_dispatch', payload: {}, inputs: { ...token, jobs: 'Tide' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('could not execute tide')
     expect(gh.requests).toEqual([])
   })
 })
