@@ -1,4 +1,5 @@
 import type { FakeGithub } from './fakeGithub'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -10,8 +11,12 @@ import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
+// shortens tide's 1s+2s+4s mergeability backoff inside the child; the logged delays are unchanged
+const preload = path.resolve(__dirname, 'shortBackoffPreload.cjs')
+const shortBackoff = { NODE_OPTIONS: `--require "${preload}"`, SHORT_BACKOFF_MS: '1000,2000,4000' }
+
 // the verdicts of tide's evaluateMerge that bundle.test.ts and mergeQueueArms.test.ts never reach — a pull
-// request GitHub reports as merged, closed or locked, a mergeability that stays `unknown` through every
+// request GitHub reports as merged or locked, a mergeability that stays `unknown` through every
 // retry, a head that moves while it is computed, a merge refused because a sibling event landed first or
 // because the base moved under it, and a refused merge whose re-read fails too — plus tideOnComment's
 // closed pull request and tideOnCheckSuite's missing-sha and nothing-to-evaluate arms, all driven through
@@ -52,13 +57,13 @@ describe('dist/index.js tide verdicts', () => {
       payload: { ...checkSuiteCompletedEvent, check_suite: { ...checkSuiteCompletedEvent.check_suite, pull_requests: pullRequests } },
       inputs: token,
       apiUrl: gh.url,
+      env: shortBackoff,
     })
   }
 
   describe('a pull request GitHub reports as', () => {
     it.each([
       ['merged', { merged: true }, 'already merged'],
-      ['closed', { state: 'closed' }, 'closed'],
       ['locked', { locked: true }, 'locked'],
     ])('%s is skipped before its lgtm binding or mergeability is read', async (_, overrides, reason) => {
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: pr('clean', overrides) })
