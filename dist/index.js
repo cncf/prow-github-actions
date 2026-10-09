@@ -41466,21 +41466,6 @@ async function getLabelConfig(octokit, context) {
     return config.labels;
 }
 /**
- * getArgumentLabels returns the allowed values of one label section
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions event context
- * @param arg - the label section to return. For example, may be 'area', etc
- */
-async function getArgumentLabels(octokit, context, arg) {
-    const config = await getLabelConfig(octokit, context);
-    const section = config[arg];
-    if (!section) {
-        throw new Error(`${arg}: yaml malformed, expected '${arg}' top level key`);
-    }
-    return section.values;
-}
-/**
  * labelIssue will label the issue with the labels provided. Like Prow, a
  * label the repository does not have is refused rather than created by
  * GitHub with a default color.
@@ -43440,15 +43425,6 @@ function matchesLabelPattern(pattern, label) {
         at = found + part.length;
     }
     return true;
-}
-/**
- * anyLabelMatches reports whether any of the patterns matches any of the labels
- *
- * @param patterns - label patterns, see matchesLabelPattern
- * @param labels - the label names to test
- */
-function anyLabelMatches(patterns, labels) {
-    return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)));
 }
 
 ;// CONCATENATED MODULE: ./lib/utils/mergeGate.js

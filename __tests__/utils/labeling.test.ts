@@ -7,7 +7,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
-import { addPrefix, assertLabelsExist, getArgumentLabels, getLabelConfig, labelIssue } from '../../src/utils/labeling'
+import { addPrefix, assertLabelsExist, getLabelConfig, labelIssue } from '../../src/utils/labeling'
 import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
@@ -221,19 +221,5 @@ describe('getLabelConfig', () => {
     serveYaml('---\n')
 
     await expect(getLabelConfig(octokit, context)).resolves.toEqual({})
-  })
-
-  it('getArgumentLabels returns the values of one section', async () => {
-    serveYaml('level:\n  values: [sandbox]\n  exclusive: true\n')
-
-    await expect(getArgumentLabels(octokit, context, 'level')).resolves.toEqual(['sandbox'])
-  })
-
-  it('getArgumentLabels keeps the missing key error', async () => {
-    serveYaml('kind:\n  - cleanup\n')
-
-    await expect(getArgumentLabels(octokit, context, 'level')).rejects.toThrow(
-      `level: yaml malformed, expected 'level' top level key`,
-    )
   })
 })
