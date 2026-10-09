@@ -421,6 +421,7 @@ describe('parseProwConfig', () => {
     ['an empty string', ''],
     ['a document marker only', '---\n'],
     ['whitespace', '  \n\n'],
+    ['a comment-only file', '# prow configuration\n# nothing enabled yet\n'],
   ])('treats %s as an all-empty config', (_, text) => {
     expect(parseProwConfig('x', text)).toEqual({})
   })
