@@ -6,18 +6,21 @@ on:
   # lets a maintainer re-run the main baseline on demand
   workflow_dispatch:
   # tide merges with github.token don't trigger push runs on main;
-  # the daily schedule keeps a build-test baseline on the merged result
+  # the daily schedule keeps a build-test baseline on the merged result.
+  # GitHub emails scheduled-run failures to whoever last edited the cron line.
   schedule:
     - cron: '17 6 * * *'
 
 permissions:
   contents: read
 
-# One run per branch: a newer push to a pull request supersedes its pending run.
-# Runs on main are never cancelled, so every merge keeps its own result.
+# One run per pull request: a newer push supersedes its pending run. The PR
+# number keys the group, so same-named branches across forks never collide.
+# Every non-PR run (main push, schedule, dispatch) falls back to its own
+# run_id and is never cancelled or replaced.
 concurrency:
-  group: test-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build-test:
