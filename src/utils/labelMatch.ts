@@ -36,13 +36,3 @@ export function matchesLabelPattern(pattern: string, label: string): boolean {
   }
   return true
 }
-
-/**
- * anyLabelMatches reports whether any of the patterns matches any of the labels
- *
- * @param patterns - label patterns, see matchesLabelPattern
- * @param labels - the label names to test
- */
-export function anyLabelMatches(patterns: string[], labels: string[]): boolean {
-  return patterns.some(pattern => labels.some(label => matchesLabelPattern(pattern, label)))
-}

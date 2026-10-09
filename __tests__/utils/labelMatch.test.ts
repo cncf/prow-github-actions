@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { anyLabelMatches, matchesLabelPattern } from '../../src/utils/labelMatch'
+import { matchesLabelPattern } from '../../src/utils/labelMatch'
 
 describe('matchesLabelPattern', () => {
   it.each([
@@ -31,17 +31,5 @@ describe('matchesLabelPattern', () => {
     ['(lgtm)', 'lgtm'],
   ])('%s does not match %s', (pattern, label) => {
     expect(matchesLabelPattern(pattern, label)).toBe(false)
-  })
-})
-
-describe('anyLabelMatches', () => {
-  it('is true when one pattern matches one label', () => {
-    expect(anyLabelMatches(['needs-rebase', 'do-not-merge/*'], ['lgtm', 'do-not-merge/hold'])).toBe(true)
-  })
-
-  it('is false when nothing matches or either list is empty', () => {
-    expect(anyLabelMatches(['do-not-merge/*'], ['lgtm', 'hold'])).toBe(false)
-    expect(anyLabelMatches([], ['lgtm'])).toBe(false)
-    expect(anyLabelMatches(['lgtm'], [])).toBe(false)
   })
 })
