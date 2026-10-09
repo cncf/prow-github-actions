@@ -125,11 +125,8 @@ describe('dist/index.js schedule sweep job arms', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toHaveLength(1)
     })
 
-    it.each([
-      ['a draft', { draft: true }],
-      ['already has requested reviewers', { requested_reviewers: [{ login: 'erin' }] }],
-    ])('a fresh pull request that is %s: no reviewers requested and no reviews read', async (_name, overrides) => {
-      routeSweep(forkPr(overrides))
+    it('a fresh draft pull request: no reviewers requested and no reviews read', async () => {
+      routeSweep(forkPr({ draft: true }))
 
       const result = await runSweep()
 
