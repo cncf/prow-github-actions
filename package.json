@@ -32,7 +32,8 @@
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
-    "@octokit/rest": "^22.0.1"
+    "@octokit/rest": "^22.0.1",
+    "js-yaml": "^5.4.2"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",
@@ -40,7 +41,6 @@
     "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^5.0.3",
     "eslint": "^10.11.0",
-    "js-yaml": "^5.4.2",
     "msw": "^3.0.1",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0"

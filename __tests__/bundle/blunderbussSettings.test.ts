@@ -68,6 +68,21 @@ describe('dist/index.js blunderbuss settings', () => {
     expect(requested()).toEqual([['bob', 'carol']])
   })
 
+  // src/utils/pullRequestOwners.ts:96 and blunderbuss.ts:165: assignees are read lowercased and never picked
+  it.each([
+    ['one of the two reviewers is assigned, so the other is requested', ['Carol'], [['bob']]],
+    ['both reviewers are assigned, so there is nobody to request', ['BOB', 'carol'], []],
+  ])('an assignee is not a candidate: %s', async (_name, assignees, posts) => {
+    configure(`  exclude_approvers: true\n`, { assignees: assignees.map(login => ({ login })) })
+
+    const result = await opened()
+
+    expect(requested()).toEqual(posts)
+    if (posts.length === 0) {
+      expect(result.stdout).toContain('blunderbuss: no reviewer candidates for #1')
+    }
+  })
+
   it.each([
     ['one reviewer is already requested, so one more is picked', ['dave'], 1],
     ['two reviewers are already requested, so nobody is', ['dave', 'erin'], 0],
