@@ -45,6 +45,14 @@ describe('dist/index.js prow configuration sources', () => {
     expect(gh.requestsMatching('GET', /\/prow-config\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/configs`])
   })
 
+  it('an explicit source whose file does not exist at the ref fails as not found, not as a read error', async () => {
+    const result = await kind('cncf/prow-config:configs/prow.yaml@v2')
+
+    expectConfigFailure(result, 'could not load prow config from cncf/prow-config:configs/prow.yaml@v2: not found')
+    // the 404 is swallowed by the reader and surfaces as the loader's own message; the ref is passed through
+    expect(gh.requestsMatching('GET', /\/prow-config\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/configs%2Fprow.yaml?ref=v2`])
+  })
+
   it('a bare file name is refused before any read of the explicit source', async () => {
     const result = await kind('just-a-file.yaml')
 
