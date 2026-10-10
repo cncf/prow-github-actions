@@ -3,29 +3,14 @@ import { Buffer } from 'node:buffer'
 
 import { http } from 'msw'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
+import { baseBranch, baseSha, blobSha, prCommentEvent, pullBody } from './ownersData'
+
+// the src-free fixture data lives in ownersData so the bundle suite can import it
+// without loading src/ into the vitest worker; re-exported here for the unit tests
+export { baseBranch, baseSha, blobSha, prCommentEvent, pullBody }
 
 export const repo = `${utils.api}/repos/Codertocat/Hello-World`
-// every fixture pull request targets master; its tip is basesha unless a test serves another
-export const baseBranch = 'master'
-export const baseSha = 'basesha'
-
-export function prCommentEvent(body: string, commenter = 'Codertocat', author = 'some-author') {
-  const event = structuredClone(issueCommentEvent)
-  event.comment.body = body
-  event.comment.user.login = commenter
-  event.issue.user.login = author
-  return {
-    ...event,
-    issue: {
-      ...event.issue,
-      pull_request: {
-        url: 'https://api.github.com/repos/Codertocat/Hello-World/pulls/1',
-      },
-    },
-  }
-}
 
 export interface ChangedFile {
   filename: string
@@ -35,20 +20,6 @@ export interface ChangedFile {
 
 export function changedFiles(...files: (string | ChangedFile)[]): ChangedFile[] {
   return files.map(f => (typeof f === 'string' ? { filename: f, status: 'modified' } : f))
-}
-
-// an open, clean pull request without labels: the OWNERS plugins read its base, tide reads its labels and state
-export const pullBody = {
-  number: 1,
-  state: 'open',
-  locked: false,
-  draft: false,
-  merged: false,
-  mergeable: true,
-  mergeable_state: 'clean',
-  labels: [],
-  base: { ref: baseBranch, sha: baseSha },
-  head: { sha: 'headsha' },
 }
 
 export function pullHandler(observe?: utils.ObserveRequest, overrides: Record<string, unknown> = {}): HttpHandler {
@@ -62,10 +33,6 @@ export function branchHandler(sha = baseSha, branch = baseBranch, observe?: util
 
 export function filesHandler(files: ChangedFile[], observe?: utils.ObserveRequest): HttpHandler {
   return http.get(`${repo}/pulls/1/files`, utils.mockResponse(200, files, observe))
-}
-
-export function blobSha(path: string): string {
-  return `blob-${path.replace(/\//g, '-')}`
 }
 
 // the base branch tip, then the git tree and blob handlers for the OWNERS files given as { 'sdk/OWNERS': yaml }

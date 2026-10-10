@@ -1,7 +1,7 @@
 import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { prCommentEvent, pullBody } from '../utils/ownersFixtures'
+import { prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'

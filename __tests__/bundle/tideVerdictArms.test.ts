@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
-import { prCommentEvent } from '../utils/ownersFixtures'
+import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { configReads, helpersFor, ownersProbe, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'

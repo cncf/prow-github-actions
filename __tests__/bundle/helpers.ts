@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 import { expect } from 'vitest'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
-import { blobSha, pullBody } from '../utils/ownersFixtures'
+import { blobSha, pullBody } from '../utils/ownersData'
 
 export const repo = '/repos/Codertocat/Hello-World'
 export const token = { 'github-token': 'some-token' }

@@ -11,7 +11,7 @@ import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEve
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
-import { blobSha, prCommentEvent, pullBody } from '../utils/ownersFixtures'
+import { blobSha, prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, repoLabels, token } from './helpers'
 import { bundlePath, runBundle } from './runBundle'

@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
-import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
+import { blobSha, prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'

@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
-import { prCommentEvent } from '../utils/ownersFixtures'
+import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { comment, configReads, helpersFor, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
