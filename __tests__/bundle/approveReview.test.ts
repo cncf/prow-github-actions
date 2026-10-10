@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
-import { prCommentEvent, pullBody } from '../utils/ownersFixtures'
+import { prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'

@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
-import { blobSha } from '../utils/ownersFixtures'
+import { blobSha } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { configReads, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'

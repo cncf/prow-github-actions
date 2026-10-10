@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
-import { blobSha, prCommentEvent } from '../utils/ownersFixtures'
+import { blobSha, prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
 import { configReads, helpersFor, ownersProbe, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
