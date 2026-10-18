@@ -42284,10 +42284,12 @@ function getErrorDetails(error) {
             : String(error);
         return { status, message };
     }
+    /* v8 ignore start -- every caller forwards an Octokit rejection, which @octokit/request always wraps in a RequestError object, so no bundle input reaches this arm; the unit suite drives it with a primitive mockRejectedValueOnce */
     return {
         status: 'unknown',
         message: String(error),
     };
+    /* v8 ignore stop */
 }
 /**
  * checkOrgMember will check to see if the given user is a repo org member
