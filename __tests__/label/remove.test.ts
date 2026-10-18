@@ -27,10 +27,11 @@ describe('remove', () => {
     issueCommentEvent.comment.body = '/remove some-label'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
+    const removeSomeLabel = new utils.ObserveRequest()
     server.use(
       http.delete(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
-        utils.mockResponse(200),
+        utils.mockResponse(200, null, removeSomeLabel),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
@@ -42,21 +43,26 @@ describe('remove', () => {
       ),
     )
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
+    await expect(removeSomeLabel.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('removes multiple labels', async () => {
     issueCommentEvent.comment.body = '/remove some-label some-other-label'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
+    const removeSomeLabel = new utils.ObserveRequest()
+    const removeSomeOtherLabel = new utils.ObserveRequest()
     server.use(
       http.delete(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
-        utils.mockResponse(200),
+        utils.mockResponse(200, null, removeSomeLabel),
       ),
       http.delete(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-other-label`,
-        utils.mockResponse(200),
+        utils.mockResponse(200, null, removeSomeOtherLabel),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
@@ -68,7 +74,12 @@ describe('remove', () => {
       ),
     )
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
+    // every requested label is removed, not just the first
+    await expect(removeSomeLabel.called()).resolves.toBe('called')
+    await expect(removeSomeOtherLabel.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('fails if commenter is not collaborator', async () => {
