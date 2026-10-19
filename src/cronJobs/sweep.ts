@@ -1,4 +1,5 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
+import type { BlunderbussSettings } from '../plugins/blunderbuss'
 import type { ProwConfig } from '../utils/config'
 import type { Context } from '../utils/context'
 
@@ -47,6 +48,11 @@ const pageSize = 100
  * failure on one is collected and the rest still run. The run fails at the
  * end listing the failures.
  *
+ * With `blunderbuss.delay` the window reaches back a further `delay`: a pull
+ * request opened (or marked ready) inside the shifted window is due for
+ * reviewers now, even when nothing has touched it since. Those older pull
+ * requests get the blunderbuss step only.
+ *
  * @param context - the github actions event context
  * @param now - the current time, injectable for tests
  */
@@ -55,16 +61,30 @@ export async function sweep(context: Context = github.context, now: Date = new D
   const config = await loadProwConfig(octokit, context)
   const lookbackMs = resolveSweepLookback(config.sweep)
   const since = new Date(now.getTime() - lookbackMs)
+  const reviewers = blunderbussSettings(config)
+  const due: DueWindow = { from: new Date(since.getTime() - reviewers.delay), to: new Date(now.getTime() - reviewers.delay) }
 
-  const candidates = await recentlyUpdatedPulls(octokit, context, since)
+  const listed = await recentlyUpdatedPulls(octokit, context, due.from)
+  const candidates = listed.filter(pr => new Date(pr.updated_at) >= since)
+  const delayedOnly = listed.filter(pr => new Date(pr.updated_at) < since)
   core.info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`)
-
-  const result: SweepResult = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] }
-  if (candidates.length === 0) {
-    return result
+  if (reviewers.delay > 0) {
+    core.info(`sweep: ${delayedOnly.length} more checked for delayed reviewers, updated since ${due.from.toISOString()}`)
   }
 
-  const plugins = { lgtm: lgtmSettings(config), config, since }
+  const result: SweepResult = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] }
+  const plugins = { lgtm: lgtmSettings(config), config, reviewers, since, due }
+
+  await forEachLimited(delayedOnly, sweepConcurrency, async (pr) => {
+    try {
+      if (await branchHasOwners(octokit, context, pr.base.ref)) {
+        await requestReviewersIfDue(octokit, context, pr, plugins)
+      }
+    }
+    catch (e) {
+      result.failures.push({ number: pr.number, message: `blunderbuss: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  })
 
   await forEachLimited(candidates, sweepConcurrency, async (pr) => {
     const outcome = await sweepPullRequest(octokit, context, pr, plugins)
@@ -86,10 +106,18 @@ export async function sweep(context: Context = github.context, now: Date = new D
   return result
 }
 
+/** pull requests that became ready for review inside this window are due for delayed reviewers */
+interface DueWindow {
+  from: Date
+  to: Date
+}
+
 interface SweepPlugins {
   lgtm: ReturnType<typeof lgtmSettings>
   config: ProwConfig
+  reviewers: BlunderbussSettings
   since: Date
+  due: DueWindow
 }
 
 interface PullOutcome {
@@ -106,7 +134,9 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
   const tide = await loadTide(octokit, context, pr.base.ref)
   const ownersSteps: Step[] = [
     ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
-    ['blunderbuss', () => requestReviewersIfFresh(octokit, context, pr, plugins)],
+    ['blunderbuss', () => plugins.reviewers.delay > 0
+      ? requestReviewersIfDue(octokit, context, pr, plugins)
+      : requestReviewersIfFresh(octokit, context, pr, plugins)],
     ['approve', () => evaluateApproval(octokit, context, pr.number)],
   ]
   const steps: Step[] = [
@@ -160,7 +190,63 @@ async function requestReviewersIfFresh(octokit: Octokit, context: Context, pr: P
     return
   }
 
-  await requestOwnersReviewers(octokit, context, pr.number, blunderbussSettings(plugins.config), { explicit: false, rng: Math.random })
+  await requestOwnersReviewers(octokit, context, pr.number, plugins.reviewers, { explicit: false, rng: Math.random })
+}
+
+/**
+ * requestReviewersIfDue is blunderbuss with `delay`: a pull request whose
+ * review clock (opened, or the last `ready_for_review` when drafts are
+ * ignored) started inside the due window, and that still has no requested
+ * reviewer or team and no review, gets reviewers now.
+ */
+async function requestReviewersIfDue(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<void> {
+  const { reviewers: settings, due } = plugins
+  if (settings.ignore_drafts && pr.draft === true) {
+    core.debug(`sweep: #${pr.number} is a draft`)
+    return
+  }
+  if ((pr.requested_reviewers ?? []).length > 0 || (pr.requested_teams ?? []).length > 0) {
+    core.debug(`sweep: #${pr.number} already has requested reviewers`)
+    return
+  }
+
+  let start = new Date(pr.created_at)
+  if (start > due.to) {
+    core.debug(`sweep: #${pr.number} is not due for reviewers before ${new Date(start.getTime() + settings.delay).toISOString()}`)
+    return
+  }
+  if (settings.ignore_drafts) {
+    const ready = await lastReadyForReview(octokit, context, pr.number)
+    if (ready !== undefined && ready > start) {
+      start = ready
+    }
+  }
+  if (start < due.from || start > due.to) {
+    core.debug(`sweep: #${pr.number} became ready at ${start.toISOString()}, outside the due window`)
+    return
+  }
+
+  const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 })
+  if (reviews.length > 0) {
+    core.debug(`sweep: #${pr.number} already has reviews`)
+    return
+  }
+
+  await requestOwnersReviewers(octokit, context, pr.number, settings, { explicit: false, rng: Math.random })
+}
+
+async function lastReadyForReview(octokit: Octokit, context: Context, pullNumber: number): Promise<Date | undefined> {
+  let events: Array<{ event?: string, created_at?: string }>
+  try {
+    events = await octokit.paginate(octokit.issues.listEventsForTimeline, { ...context.repo, issue_number: pullNumber, per_page: 100 }) as Array<{ event?: string, created_at?: string }>
+  }
+  catch (e) {
+    throw new Error(`could not read the timeline: ${e}`)
+  }
+  const times = events
+    .filter(event => event.event === 'ready_for_review' && event.created_at !== undefined)
+    .map(event => new Date(event.created_at!).getTime())
+  return times.length === 0 ? undefined : new Date(Math.max(...times))
 }
 
 async function recentlyUpdatedPulls(octokit: Octokit, context: Context, since: Date): Promise<PullsListItem[]> {

@@ -6,6 +6,7 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 
 import { loadProwConfig } from '../utils/config'
+import { parseDuration } from '../utils/duration'
 import { newOctokit } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
@@ -15,6 +16,8 @@ export interface BlunderbussSettings {
   exclude_approvers: boolean
   ignore_drafts: boolean
   ignore_authors: string[]
+  /** milliseconds to wait before requesting; 0 requests on the event itself */
+  delay: number
 }
 
 export type Rng = () => number
@@ -33,6 +36,7 @@ export function blunderbussSettings(config: ProwConfig): BlunderbussSettings {
     exclude_approvers: raw.exclude_approvers ?? false,
     ignore_drafts: raw.ignore_drafts ?? true,
     ignore_authors: (raw.ignore_authors ?? []).map(login => login.toLowerCase()),
+    delay: parseDuration(raw.delay, 'blunderbuss.delay'),
   }
 }
 
@@ -78,6 +82,7 @@ function sample(items: string[], count: number, rng: Rng): string[] {
  * blunderbuss is the `pull_request` handler modelled on Prow's blunderbuss
  * plugin: on `opened` (and `ready_for_review` when drafts are ignored) it
  * requests reviews from the OWNERS reviewers covering the changed files.
+ * With `blunderbuss.delay` it defers to the `sweep` job instead.
  *
  * @param context - the github context of the current action event
  * @param rng - a source of numbers in [0, 1), injectable for tests
@@ -99,6 +104,11 @@ export async function blunderbuss(context: Context = github.context, rng: Rng = 
 
   if (action === 'ready_for_review' && !settings.ignore_drafts) {
     core.debug(`blunderbuss: skipping ${action} action`)
+    return
+  }
+
+  if (settings.delay > 0) {
+    core.info(`blunderbuss: #${pullNumber} ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`)
     return
   }
 

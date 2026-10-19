@@ -72,6 +72,8 @@ export interface BlunderbussConfig {
   ignore_drafts?: boolean
   /** pull request authors that never get reviewers assigned */
   ignore_authors?: string[]
+  /** wait this long after `opened` (or `ready_for_review`) and request only if nobody asked for a review meanwhile, ex: `1h`; default 0, at most 24h; the `sweep` job does the request */
+  delay?: string
 }
 
 export interface ApproveConfig {
@@ -169,6 +171,7 @@ export const defaultAuthorization: ResolvedAuthorization = {
 }
 
 export const defaultSweepLookback = '1h'
+export const maxBlunderbussDelayMs = 24 * 3_600_000
 export const maxSweepLookbackMs = 24 * 3_600_000
 
 /** repositories of the owner that may hold an organization wide prow.yaml, in precedence order */
@@ -603,12 +606,29 @@ function normalizeBlunderbuss(source: string, raw: unknown): BlunderbussConfig {
     throw new Error(`${source}: blunderbuss.ignore_authors must be a list of GitHub usernames`)
   }
 
+  if (raw.delay !== undefined) {
+    if (typeof raw.delay !== 'string') {
+      throw new TypeError(`${source}: blunderbuss.delay must be a duration string such as 1h or 30m`)
+    }
+    let ms: number
+    try {
+      ms = parseDuration(raw.delay, 'blunderbuss.delay')
+    }
+    catch (e) {
+      throw new Error(`${source}: ${e instanceof Error ? e.message : e}`)
+    }
+    if (ms > maxBlunderbussDelayMs) {
+      throw new Error(`${source}: blunderbuss.delay must not be longer than 24h`)
+    }
+  }
+
   return stripUndefined({
     request_count: raw.request_count as number | undefined,
     max_request_count: raw.max_request_count as number | undefined,
     exclude_approvers: raw.exclude_approvers as boolean | undefined,
     ignore_drafts: raw.ignore_drafts as boolean | undefined,
     ignore_authors: raw.ignore_authors as string[] | undefined,
+    delay: raw.delay as string | undefined,
   })
 }
 

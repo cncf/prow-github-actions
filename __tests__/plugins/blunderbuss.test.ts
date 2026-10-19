@@ -122,7 +122,12 @@ describe('blunderbussSettings', () => {
       exclude_approvers: false,
       ignore_drafts: true,
       ignore_authors: [],
+      delay: 0,
     })
+  })
+
+  it('reads delay as milliseconds', () => {
+    expect(blunderbussSettings({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: { delay: '1h30m' }, sources: [] }).delay).toBe(90 * 60_000)
   })
 
   it('lowercases ignore_authors', () => {
@@ -223,6 +228,18 @@ describe('blunderbuss handler', () => {
 
     await expect(observe.notCalled()).resolves.toBe('not called')
     expect(debug).toHaveBeenCalledWith('blunderbuss: #1 is a draft, waiting for ready_for_review')
+  })
+
+  it.each(['opened', 'ready_for_review'])('delay: %s requests nobody and leaves it to the sweep job', async (action) => {
+    serveConfig('blunderbuss:\n  delay: 1h\n')
+    servePr(owners, ['sdk/x.go'])
+    const observe = observeRequestReviewers()
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    await blunderbuss(prEvent(action), first)
+
+    await expect(observe.notCalled()).resolves.toBe('not called')
+    expect(info).toHaveBeenCalledWith(`blunderbuss: #1 ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`)
   })
 
   it('ready_for_review: requests reviewers for the former draft', async () => {

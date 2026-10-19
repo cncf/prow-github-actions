@@ -33,6 +33,7 @@ interface PullSpec {
   labels?: string[]
   draft?: boolean
   requested_reviewers?: string[]
+  requested_teams?: string[]
   head?: string
   mergeable_state?: string
   user?: string
@@ -51,6 +52,7 @@ function pull(spec: PullSpec) {
     created_at: spec.created ?? spec.updated ?? ago(10 * 60_000),
     updated_at: spec.updated ?? ago(10 * 60_000),
     requested_reviewers: (spec.requested_reviewers ?? []).map(login => ({ login })),
+    requested_teams: (spec.requested_teams ?? []).map(slug => ({ slug })),
     assignees: [],
     user: { login: spec.user ?? 'some-author' },
     head: { sha: spec.head ?? `sha${spec.number}` },
@@ -112,6 +114,9 @@ describe('resolveSweepLookback', () => {
     ['a non-string lookback', 'sweep:\n  lookback: 3600\n', 'x: sweep.lookback must be a duration string such as 1h or 30m'],
     ['a malformed lookback', 'sweep:\n  lookback: soon\n', 'x: invalid sweep.lookback \'soon\': expected a duration such as 5s, 2m or 500ms'],
     ['a zero lookback', 'sweep:\n  lookback: \'0\'\n', 'x: sweep.lookback must be longer than 0'],
+    ['a non-string blunderbuss.delay', 'blunderbuss:\n  delay: 3600\n', 'x: blunderbuss.delay must be a duration string such as 1h or 30m'],
+    ['a malformed blunderbuss.delay', 'blunderbuss:\n  delay: later\n', 'x: invalid blunderbuss.delay \'later\': expected a duration such as 5s, 2m or 500ms'],
+    ['a blunderbuss.delay over 24h', 'blunderbuss:\n  delay: 25h\n', 'x: blunderbuss.delay must not be longer than 24h'],
   ])('rejects %s', (_, text, error) => {
     expect(() => parseProwConfig('x', text)).toThrow(error)
   })
@@ -437,6 +442,82 @@ describe('sweep on a repository with OWNERS files', () => {
 
     await expect(sweep(context)).rejects.toThrow(/sweep: 1 pull request\(s\) failed: #1 \(owners-label: could not add labels/)
     await expect(merge.called()).resolves.toBe('called')
+  })
+})
+
+describe('sweep with blunderbuss.delay', () => {
+  const owners = { OWNERS: 'approvers:\n- alice\nreviewers:\n- carol\n' }
+
+  function serve(specs: PullSpec[], timelines: Record<number, string[]> = {}, reviewed: number[] = []) {
+    const tree = Object.keys(owners).map(path => ({ path, type: 'blob', sha: blobSha(path) }))
+    const requested: number[] = []
+    const timelineReads: number[] = []
+    server.use(
+      prowYaml('blunderbuss:\n  delay: 1h\n'),
+      utils.defaultBranchTree(Object.keys(owners)),
+      http.get(`${repo}/git/trees/basesha`, utils.mockResponse(200, { sha: 'basesha', truncated: false, tree })),
+      http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, [{ filename: 'x.go', status: 'modified' }])),
+      ...Object.entries(owners).map(([path, contents]) => http.get(`${repo}/git/blobs/${blobSha(path)}`, utils.mockResponse(200, { encoding: 'base64', content: Buffer.from(contents).toString('base64') }))),
+      http.get(`${repo}/issues/:number`, utils.mockResponse(200, { labels: [] })),
+      http.get(`${repo}/issues/:number/comments`, utils.mockResponse(200, [])),
+      http.post(`${repo}/issues/:number/comments`, utils.mockResponse(201, {})),
+      http.get(`${repo}/issues/:number/timeline`, ({ params }) => {
+        timelineReads.push(Number(params.number))
+        return json((timelines[Number(params.number)] ?? []).map(at => ({ event: 'ready_for_review', created_at: at })))
+      }),
+      http.get(`${repo}/pulls/:number/reviews`, ({ params }) => json(reviewed.includes(Number(params.number)) ? [{ id: 1, state: 'COMMENTED', user: { login: 'carol' } }] : [])),
+      http.post(`${repo}/pulls/:number/requested_reviewers`, ({ params }) => {
+        requested.push(Number(params.number))
+        return json({}, 201)
+      }),
+      utils.repoHasLabels(['approved', 'lgtm']),
+    )
+    servePulls(specs)
+    return { requested, timelineReads }
+  }
+
+  it('requests on a pull request opened an hour ago that nobody touched since, outside the normal window', async () => {
+    const { requested } = serve([{ number: 1, created: ago(70 * 60_000), updated: ago(70 * 60_000) }])
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
+    expect(requested).toEqual([1])
+  })
+
+  it('does not request before the delay has passed, nor after the due window', async () => {
+    const { requested, timelineReads } = serve([
+      { number: 1, created: ago(30 * 60_000), updated: ago(30 * 60_000) },
+      { number: 2, created: ago(3 * hour), updated: ago(90 * 60_000) },
+    ])
+
+    await expect(sweep(context)).resolves.toMatchObject({ failures: [] })
+    expect(requested).toEqual([])
+    // #1 is not due yet: no timeline read; #2 was opened long ago and never marked ready
+    expect(timelineReads).toEqual([2])
+  })
+
+  it('leaves alone a pull request with a requested reviewer, a requested team, a review or that is a draft', async () => {
+    const { requested } = serve([
+      { number: 1, created: ago(70 * 60_000), updated: ago(70 * 60_000), requested_reviewers: ['bob'] },
+      { number: 2, created: ago(70 * 60_000), updated: ago(70 * 60_000), requested_teams: ['sdk'] },
+      { number: 3, created: ago(70 * 60_000), updated: ago(70 * 60_000) },
+      { number: 4, created: ago(70 * 60_000), updated: ago(70 * 60_000), draft: true },
+    ], {}, [3])
+
+    await expect(sweep(context)).resolves.toMatchObject({ failures: [] })
+    expect(requested).toEqual([])
+  })
+
+  it('times a former draft from its last ready_for_review', async () => {
+    const { requested } = serve([
+      { number: 1, created: ago(5 * hour), updated: ago(70 * 60_000) },
+      { number: 2, created: ago(70 * 60_000), updated: ago(10 * 60_000) },
+    ], {
+      1: [ago(4 * hour), ago(70 * 60_000)],
+      2: [ago(10 * 60_000)],
+    })
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [2], failures: [] })
+    expect(requested).toEqual([1])
   })
 })
 

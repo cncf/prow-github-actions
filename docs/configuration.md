@@ -314,6 +314,7 @@ Field | Default | Meaning
 `exclude_approvers` | `false` | only `reviewers` are candidates, not `approvers`
 `ignore_drafts` | `true` | a draft waits for `ready_for_review`; `false` requests on `opened` and skips `ready_for_review`
 `ignore_authors` | `[]` | pull requests by these authors get no automatic request (case-insensitive)
+`delay` | `0` | wait this long after `opened` (or `ready_for_review`), then request only if the pull request still has no requested reviewer or team and no review; a Go style duration (`30m`, `1h`), at most `24h`. The [`sweep` job](./cron-jobs.md#sweep) makes the delayed request, so it must run on a schedule
 
 Event | Action
 --- | ---
@@ -328,6 +329,21 @@ files they cover: the request is filled from the best-covering candidates first 
 random among equals. With `max_request_count`, `request_count` is reduced so that the
 already requested reviewers plus the new ones do not exceed it. Nobody left to request is a
 debug-logged no-op; a refused request fails the run. No comment is posted.
+
+With `delay` the `opened` and `ready_for_review` handlers request nothing and log that the
+request is deferred. Each [`sweep`](./cron-jobs.md#sweep) run then requests reviewers on every
+pull request whose review clock started between `now − delay − lookback` and `now − delay` and
+that nobody has been asked to review yet. The clock starts at `opened`, or at the last
+`ready_for_review` when `ignore_drafts` is on (one timeline read per such pull request). The
+sweep's list reaches back the extra `delay`, so a pull request nobody touched since it opened is
+still found; those older pull requests get this step only. Install the sweep job even under
+`pull_request_target`; its other steps are idempotent. A request lands up to one sweep interval
+after it is due, plus GitHub's scheduling delay. `/auto-cc` is never delayed.
+
+```yaml
+blunderbuss:
+  delay: 1h
+```
 
 The workflow token needs `pull-requests: write` and the workflow must subscribe to
 `ready_for_review` for drafts; see [events](./events.md#issues-and-pull_request).
