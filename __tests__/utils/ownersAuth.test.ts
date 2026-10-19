@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
@@ -11,6 +12,7 @@ import * as utils from '../testUtils'
 import {
   baseSha,
   blobSha,
+  branchHandler,
   changedFiles,
   contentsResponse,
   filesHandler,
@@ -215,6 +217,69 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     )
     await expect(authorize('approvers', 'alice')).rejects.toThrow(
       `error loading OWNERS files at ${baseSha}`,
+    )
+  })
+
+  it('falls back to membership when a truncated tree probes every ancestor and finds no OWNERS', async () => {
+    const observeMember = new utils.ObserveRequest()
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('sdk/x.go')),
+      ...treeHandlers({}, { truncated: true }),
+      http.get(`${repo}/contents/sdk%2FOWNERS`, utils.mockResponse(404)),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(204, null, observeMember)),
+      http.get(`${repo}/collaborators/alice`, utils.mockResponse(404)),
+    )
+
+    // not "no OWNERS file covers sdk/x.go": a probe that found nothing means the branch has no OWNERS files
+    await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
+    await observeMember.called()
+  })
+
+  it('ignores a directory named OWNERS in the tree listing and never fetches it as a blob', async () => {
+    const observeBlob = new utils.ObserveRequest()
+    const observeMember = new utils.ObserveRequest()
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('src/file1.txt')),
+      branchHandler(),
+      http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(200, {
+        sha: baseSha,
+        truncated: false,
+        tree: [
+          { path: 'OWNERS', mode: '040000', type: 'tree', sha: 'dir-OWNERS' },
+          { path: 'OWNERS/README.md', mode: '100644', type: 'blob', sha: 'blob-readme' },
+        ],
+      })),
+      http.get(`${repo}/git/blobs/dir-OWNERS`, utils.mockResponse(500, null, observeBlob)),
+      http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(204, null, observeMember)),
+      http.get(`${repo}/collaborators/alice`, utils.mockResponse(404)),
+    )
+
+    await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
+    await observeMember.called()
+    await expect(observeBlob.notCalled()).resolves.toBe('not called')
+  })
+
+  it('rejects an OWNERS blob that comes back without an encoding', async () => {
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('src/file1.txt')),
+      branchHandler(),
+      http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(200, {
+        sha: baseSha,
+        truncated: false,
+        tree: [{ path: 'OWNERS', mode: '100644', type: 'blob', sha: blobSha('OWNERS') }],
+      })),
+      http.get(`${repo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(200, {
+        sha: blobSha('OWNERS'),
+        content: Buffer.from(rootOwners).toString('base64'),
+      })),
+    )
+
+    await expect(authorize('approvers', 'alice')).rejects.toThrow(
+      `error loading OWNERS files at ${baseSha}: Error: invalid OWNERS file returned from GitHub API for OWNERS`,
     )
   })
 

@@ -67,6 +67,20 @@ describe('repoHasOwners', () => {
     await expect(repoHasOwners(octokit, bareContext)).resolves.toBe(true)
   })
 
+  it('reads the default branch from the api when the payload names an empty default_branch', async () => {
+    const observeRepo = new utils.ObserveRequest()
+    const context = new utils.MockContext({
+      repository: { owner: { login: 'Codertocat' }, name: 'Hello-World', default_branch: '' },
+    })
+    server.use(
+      http.get(repo, utils.mockResponse(200, { default_branch: 'trunk' }, observeRepo)),
+      http.get(`${repo}/git/trees/trunk`, utils.mockResponse(200, treeResponse(['OWNERS']))),
+    )
+
+    await expect(repoHasOwners(octokit, context)).resolves.toBe(true)
+    await observeRepo.called()
+  })
+
   it('memoizes the answer per repository for the run', async () => {
     const observeTree = new utils.ObserveRequest()
     let calls = 0
