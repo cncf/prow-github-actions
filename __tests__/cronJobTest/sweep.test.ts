@@ -168,6 +168,24 @@ describe('sweep candidates', () => {
     expect(pages).toBe(2)
   })
 
+  it('includes a pull request updated exactly at the start of the window', async () => {
+    servePulls([{ number: 1, updated: ago(hour) }, { number: 2, updated: ago(hour + 1_000) }])
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1] })
+  })
+
+  it('a full page whose oldest entry sits exactly on the start of the window is not the last page', async () => {
+    const specs = Array.from({ length: 100 }, (_, i) => ({ number: i + 1, updated: ago(i < 99 ? 1_000 * (i + 1) : hour) }))
+    const listCalls = servePulls(specs)
+
+    const result = await sweep(context)
+    expect(result.candidates).toHaveLength(100)
+    expect(listCalls).toEqual([
+      '?state=open&sort=updated&direction=desc&per_page=100&page=1',
+      '?state=open&sort=updated&direction=desc&per_page=100&page=2',
+    ])
+  })
+
   it('honours sweep.lookback', async () => {
     server.use(prowYaml('sweep:\n  lookback: 10m\n'))
     servePulls([{ number: 1, updated: ago(5 * 60_000) }, { number: 2, updated: ago(30 * 60_000) }])
@@ -388,6 +406,37 @@ describe('sweep on a repository with OWNERS files', () => {
     await expect(reviewers.notCalled()).resolves.toBe('not called')
     // only #4 passed the cheap gates and needed the reviews read; approve reads reviews for every pr too
     expect(reviewReads.filter((n, i) => reviewReads.indexOf(n) !== i)).toEqual([4])
+  })
+
+  it('a pull request opened exactly at the start of the window is fresh and gets reviewers', async () => {
+    serveOwners(['sdk/x.go'])
+    servePulls([{ number: 1, created: ago(hour), updated: ago(hour) }])
+    const reviewers = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'area/sdk' }] })),
+      http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [])),
+      http.post(`${repo}/pulls/1/requested_reviewers`, utils.mockResponse(201, {}, reviewers)),
+    )
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1], failures: [] })
+    await expect(reviewers.called()).resolves.toBe('called')
+  })
+
+  it('a fresh pull request by an author in blunderbuss.ignore_authors gets no reviewers', async () => {
+    serveOwners(['sdk/x.go'])
+    server.use(prowYaml('blunderbuss:\n  ignore_authors:\n  - Dave\n'))
+    servePulls([{ number: 1, created: ago(60_000), updated: ago(60_000), user: 'dave' }])
+    const reviewers = new utils.ObserveRequest()
+    const debug = vi.spyOn(core, 'debug')
+    server.use(
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'area/sdk' }] })),
+      http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [])),
+      http.post(`${repo}/pulls/1/requested_reviewers`, utils.mockResponse(201, {}, reviewers)),
+    )
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [1], failures: [] })
+    await expect(reviewers.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith('blunderbuss: ignoring pull request by dave')
   })
 
   it('treats a pull request listed without labels or requested_reviewers as unlabelled with no reviewers', async () => {
