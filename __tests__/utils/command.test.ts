@@ -201,6 +201,13 @@ describe('code blocks', () => {
     expect(hasCommand('/approve', '\t/approve')).toBe(false)
   })
 
+  it('ignores an indented code block directly after a closing fence (no blank line)', () => {
+    // a closing fence ends its block, so the next indented line opens indented code
+    expect(hasCommand('/approve', 'text\n```\nx\n```\n    /approve')).toBe(false)
+    expect(hasCommand('/approve', 'text\n~~~\nx\n~~~\n\t/approve')).toBe(false)
+    expect(hasCommand('/approve', 'text\n```\nx\n```\n/approve')).toBe(true)
+  })
+
   it('keeps an indented code block going across its own lines', () => {
     const body = '\n    echo hi\n    /approve\n\n/lgtm'
 
