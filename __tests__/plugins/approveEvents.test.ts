@@ -322,6 +322,37 @@ describe('approveOnPullRequest', () => {
     await expect(writes.patchComment.notCalled()).resolves.toBe('not called')
   })
 
+  it('a notifier posted by another App\'s bot is edited in place, not duplicated', async () => {
+    const stale: Comment = { id: 900, body: `[APPROVALNOTIFIER] This PR is **NOT APPROVED**\n\nstale\n${notifierMarker}`, user: { login: 'prow-bot[bot]', type: 'Bot' } }
+    const writes = serve({ labels: ['approved'], comments: [stale, { body: '/approve', user: { login: 'bob' } }, { body: '/approve', user: { login: 'carol' } }] })
+
+    await approveOnPullRequest(prEvent('synchronize'))
+
+    await expect(writes.patchComment.called()).resolves.toBe('called')
+    await expect(writes.postComment.notCalled()).resolves.toBe('not called')
+  })
+
+  it('a human quoting the notifier marker is not mistaken for the notifier', async () => {
+    const quote: Comment = { id: 900, body: `> ${notifierMarker}\n\nwhat is this marker?`, user: { login: 'dave', type: 'User' } }
+    const writes = serve({ comments: [quote, { body: '/approve', user: { login: 'bob' } }] })
+
+    await approveOnPullRequest(prEvent('opened'))
+
+    await expect(writes.postComment.called()).resolves.toBe('called')
+    await expect(writes.patchComment.notCalled()).resolves.toBe('not called')
+  })
+
+  it('a capitalised Approved label already on the pull request is not added again', async () => {
+    const writes = serve({ labels: ['Approved'], comments: [{ body: '/approve', user: { login: 'bob' } }, { body: '/approve', user: { login: 'carol' } }] })
+
+    await approveOnPullRequest(prEvent('synchronize'))
+
+    await expect(writes.postComment.called()).resolves.toBe('called')
+    expect(await commentBody(writes.postComment)).toContain('This PR is **APPROVED**')
+    await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith('approve: the approved label on #1 is already correct')
+  })
+
   it('throws when the payload has no pull request', async () => {
     await expect(approveOnPullRequest(new utils.MockContext({ action: 'opened' }))).rejects.toThrow('missing pull request')
   })
