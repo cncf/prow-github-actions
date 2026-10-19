@@ -248,6 +248,17 @@ describe('approve.github_review: approved', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('a user token whose login is not the author submits the review, no self-approval warning', async () => {
+    const writes = serve({ user: 'Prow-Bot', author: 'some-author', comments: [approveBy('bob'), approveBy('carol')] })
+
+    await approveOnPullRequest(prEvent('opened'))
+
+    expect(writes.calls).toEqual(['label', 'notifier', 'review'])
+    expect(writes.created[0].commit_id).toBe(head)
+    expect(warning).not.toHaveBeenCalled()
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('github refusing a self-approval with 422: warning, not failure', async () => {
     const writes = serve({
       author: 'github-actions[bot]',
@@ -567,6 +578,11 @@ describe('withdrawalReason', () => {
     expect(withdrawalReason(owners(files), state(files), [], settings)).toBe('no approver covers a, b, c, d, e and 2 more')
   })
 
+  it('exactly five files are listed in full, with no "and 0 more"', () => {
+    const files = ['a', 'b', 'c', 'd', 'e']
+    expect(withdrawalReason(owners(files), state(files), [], settings)).toBe('no approver covers a, b, c, d, e')
+  })
+
   it('names who withdrew last, and /lgtm cancel only when lgtm acts as approve', () => {
     const events = [
       event('Bob', 'approve', 1),
@@ -578,6 +594,24 @@ describe('withdrawalReason', () => {
     expect(withdrawalReason(owners(['x']), state(['x']), events, settings)).toBe('no approver covers x; withdrawn by bob (/approve cancel)')
     expect(withdrawalReason(owners(['x']), state(['x']), events, { ...settings, lgtm_acts_as_approve: true }))
       .toBe('no approver covers x; withdrawn by bob (/approve cancel), carol (/lgtm cancel)')
+  })
+
+  it('a user is one person whatever the case: a later approve by Bob retracts bob\'s cancel, and the name is reported lowercased', () => {
+    expect(withdrawalReason(owners(['x']), state(['x']), [event('bob', 'cancel', 1), event('Bob', 'approve', 2)], settings))
+      .toBe('no approver covers x')
+    expect(withdrawalReason(owners(['x']), state(['x']), [event('Bob', 'approve', 1), event('BOB', 'cancel', 2)], settings))
+      .toBe('no approver covers x; withdrawn by bob (/approve cancel)')
+  })
+
+  it('an ignored lgtm event skips only itself: the cancels after it still count', () => {
+    const events = [event('carol', 'lgtm-cancel', 1), event('bob', 'cancel', 2)]
+    expect(withdrawalReason(owners(['x']), state(['x']), events, settings)).toBe('no approver covers x; withdrawn by bob (/approve cancel)')
+  })
+
+  it('the withdrawers are listed alphabetically, not in the order they acted', () => {
+    const events = [event('dave', 'cancel', 1), event('bob', 'review-changes', 2), event('carol', 'cancel', 3)]
+    expect(withdrawalReason(owners(['x']), state(['x']), events, settings))
+      .toBe('no approver covers x; withdrawn by bob (changes requested), carol (/approve cancel), dave (/approve cancel)')
   })
 })
 
