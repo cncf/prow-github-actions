@@ -65,6 +65,7 @@ export async function lgtm(context: Context = github.context): Promise<void> {
       await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url)
     }
     catch (e) {
+      /* v8 ignore next -- bindLgtm rethrows every failure as an Error; the String(e) arm is unreachable */
       await refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e)
     }
   }

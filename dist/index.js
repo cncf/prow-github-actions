@@ -45623,6 +45623,7 @@ async function lgtm(context = github_context) {
             await bindLgtm(octokit, context, headSha, commenterId, context.payload.comment?.html_url);
         }
         catch (e) {
+            /* v8 ignore next -- bindLgtm rethrows every failure as an Error; the String(e) arm is unreachable */
             await lgtm_refuse(octokit, context, issueNumber, e instanceof Error ? e.message : String(e), e);
         }
     }
