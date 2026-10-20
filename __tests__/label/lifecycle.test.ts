@@ -86,12 +86,33 @@ describe('built-in lifecycle, stage and status commands', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['/stage', 'beta', 'stage/alpha', 'stage%2Falpha', 'stage/beta'],
+    ['/status', 'in-review', 'status/in-progress', 'status%2Fin-progress', 'status/in-review'],
+  ])('%s %s replaces the existing %s', async (command, value, current, encoded, label) => {
+    const mutations = serveIssueAndRecordMutations([current])
+
+    const setFailed = await run(command, `${command} ${value}`)
+
+    expect(mutations).toEqual([`DELETE ${encoded}`, `POST ${label}`])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('/remove-lifecycle stale removes lifecycle/stale', async () => {
     const mutations = serveIssueAndRecordMutations(['lifecycle/stale'])
 
     const setFailed = await run('/lifecycle', '/remove-lifecycle stale')
 
     expect(mutations).toEqual(['DELETE lifecycle%2Fstale'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('/remove-lifecycle with two values removes both when both are on the issue', async () => {
+    const mutations = serveIssueAndRecordMutations(['lifecycle/stale', 'lifecycle/frozen'])
+
+    const setFailed = await run('/lifecycle', '/remove-lifecycle stale frozen')
+
+    expect(mutations).toEqual(['DELETE lifecycle%2Fstale', 'DELETE lifecycle%2Ffrozen'])
     expect(setFailed).not.toHaveBeenCalled()
   })
 
@@ -208,6 +229,37 @@ describe('built-in lifecycle, stage and status commands', () => {
 
       expect(mutations).toEqual(['POST lifecycle/frozen'])
       expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    describe('with a mixed-case yaml value', () => {
+      const mixedCase = yamlFile('lifecycle:\n  - Frozen\n')
+
+      it('/lifecycle matches the comment case-insensitively and applies the yaml casing', async () => {
+        const mutations = serveIssueAndRecordMutations([], mixedCase)
+
+        const setFailed = await run('/lifecycle', '/lifecycle frozen')
+
+        expect(mutations).toEqual(['POST lifecycle/Frozen'])
+        expect(setFailed).not.toHaveBeenCalled()
+      })
+
+      it('/lifecycle keeps a lower-case label on the issue that names the same value', async () => {
+        const mutations = serveIssueAndRecordMutations(['lifecycle/frozen'], mixedCase)
+
+        const setFailed = await run('/lifecycle', '/lifecycle frozen')
+
+        expect(mutations).toEqual(['POST lifecycle/Frozen'])
+        expect(setFailed).not.toHaveBeenCalled()
+      })
+
+      it('/remove-lifecycle removes a lower-case label on the issue that names the same value', async () => {
+        const mutations = serveIssueAndRecordMutations(['lifecycle/frozen'], mixedCase)
+
+        const setFailed = await run('/lifecycle', '/remove-lifecycle frozen')
+
+        expect(mutations).toEqual(['DELETE lifecycle%2Ffrozen'])
+        expect(setFailed).not.toHaveBeenCalled()
+      })
     })
   })
 })
