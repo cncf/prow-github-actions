@@ -15,8 +15,8 @@ const preload = path.resolve(__dirname, 'nonErrorRejectionPreload.cjs')
 // write (events.ts:50, handleIssueComment.ts:217, labelSync.ts:107) only run when a client call rejects
 // with something that is not an Error. Octokit wraps every fetch rejection in a RequestError, so the
 // preload hands the bundle one Response whose `status` getter throws a plain string, the one read that
-// @octokit/request makes outside its try/catch. The run must still fail once with that string in the
-// message, after the same request list as the Error-shaped failure, with no unhandled rejection.
+// @octokit/request makes outside its try/catch. Each path must retain its Error-shaped failure behavior
+// and report the string without an unhandled rejection; collaborator checks warn and deny the write.
 describe('dist/index.js when an api call rejects with a non-Error value', () => {
   let gh: FakeGithub
   const { calls } = helpersFor(() => gh)
@@ -102,6 +102,32 @@ describe('dist/index.js when an api call rejects with a non-Error value', () => 
       expect((posts[0].body as { name: string }).name).toBe('approved')
       expect(result.stdout).toContain(`label-sync: created ${posts.length - 1} [`)
       expect(result.stdout).toContain(', unchanged 0, failed 1')
+    })
+  })
+
+  describe('issue_comment: a non-Error collaborator rejection denies the write', () => {
+    it('/retitle warns with the primitive error details and does not update the issue', async () => {
+      const collaboratorPath = `${repo}/collaborators/Codertocat`
+      const target = `GET ${collaboratorPath}`
+      gh.route('GET', collaboratorPath, { status: 204 })
+      gh.route('PATCH', `${repo}/issues/1`, { status: 200, body: {} })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: comment('/retitle A better title'),
+        inputs: { ...token, 'prow-commands': '/retitle' },
+        apiUrl: gh.url,
+        env: env(target),
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout.split(/\r?\n/).filter(line => line.startsWith('::warning::'))).toEqual([
+        `::warning::encountered unexpected error checking collaborator status: status=unknown, message=${target} rejected with a string, not an Error`,
+      ])
+      expect(result.stderr).not.toMatch(/Unhandled|unhandledRejection/)
+      expect(calls()).toEqual([target])
+      expect(gh.requestsMatching('PATCH', /\/issues\/1$/)).toEqual([])
     })
   })
 })
