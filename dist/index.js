@@ -45227,7 +45227,9 @@ async function enforceRequiredLabels(octokit, context, target, options = {}) {
             await apply(octokit, context, issueNumber, rule, labels);
         }
         catch (e) {
-            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : e}`);
+            // every await in apply() rewraps its rejection in new Error (labelIssue, removeLabels, createComment,
+            // botCommentsWithMarker, deleteMissingComments), so only an Error reaches this catch from the bundle
+            errors.push(`${rule.missing_label}: ${e instanceof Error ? e.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; requireMatchingLabel.test.ts drives it */ e}`);
         }
     }
     if (errors.length > 0) {
