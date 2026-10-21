@@ -227,6 +227,33 @@ describe('dist/index.js delayed blunderbuss', () => {
     expect(requested()).toEqual([])
   })
 
+  it('a second sweep leaves the reviewers the first one requested alone', async () => {
+    configure()
+    // The pull list reflects every reviewer request the fake has accepted so
+    // far, as GitHub's would once the first sweep's request lands.
+    gh.route('GET', new RegExp(`^${repo}/pulls\\?`), () => {
+      const reviewers = requested().flatMap(body => (body as { reviewers: string[] }).reviewers)
+      return { status: 200, body: [pull({ requested_reviewers: reviewers.map(login => ({ login })) })] }
+    })
+    routeSweep()
+
+    const first = await runSweep()
+
+    expect(first.status, first.stdout).toBe(0)
+    expect(first.errors).toEqual([])
+    expect(requested()).toEqual([{ reviewers: ['bob'] }])
+    expect(reviewReads()).toHaveLength(1)
+
+    const second = await runSweep()
+
+    expect(second.status, second.stdout).toBe(0)
+    expect(second.errors).toEqual([])
+    expect(second.stdout).toContain('sweep: #1 already has requested reviewers')
+    expect(requested()).toEqual([{ reviewers: ['bob'] }])
+    expect(reviewReads()).toHaveLength(1)
+    expect(timelineReads()).toHaveLength(1)
+  })
+
   it.each([
     ['3600', 'blunderbuss.delay must be a duration string such as 1h or 30m'],
     ['later', 'invalid blunderbuss.delay \'later\': expected a duration such as 5s, 2m or 500ms'],
