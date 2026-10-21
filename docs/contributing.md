@@ -57,3 +57,40 @@ requests it makes, its exit code, and its `::error::` output. Because it tests
 the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
+
+### Phantom "uncovered" branches after an `await`
+
+The unit run lists four branches as uncovered that every test run in fact
+drives: `close.ts:39`, `reopen.ts:36`, `approve.ts:504` and `auth.ts:220`
+(it reports 1652/1656 branches because of them; the e2e run repeats the last
+two). Each is an `if` with no `else` whose condition was assigned from an
+expression in which an `await` is only sometimes reached (`a || (await b())`,
+or a ternary with an `await` in each arm). V8 opens a fresh block-count range
+at the point an async function resumes, so the range enclosing the `if` counts
+only the calls that resumed from that particular `await`, while the then-block
+is counted correctly; the implicit else that the v8 provider derives as
+"enclosing minus then" then comes out as zero or negative. The giveaway is a
+negative hit count in `lcov.info`, which a well-formed `BRDA` record cannot
+carry:
+
+```sh
+awk '/^SF:/{f=$0} /^BRDA:/{split($0,a,","); if (a[4] ~ /^-/) print f, $0}' coverage/lcov.info
+```
+
+Do not add tests, `/* v8 ignore */` markers or a lower branch threshold for
+these: the arm is covered, and an ignore marker would hide a real miss on the
+same line. A minimal reproduction against `@vitest/coverage-v8` 5.0.4:
+
+```ts
+export async function gate(a: boolean, b: boolean): Promise<string> {
+  const ok = a || (await Promise.resolve(b))
+  if (ok)
+    return 'yes'
+  return 'no'
+}
+// gate(true, false) ×3, gate(false, true), gate(false, false)
+// → BRDA for the `if`: then 4, else -2 (it ran once)
+```
+
+In the same reproduction an explicit `else { … }` block, which owns a V8
+range of its own, is counted correctly.

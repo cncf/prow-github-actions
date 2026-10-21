@@ -4,7 +4,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { bindLgtm, isLgtmBound, lgtmOnPullRequest, lgtmSettings, unbindLgtm } from '../../src/plugins/lgtmBinding'
+import { bindLgtm, hasLgtmLabel, isLgtmBound, lgtmOnPullRequest, lgtmSettings, unbindLgtm } from '../../src/plugins/lgtmBinding'
 import { mergeProwConfig } from '../../src/utils/config'
 import { newOctokit } from '../../src/utils/octokit'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -38,6 +38,17 @@ describe('lgtmSettings', () => {
   it('binds by default and honours lgtm.bind_to_commit', () => {
     expect(lgtmSettings({ ...mergeProwConfig({}, {}), sources: [] })).toEqual({ bind_to_commit: true })
     expect(lgtmSettings({ ...mergeProwConfig({}, { lgtm: { bind_to_commit: false } }), sources: [] })).toEqual({ bind_to_commit: false })
+  })
+})
+
+describe('hasLgtmLabel', () => {
+  it.each([
+    ['lgtm among other labels', ['approved', 'lgtm', 'kind/bug'], true],
+    ['LGTM in another case', ['LGTM'], true],
+    ['only other labels', ['approved', 'kind/bug'], false],
+    ['no labels', [], false],
+  ])('%s', (_, labels, expected) => {
+    expect(hasLgtmLabel(labels)).toBe(expected)
   })
 })
 
@@ -121,6 +132,19 @@ describe('the binding primitives', () => {
     expect(body).not.toHaveProperty('target_url')
   })
 
+  it('unbindLgtm sets prow/lgtm to pending and truncates the description to 140 characters', async () => {
+    const status = new utils.ObserveRequest()
+    server.use(http.post(`${repo}/statuses/abc`, utils.mockResponse(201, {}, status)))
+
+    await expect(unbindLgtm(octokit, context, 'abc', 'y'.repeat(200))).resolves.toBeUndefined()
+
+    expect(await status.body()).toEqual({
+      state: 'pending',
+      context: 'prow/lgtm',
+      description: 'y'.repeat(140),
+    })
+  })
+
   it('unbindLgtm warns instead of throwing', async () => {
     server.use(http.post(`${repo}/statuses/abc`, utils.mockResponse(500, { message: 'boom' })))
     const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
@@ -138,6 +162,15 @@ describe('the binding primitives', () => {
     server.use(http.get(`${repo}/commits/abc/status`, utils.mockResponse(200, { state: 'x', statuses })))
 
     await expect(isLgtmBound(octokit, context, 'abc')).resolves.toBe(bound)
+  })
+
+  it('isLgtmBound reads the combined status with per_page=100', async () => {
+    const combined = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/commits/abc/status`, utils.mockResponse(200, { state: 'x', statuses: [] }, combined)))
+
+    await isLgtmBound(octokit, context, 'abc')
+
+    expect(new URL(combined.ref!.url).searchParams.get('per_page')).toBe('100')
   })
 
   it('isLgtmBound wraps any other error without the permission hint', async () => {

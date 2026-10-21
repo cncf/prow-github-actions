@@ -7,6 +7,7 @@ import {
   expandOwnersSet,
   ownersDir,
   ownersInclude,
+  parseGroup,
   parseOwners,
   resetOwnersCaches,
 } from '../../src/utils/owners'
@@ -191,6 +192,25 @@ describe('effectiveOwners', () => {
   })
 })
 
+describe('parseGroup', () => {
+  it('splits @org/team-slug into its org and slug', () => {
+    expect(parseGroup('@myorg/maintainers')).toEqual({ org: 'myorg', slug: 'maintainers' })
+    expect(parseGroup('@my-org/team.1')).toEqual({ org: 'my-org', slug: 'team.1' })
+  })
+
+  it.each([
+    ['alice', 'a plain login'],
+    ['@bob', 'an @ without a slash'],
+    ['@myorg/a/b', 'a third path segment'],
+    ['@myorg/', 'an empty slug'],
+    ['@/team', 'an empty org'],
+    ['@my org/team', 'whitespace in the org'],
+    ['@myorg/te am', 'whitespace in the slug'],
+  ])('is undefined for %s (%s)', (entry) => {
+    expect(parseGroup(entry)).toBeUndefined()
+  })
+})
+
 describe('expandGroups', () => {
   const context = { repo: { owner: 'MyOrg', repo: 'r' } } as never
 
@@ -226,6 +246,8 @@ describe('expandGroups', () => {
     expect([...result]).toEqual(['alice'])
     expect(core.warning).toHaveBeenCalledTimes(2)
     expect(core.warning).toHaveBeenCalledWith('OWNERS: ignoring @bob: a group is written @<org>/<team-slug>')
+    // not reported as a group of org "myorg/a": the extra segment makes it malformed, not foreign
+    expect(core.warning).toHaveBeenCalledWith('OWNERS: ignoring @myorg/a/b: a group is written @<org>/<team-slug>')
   })
 
   it('warns once per entry per run, however many files list it', async () => {

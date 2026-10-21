@@ -142,6 +142,21 @@ describe('parseProwConfig', () => {
       })
     })
 
+    it('accepts an object value without a color, in a list and in a values mapping without exclusive', () => {
+      expect(parseProwConfig('x', 'kind:\n  - { name: bug }\n  - { name: docs, description: Documentation only }\n')).toEqual({
+        labels: {
+          kind: {
+            values: ['bug', 'docs'],
+            definitions: [{ name: 'bug' }, { name: 'docs', description: 'Documentation only' }],
+          },
+        },
+      })
+
+      const section = parseProwConfig('x', 'kind:\n  values:\n    - { name: bug }\n').labels!.kind
+      expect(section).toEqual({ values: ['bug'], definitions: [{ name: 'bug' }] })
+      expect(section.exclusive).toBeUndefined()
+    })
+
     it('rejects a color that is not six hex digits', () => {
       expect(() => parseProwConfig('x', 'kind:\n  - { name: bug, color: "#d73a4a" }\n')).toThrow(
         `kind: invalid color '#d73a4a' for label 'bug', expected 6 hex digits`,
@@ -417,6 +432,14 @@ describe('parseProwConfig', () => {
     expect(debug).toHaveBeenCalledWith('prow.yaml: ignoring unknown top level keys: plugins, owners')
   })
 
+  it('does not log when every top level key is known', () => {
+    const debug = vi.spyOn(core, 'debug')
+
+    parseProwConfig('prow.yaml', 'labels:\n  kind: [bug]\ntide:\n  merge_method: squash\n')
+
+    expect(debug).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['an empty string', ''],
     ['a document marker only', '---\n'],
@@ -486,6 +509,18 @@ describe('mergeProwConfig', () => {
       sweep: {},
       authorization: {},
     })
+  })
+
+  it('keeps the organization lgtm and sweep sections when the repository names neither, and lets the repository override them', () => {
+    const org = parseProwConfig('org', 'lgtm:\n  bind_to_commit: true\nsweep:\n  lookback: 6h\n')
+    const repo = parseProwConfig('repo', 'labels:\n  kind: [bug]\n')
+
+    expect(mergeProwConfig(org, repo).lgtm).toEqual({ bind_to_commit: true })
+    expect(mergeProwConfig(org, repo).sweep).toEqual({ lookback: '6h' })
+
+    const override = parseProwConfig('repo', 'lgtm:\n  bind_to_commit: false\nsweep:\n  lookback: 30m\n')
+    expect(mergeProwConfig(org, override).lgtm).toEqual({ bind_to_commit: false })
+    expect(mergeProwConfig(org, override).sweep).toEqual({ lookback: '30m' })
   })
 
   it('merges authorization per key, repo over org, and unions users without case-insensitive duplicates', () => {

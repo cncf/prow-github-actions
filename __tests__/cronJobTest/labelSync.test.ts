@@ -71,8 +71,9 @@ const complete: RepoLabel[] = [
   { name: 'status/in-review', color: 'cccccc' },
 ]
 
+// names compare case-insensitively so a change can re-case the label it replaces
 function withChanges(...changes: RepoLabel[]): RepoLabel[] {
-  return complete.map(label => changes.find(change => change.name === label.name) ?? label)
+  return complete.map(label => changes.find(change => change.name.toLowerCase() === label.name.toLowerCase()) ?? label)
 }
 
 function dispatchContext() {
@@ -161,20 +162,38 @@ describe('label-sync job', () => {
   })
 
   it('writes nothing when only the case of the name or color differs, or when the repo has extra metadata', async () => {
-    serveConfig()
+    serveConfig(`${prowYaml}    - name: Needs-Triage\n      color: ededed\n`)
     const observePatch = new utils.ObserveRequest()
     server.use(http.patch(`${repo}/labels/:name`, utils.mockResponse(200, {}, observePatch)))
-    const writes = recordWrites(withChanges(
-      { name: 'Kind/Bug', color: 'D73A4A', description: 'Something is not working' },
-      { name: 'LGTM', color: '15DD18', description: complete.find(l => l.name === 'lgtm')!.description },
-      { name: 'kind/cleanup', color: 'bbbbbb', description: 'a description the config does not know' },
-    ))
+    const existing = [
+      ...withChanges(
+        { name: 'Kind/Bug', color: 'D73A4A', description: 'Something is not working' },
+        { name: 'LGTM', color: '15DD18', description: complete.find(l => l.name === 'lgtm')!.description },
+        { name: 'kind/cleanup', color: 'bbbbbb', description: 'a description the config does not know' },
+      ),
+      // the configured name is the one carrying capitals here
+      { name: 'needs-triage', color: 'ededed' },
+    ]
+    // the fixture really holds the re-cased entries; otherwise this test would prove nothing
+    expect(existing.map(l => l.name)).toContain('Kind/Bug')
+    expect(existing.map(l => l.name)).toContain('LGTM')
+    const writes = recordWrites(existing)
 
     const result = await labelSync(dispatchContext())
 
     expect(writes).toEqual([])
     await expect(observePatch.notCalled()).resolves.toBe('not called')
-    expect(result).toEqual({ created: [], updated: [], unchanged: complete.length, failures: [] })
+    expect(result).toEqual({ created: [], updated: [], unchanged: complete.length + 1, failures: [] })
+  })
+
+  it('treats an empty configured description and a null repository description as in sync', async () => {
+    serveConfig(`${prowYaml}    - name: triage\n      description: ""\n`)
+    const writes = recordWrites([...complete, { name: 'triage', color: 'ededed', description: null }])
+
+    const result = await labelSync(dispatchContext())
+
+    expect(writes).toEqual([])
+    expect(result).toEqual({ created: [], updated: [], unchanged: complete.length + 1, failures: [] })
   })
 
   it('never deletes a label the configuration does not mention', async () => {
@@ -195,11 +214,13 @@ describe('label-sync job', () => {
     const writes = recordWrites([])
     const half = Math.ceil(complete.length / 2)
     const pages = new Set<string | null>()
+    const perPage = new Set<string | null>()
     server.use(
       http.get(`${repo}/labels`, ({ request }) => {
         const url = new URL(request.url)
         const page = url.searchParams.get('page')
         pages.add(page)
+        perPage.add(url.searchParams.get('per_page'))
         if (page === null || page === '1') {
           return json(complete.slice(0, half), 200, { Link: `<${repo}/labels?per_page=100&page=2>; rel="next"` })
         }
@@ -210,6 +231,8 @@ describe('label-sync job', () => {
     const result = await labelSync(dispatchContext())
 
     expect([...pages]).toEqual([null, '2'])
+    // the largest page the api allows, so a repository with up to 100 labels costs one request
+    expect([...perPage]).toEqual(['100'])
     expect(writes).toEqual([])
     expect(result.unchanged).toBe(complete.length)
   })
@@ -241,8 +264,10 @@ describe('label-sync job', () => {
     expect(writes).toEqual([])
     expect(setFailed).not.toHaveBeenCalled()
     const lines = info.mock.calls.map(([line]) => String(line))
-    expect(lines.some(line => line.includes('would create') && line.includes('kind/bug'))).toBe(true)
-    expect(lines.some(line => line.includes('would update') && line.includes('lgtm'))).toBe(true)
+    // the fixture's lgtm carries neither the configured color nor any description, so both fields drift
+    expect(lines).toEqual([
+      `label-sync (dry-run): would create 1 [kind/bug], would update 1 [lgtm (color, description)], unchanged ${complete.length - 2}`,
+    ])
   })
 
   it('fails the run when the repository labels cannot be listed', async () => {

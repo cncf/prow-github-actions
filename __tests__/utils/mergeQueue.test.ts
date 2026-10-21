@@ -168,12 +168,18 @@ describe('enqueue', () => {
   it.each([
     ['The expected head OID does not match', 'head_moved'],
     ['expectedHeadOid mismatch: head_oid changed', 'head_moved'],
+    // one message per alternative, so no wording is covered only by its neighbour
+    ['expected head did not match', 'head_moved'],
+    ['the head OID of the pull request has changed', 'head_moved'],
     ['Pull request is already in the merge queue', 'already_queued'],
     ['Pull request is not mergeable', 'not_ready'],
     ['Required status checks have not passed', 'not_ready'],
+    ['Required reviews are missing', 'not_ready'],
+    ['Checks are still running', 'not_ready'],
     ['Pull request is not ready to be enqueued', 'not_ready'],
     ['Resource not accessible by integration', 'forbidden'],
     ['You do not have permission to enqueue', 'forbidden'],
+    ['Forbidden', 'forbidden'],
     ['Something unexpected', 'other'],
   ])('classifies "%s" as %s', async (message, kind) => {
     graphql(null, message)
@@ -233,6 +239,7 @@ describe('enqueuedByBot', () => {
     ['renovate[BOT]', true],
     ['alice', false],
     ['github-actions-fan', false],
+    ['my-github-actions', false],
     ['bot', false],
   ])('%s -> %s', (login, expected) => {
     expect(enqueuedByBot({ state: 'QUEUED', position: 1, enqueuer: login })).toBe(expected)

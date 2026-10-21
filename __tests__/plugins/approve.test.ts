@@ -98,6 +98,27 @@ describe('computeApproval', () => {
     expect(computeApproval(owners, [at('zed', 'approve')], settings).approved).toBe(true)
   })
 
+  it('require_self_approval: skipping the author\'s own event does not stop the later events from counting', () => {
+    const owners = pullOwners({ OWNERS: 'approvers:\n- alice\n- zed\n' }, ['src/a.go'], 'alice')
+    const settings = { ...defaults, require_self_approval: true }
+
+    const state = computeApproval(owners, [at('alice', 'approve'), at('zed', 'approve')], settings)
+    expect(state.approved).toBe(true)
+    expect([...state.approvers]).toEqual(['zed'])
+  })
+
+  it('lists the approvers of the pull request and of each file alphabetically, whatever order they approved in', () => {
+    const owners = pullOwners({ OWNERS: 'approvers:\n- alice\n- bob\n' }, ['src/a.go'])
+
+    const state = computeApproval(owners, [at('bob', 'approve'), at('alice', 'approve')], defaults)
+    expect([...state.approvers]).toEqual(['alice', 'bob'])
+    expect([...state.coveredFiles]).toEqual([['src/a.go', ['alice', 'bob']]])
+
+    // the first changed file is covered by bob alone, the second by alice alone
+    const split = pullOwners({ 'a/OWNERS': 'approvers:\n- bob\n', 'b/OWNERS': 'approvers:\n- alice\n' }, ['a/x.go', 'b/y.go'])
+    expect([...computeApproval(split, [at('bob', 'approve'), at('alice', 'approve')], defaults).approvers]).toEqual(['alice', 'bob'])
+  })
+
   it('the latest of /approve and /approve cancel per user wins', () => {
     const owners = pullOwners({ OWNERS: rootOwners }, ['src/a.go'])
 
@@ -241,6 +262,13 @@ describe('approvalEvents', () => {
     ], [])).toEqual([])
   })
 
+  it('skips a comment by any Bot user, not only github-actions[bot], and one whose login is empty', () => {
+    expect(approvalEvents([
+      { id: 1, body: '/approve', user: user('renovate[bot]', 'Bot'), created_at: '2024-01-01T00:00:01Z' },
+      { id: 2, body: '/approve', user: user('', 'User'), created_at: '2024-01-01T00:00:02Z' },
+    ], [])).toEqual([])
+  })
+
   it('turns APPROVED and CHANGES_REQUESTED reviews by humans into events and ignores the rest', () => {
     const events = approvalEvents([], [
       { id: 1, state: 'APPROVED', user: user('Alice'), submitted_at: '2024-01-01T00:00:01Z' },
@@ -254,6 +282,18 @@ describe('approvalEvents', () => {
     expect(events).toEqual([
       { user: 'alice', kind: 'review-approved', at: new Date('2024-01-01T00:00:01Z') },
       { user: 'bob', kind: 'review-changes', at: new Date('2024-01-01T00:00:02Z') },
+    ])
+  })
+
+  it('with a user token, a bot\'s APPROVED review and a pending review are still skipped, not mistaken for the token\'s own', () => {
+    const events = approvalEvents([], [
+      { id: 1, state: 'APPROVED', user: user('github-actions[bot]', 'Bot'), submitted_at: '2024-01-01T00:00:01Z' },
+      { id: 2, state: 'APPROVED', user: user('alice'), submitted_at: null },
+      { id: 3, state: 'APPROVED', user: user('bob'), submitted_at: '2024-01-01T00:00:03Z' },
+    ], 'token-user')
+
+    expect(events).toEqual([
+      { user: 'bob', kind: 'review-approved', at: new Date('2024-01-01T00:00:03Z') },
     ])
   })
 

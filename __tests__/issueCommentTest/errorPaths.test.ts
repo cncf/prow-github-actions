@@ -29,6 +29,8 @@ afterAll(() => server.close())
 const issue = `${utils.api}/repos/Codertocat/Hello-World/issues/1`
 const pull = `${utils.api}/repos/Codertocat/Hello-World/pulls/1`
 const forbidden = { message: 'Resource not accessible by integration' }
+// every wrap interpolates the rejection (`${e}`), so the failure names the GitHub refusal, not just the step
+const cause = 'HttpError: Resource not accessible by integration'
 const author = issueCommentEvent.issue.user.login
 
 function comment(body: string, commenter = author) {
@@ -63,14 +65,14 @@ describe('/assign error paths', () => {
     vi.mocked(auth.checkCommenterAuth).mockResolvedValueOnce(true)
     failing('post', `${issue}/assignees`)
 
-    await expect(assign(comment('/assign'))).rejects.toThrow(/could not self assign/)
+    await expect(assign(comment('/assign'))).rejects.toThrow(`could not self assign: ${cause}`)
   })
 
   it('wraps a failed assignment of authorized users', async () => {
     vi.mocked(auth.getOrgCollabCommentUsers).mockResolvedValueOnce(['some-user'])
     failing('post', `${issue}/assignees`)
 
-    await expect(assign(comment('/assign @some-user'))).rejects.toThrow(/could not add assignees/)
+    await expect(assign(comment('/assign @some-user'))).rejects.toThrow(`could not add assignees: ${cause}`)
   })
 })
 
@@ -84,7 +86,7 @@ describe('/unassign error paths', () => {
   it('wraps a failed self unassignment', async () => {
     failing('delete', `${issue}/assignees`)
 
-    await expect(unassign(comment('/unassign'))).rejects.toThrow(/could not remove assignee/)
+    await expect(unassign(comment('/unassign'))).rejects.toThrow(`could not remove assignee: ${cause}`)
   })
 
   it('wraps a failed unassignment of another user', async () => {
@@ -92,7 +94,7 @@ describe('/unassign error paths', () => {
     failing('delete', `${issue}/assignees`)
 
     await expect(unassign(comment('/unassign @some-user'))).rejects.toThrow(
-      /could not remove assignee/,
+      `could not remove assignee: ${cause}`,
     )
   })
 })
@@ -106,14 +108,14 @@ describe('/cc error paths', () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
     failing('post', `${pull}/requested_reviewers`)
 
-    await expect(cc(comment('/cc'))).rejects.toThrow(/could not self cc/)
+    await expect(cc(comment('/cc'))).rejects.toThrow(`could not self cc: ${cause}`)
   })
 
   it('wraps a failed review request for authorized users', async () => {
     vi.mocked(auth.getOrgCollabCommentUsers).mockResolvedValueOnce(['some-user'])
     failing('post', `${pull}/requested_reviewers`)
 
-    await expect(cc(comment('/cc @some-user'))).rejects.toThrow(/could not request reviewers/)
+    await expect(cc(comment('/cc @some-user'))).rejects.toThrow(`could not request reviewers: ${cause}`)
   })
 })
 
@@ -126,7 +128,7 @@ describe('/uncc error paths', () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
     failing('delete', `${pull}/requested_reviewers`)
 
-    await expect(uncc(comment('/uncc'))).rejects.toThrow(/could not self uncc/)
+    await expect(uncc(comment('/uncc'))).rejects.toThrow(`could not self uncc: ${cause}`)
   })
 })
 
@@ -140,7 +142,7 @@ describe('/reopen error paths', () => {
   it('wraps a failed reopen', async () => {
     failing('patch', issue)
 
-    await expect(reopen(comment('/reopen'))).rejects.toThrow(/could not open issue/)
+    await expect(reopen(comment('/reopen'))).rejects.toThrow(`could not open issue: ${cause}`)
   })
 })
 
@@ -154,7 +156,7 @@ describe('/close error paths', () => {
   it('wraps a failed close', async () => {
     failing('patch', issue)
 
-    await expect(close(comment('/close'))).rejects.toThrow(/could not close issue/)
+    await expect(close(comment('/close'))).rejects.toThrow(`could not close issue: ${cause}`)
   })
 })
 
@@ -170,7 +172,7 @@ describe('/retitle error paths', () => {
     failing('patch', issue)
 
     await expect(retitle(comment('/retitle new title'))).rejects.toThrow(
-      /could not update issue/,
+      `could not update issue: ${cause}`,
     )
   })
 })
@@ -184,6 +186,6 @@ describe('/lock error paths', () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
     failing('put', `${issue}/lock`)
 
-    await expect(lock(comment('/lock'))).rejects.toThrow(/could not lock issue/)
+    await expect(lock(comment('/lock'))).rejects.toThrow(`could not lock issue: ${cause}`)
   })
 })

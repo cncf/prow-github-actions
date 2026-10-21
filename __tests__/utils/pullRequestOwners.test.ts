@@ -29,6 +29,13 @@ afterAll(() => server.close())
 const octokit = new Octokit({ auth: 'some-token' })
 const context = new utils.MockContext(prCommentEvent('/approve'))
 
+// a second repository, to show the memos are keyed by more than the pull number or branch name
+const otherRepo = `${utils.api}/repos/Other/Repo`
+const otherContext = new utils.MockContext({
+  ...prCommentEvent('/approve'),
+  repository: { ...prCommentEvent('/approve').repository, name: 'Repo', owner: { login: 'Other' } },
+})
+
 const rootOwners = 'approvers:\n- alice\nreviewers:\n- rita\nlabels:\n- kind/root\n'
 const sdkOwners = 'approvers:\n- bob\nreviewers:\n- ryan\nlabels:\n- area/sdk\n'
 
@@ -93,12 +100,44 @@ describe('loadPullRequestOwners', () => {
     expect(owners.perFile.has('old/a.go')).toBe(true)
   })
 
-  it('defaults author, draft, reviewers, assignees and labels when the pull omits them', async () => {
-    server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
+  it('lists a path once when a rename frees it and another entry reuses it', async () => {
+    // `a.go` renamed to `b.go` while a new `a.go` is added: `a.go` is both a previous_filename and a filename
+    server.use(...prHandlers(
+      { OWNERS: rootOwners },
+      [{ filename: 'b.go', previous_filename: 'a.go', status: 'renamed' }, { filename: 'a.go', status: 'added' }],
+    ))
 
     const owners = await loadPullRequestOwners(octokit, context, 1)
 
-    expect(owners).toMatchObject({ author: '', draft: false, requestedReviewers: [], assignees: [], labels: [] })
+    expect(owners.files).toEqual(['b.go', 'a.go'])
+    expect(owners.perFile.size).toBe(2)
+  })
+
+  it('defaults author, draft, state, reviewers, assignees and labels when the pull omits them', async () => {
+    // the shared pullBody sets draft: false, state: 'open' and labels: []; JSON drops undefined, so these are absent
+    server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt'], {
+      user: undefined,
+      draft: undefined,
+      state: undefined,
+      requested_reviewers: undefined,
+      assignees: undefined,
+      labels: undefined,
+    }))
+
+    const owners = await loadPullRequestOwners(octokit, context, 1)
+
+    expect(owners).toMatchObject({ author: '', draft: false, open: false, requestedReviewers: [], assignees: [], labels: [] })
+  })
+
+  it('reports draft and open only for draft: true and state: open', async () => {
+    server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt'], { draft: true, state: 'open' }))
+    const draft = await loadPullRequestOwners(octokit, context, 1)
+    expect(draft).toMatchObject({ draft: true, open: true })
+
+    resetPullRequestOwnersCache()
+    server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt'], { draft: false, state: 'closed' }))
+    const closed = await loadPullRequestOwners(octokit, context, 1)
+    expect(closed).toMatchObject({ draft: false, open: false })
   })
 
   it('memoizes per pull request: a second call in the same run makes no requests', async () => {
@@ -157,6 +196,27 @@ describe('loadPullRequestOwners', () => {
 
     await observePull.called()
     expect(other.number).toBe(2)
+  })
+
+  it('keys the memo by repository: the same pull number in another repository is fetched again', async () => {
+    server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
+    const first = await loadPullRequestOwners(octokit, context, 1)
+
+    const observePull = new utils.ObserveRequest()
+    server.use(
+      http.get(`${otherRepo}/pulls/1`, utils.mockResponse(200, { base: { ref: baseBranch, sha: baseSha }, head: { sha: 'otherhead' } }, observePull)),
+      http.get(`${otherRepo}/pulls/1/files`, utils.mockResponse(200, changedFiles('sdk/x.go'))),
+      http.get(`${otherRepo}/branches/${baseBranch}`, utils.mockResponse(200, { name: baseBranch, commit: { sha: baseSha } })),
+      http.get(`${otherRepo}/git/trees/${baseSha}`, utils.mockResponse(200, { sha: baseSha, truncated: false, tree: [] })),
+    )
+
+    const other = await loadPullRequestOwners(octokit, otherContext, 1)
+
+    await observePull.called()
+    expect(other).not.toBe(first)
+    expect(other.headSha).toBe('otherhead')
+    expect(other.tree.hasOwners).toBe(false)
+    expect(first.tree.hasOwners).toBe(true)
   })
 
   it('resetPullRequestOwnersCache forces a fresh fetch', async () => {
@@ -260,6 +320,25 @@ describe('loadPullRequestOwners', () => {
       expect(two.baseSha).toBe('new')
       expect(branches).toBe(1)
       expect(trees).toBe(1)
+    })
+
+    it('is keyed by repository: the same branch name in another repository is read again', async () => {
+      server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
+      const first = await loadPullRequestOwners(octokit, context, 1)
+
+      const observeBranch = new utils.ObserveRequest()
+      server.use(
+        http.get(`${otherRepo}/pulls/1`, utils.mockResponse(200, { base: { ref: baseBranch, sha: 'old' }, head: { sha: 'headsha' } })),
+        http.get(`${otherRepo}/pulls/1/files`, utils.mockResponse(200, changedFiles('src/file1.txt'))),
+        http.get(`${otherRepo}/branches/${baseBranch}`, utils.mockResponse(200, { name: baseBranch, commit: { sha: 'other-tip' } }, observeBranch)),
+        http.get(`${otherRepo}/git/trees/other-tip`, utils.mockResponse(200, emptyTree('other-tip'))),
+      )
+
+      const other = await loadPullRequestOwners(octokit, otherContext, 1)
+
+      await observeBranch.called()
+      expect(first.baseSha).toBe(baseSha)
+      expect(other.baseSha).toBe('other-tip')
     })
 
     it('resetPullRequestOwnersCache forgets the tip too', async () => {

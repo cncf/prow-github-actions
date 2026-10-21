@@ -147,6 +147,41 @@ describe('hold', () => {
       await expect(observeLegacy.notCalled()).resolves.toBe('not called')
     })
 
+    it('removes a mixed-case Hold and DO-NOT-MERGE/HOLD under their own names: label names fold case', async () => {
+      issueCommentEvent.comment.body = '/hold cancel'
+      const commentContext = new utils.MockContext(issueCommentEvent)
+
+      server.use(http.get(issueUrl, utils.mockResponse(200, issueWithLabels('Hold', 'DO-NOT-MERGE/HOLD'))))
+      const observeNew = observeDelete('DO-NOT-MERGE/HOLD')
+      const observeLegacy = observeDelete('Hold')
+
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      await handleIssueComment(commentContext)
+      await expect(observeNew.called()).resolves.toBe('called')
+      await expect(observeLegacy.called()).resolves.toBe('called')
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
+    it('removes the label under its own name when the configured hold.label differs from it only by case', async () => {
+      issueCommentEvent.comment.body = '/hold cancel'
+      const commentContext = new utils.MockContext(issueCommentEvent)
+
+      const file = structuredClone(labelFileContents)
+      file.content = Buffer.from('hold:\n  label: Do-Not-Merge/Hold\n').toString('base64')
+      server.use(
+        http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file)),
+        http.get(issueUrl, utils.mockResponse(200, issueWithLabels('do-not-merge/hold'))),
+      )
+      const observeLower = observeDelete('do-not-merge/hold')
+      const observeConfigured = observeDelete('Do-Not-Merge/Hold')
+
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      await handleIssueComment(commentContext)
+      await expect(observeLower.called()).resolves.toBe('called')
+      await expect(observeConfigured.notCalled()).resolves.toBe('not called')
+      expect(setFailed).not.toHaveBeenCalled()
+    })
+
     it('removes the configured hold.label and the legacy hold label once when they are the same', async () => {
       issueCommentEvent.comment.body = '/hold cancel'
       const commentContext = new utils.MockContext(issueCommentEvent)

@@ -113,6 +113,19 @@ require_matching_label:
     expect(labels.find(l => l.name === 'triage/unlabeled')).toEqual({ name: 'triage/unlabeled' })
   })
 
+  it('gives the needs- color to a missing label whatever its case', () => {
+    const labels = desiredLabels(configFrom(`
+require_matching_label:
+  - regexp: ^kind/
+    missing_label: Needs-Kind
+  - regexp: ^sig/
+    missing_label: NEEDS-SIG
+`))
+
+    expect(labels.find(l => l.name === 'Needs-Kind')).toEqual({ name: 'Needs-Kind', color: 'ededed' })
+    expect(labels.find(l => l.name === 'NEEDS-SIG')).toEqual({ name: 'NEEDS-SIG', color: 'ededed' })
+  })
+
   it('de-duplicates case-insensitively, first definition wins', () => {
     const labels = desiredLabels(configFrom(`
 labels:

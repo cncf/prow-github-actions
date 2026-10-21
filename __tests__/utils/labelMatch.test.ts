@@ -25,11 +25,19 @@ describe('matchesLabelPattern', () => {
     ['hold', 'do-not-merge/hold'],
     ['hold', 'holdover'],
     ['needs-*', 'need-rebase'],
+    ['*-rebase', 'needs-approve'],
+    ['needs-*-rebase', 'needs-rebase-now'],
     ['a*b*c', 'a-b'],
     ['kind/bug', 'kind/bugs'],
     ['kind.bug', 'kindxbug'],
     ['(lgtm)', 'lgtm'],
   ])('%s does not match %s', (pattern, label) => {
     expect(matchesLabelPattern(pattern, label)).toBe(false)
+  })
+
+  it('does not let the anchored ends share characters', () => {
+    // the `*` run may be empty, but the prefix and suffix must both fit in full
+    expect(matchesLabelPattern('do-not-merge/*/hold', 'do-not-merge/hold')).toBe(false)
+    expect(matchesLabelPattern('do-not-merge/*/hold', 'do-not-merge//hold')).toBe(true)
   })
 })

@@ -497,6 +497,26 @@ describe('/test', () => {
     expect(reruns).toEqual([1])
   })
 
+  it.each([
+    ['/test e2e', 'the display name', { id: 3, name: 'E2E', path: '.github/workflows/end-to-end.yml' }],
+    ['/test lint-checks', 'the file basename', { id: 6, name: 'Lint', path: '.github/workflows/Lint-Checks.yml' }],
+  ])('%s matches %s case-insensitively when the other does not match at all', async (body, _, spec) => {
+    const reruns: number[] = []
+    const reply = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([{ ...spec, status: 'completed', conclusion: 'success' }]),
+      serveRerun(reruns),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      http.post(reactionUrl, utils.mockResponse(201, {})),
+    )
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent(body)))
+
+    expect(reruns).toEqual([spec.id])
+    await expect(reply.notCalled()).resolves.toBe('not called')
+  })
+
   it('matches a display name that differs from the file name by either', async () => {
     const reruns: number[] = []
     server.use(
@@ -633,16 +653,19 @@ describe('/test', () => {
     expect((await reply.body()).body).toBe('The GitHub Actions workflow runs on `headsha` are already being re-run.')
   })
 
-  it('on an issue comments that it only applies to pull requests', async () => {
+  it('on an issue comments that it only applies to pull requests and leaves the run green', async () => {
     const reply = new utils.ObserveRequest()
     const event = structuredClone(issueCommentEvent)
     event.comment.body = '/test all'
     server.use(http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(new utils.MockContext(event))
 
     await expect(reply.called()).resolves.toBe('called')
     expect((await reply.body()).body).toBe('`/test` only applies to pull requests.')
+    expect(calls).toEqual(['POST /repos/Codertocat/Hello-World/issues/1/comments'])
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('refuses an outsider', async () => {
@@ -746,6 +769,29 @@ describe('/ok-to-test', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('recognises the label already present in another case: no re-add, the no-runs comment instead of a reaction', async () => {
+    const reaction = new utils.ObserveRequest()
+    const reply = new utils.ObserveRequest()
+    const label = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([{ id: 2, name: 'Docs', status: 'completed', conclusion: 'success' }]),
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'OK-To-Test' }] })),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(200, [], label)),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/ok-to-test')))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe('No workflow runs waiting for approval on `headsha`.')
+    await expect(reaction.notCalled()).resolves.toBe('not called')
+    await expect(label.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('is refused for the pull request author', async () => {
     const reply = new utils.ObserveRequest()
     const runs = new utils.ObserveRequest()
@@ -820,16 +866,20 @@ describe('/ok-to-test', () => {
       .toThrow('could not approve run 8 (CI): nope')
   })
 
-  it('on an issue comments that it only applies to pull requests', async () => {
+  it('on an issue comments that it only applies to pull requests and leaves the run green', async () => {
     const reply = new utils.ObserveRequest()
+    const runs = new utils.ObserveRequest()
     const event = structuredClone(issueCommentEvent)
     event.comment.body = '/ok-to-test'
-    server.use(http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+    server.use(serveRuns(pendingRuns, runs), http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(new utils.MockContext(event))
 
     await expect(reply.called()).resolves.toBe('called')
     expect((await reply.body()).body).toBe('`/ok-to-test` only applies to pull requests.')
+    await expect(runs.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })
 

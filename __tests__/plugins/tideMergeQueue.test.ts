@@ -146,6 +146,19 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(0)
   })
 
+  // without a draft field the gate cannot see the draft; mergeable_state: draft is still ours to refuse, not the queue's
+  it('a pr without a draft field whose mergeable_state is draft is refused, not enqueued', async () => {
+    const { draft, ...noDraft } = pull(['lgtm'], { mergeable_state: 'draft' })
+    expect(draft).toBe(false)
+    servePull(noDraft)
+    const merge = observeMerge()
+    const calls = serveGraphql({ enabled: true })
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'not mergeable (draft)' })
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(0)
+  })
+
   it('an unknown state is retried, then enqueued', async () => {
     const gets = servePull(pull(['lgtm'], { mergeable: null, mergeable_state: 'unknown' }), pull(['lgtm']))
     const calls = serveGraphql()
@@ -282,7 +295,10 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     servePull(pull(['lgtm']))
     const merge = observeMerge(405, { message: 'Changes must be made through the merge queue.' })
     vi.spyOn(core, 'error').mockImplementation(() => {})
-    // no /graphql handler: an unhandled request would fail the test
+    // queueState swallows a failed read (one warning, then a direct merge), so an unhandled
+    // request would not fail the test: count the calls instead
+    const calls = serveGraphql({ enabled: true })
+    const warning = vi.spyOn(core, 'warning')
 
     await expect(evaluateMerge(octokit, context, 1, resolveTide({ merge_queue: 'off' }))).resolves.toEqual({
       result: 'failed',
@@ -290,6 +306,8 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
       status: 405,
     })
     await expect(merge.called()).resolves.toBe('called')
+    expect(calls).toHaveLength(0)
+    expect(warning).not.toHaveBeenCalled()
   })
 
   it('debugs once that the queue\'s merge method wins over tide.merge_method', async () => {
@@ -374,8 +392,10 @@ describe('dequeue when the gate breaks', () => {
 
   it('merge_queue: off: no GraphQL call when the gate fails', async () => {
     servePull(pull([]))
+    const calls = serveGraphql({ enabled: true })
 
     await expect(evaluateMerge(octokit, context, 1, resolveTide({ merge_queue: 'off' }))).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
+    expect(calls).toHaveLength(0)
   })
 
   it('a stale lgtm on an in-queue bot-enqueued pr is stripped and dequeued', async () => {

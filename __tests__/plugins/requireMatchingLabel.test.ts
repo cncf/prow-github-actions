@@ -7,9 +7,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { handleIssues } from '../../src/issues/handleIssues'
-import { applicableRules, checkRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
+import { applicableRules, checkRequiredLabels, enforceRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import * as labeling from '../../src/utils/labeling'
+import { newOctokit } from '../../src/utils/octokit'
 import * as sleepModule from '../../src/utils/sleep'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import issuesLabeledEvent from '../fixtures/issues/issuesLabeledEvent.json'
@@ -108,6 +109,8 @@ function configWith(...rules: RequireMatchingLabel[]): ProwConfig {
 
 const botComment = { id: 11, body: `Please add a kind label.\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } }
 const humanComment = { id: 12, body: `I pasted the marker by hand ${marker}`, user: { login: 'Codertocat', type: 'User' } }
+// another GitHub App's bot: `type: 'Bot'` without the github-actions login
+const appBotComment = { id: 13, body: `Please add a kind label.\n\n${marker}`, user: { login: 'other-app[bot]', type: 'Bot' } }
 
 describe('evaluate', () => {
   it.each([
@@ -216,6 +219,34 @@ describe('requireMatchingLabel handler', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  it('issue opened under a rule without grace_period_duration adds needs-kind without sleeping at all', async () => {
+    serveRules([kindRule])
+    const writes = serveIssue([])
+
+    await requireMatchingLabel(new utils.MockContext(issueEvent('opened', [])))
+
+    // a zero grace period must not park the runner for a 0ms sleep either
+    expect(sleep).not.toHaveBeenCalled()
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await writes.addLabels.body()).toEqual({ labels: ['needs-kind'] })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('deletes the marker comment of another app bot but not the human copy of the marker', async () => {
+    serveRules([kindRule])
+    serveIssue(['kind/bug', 'needs-kind'], [humanComment, appBotComment])
+    const deleted: string[] = []
+    server.use(http.delete(`${repo}/issues/comments/:id`, ({ params }) => {
+      deleted.push(String(params.id))
+      return new Response(null, { status: 204 })
+    }))
+
+    await requireMatchingLabel(new utils.MockContext(issueEvent('labeled', ['kind/bug', 'needs-kind'], 'kind/bug')))
+
+    expect(deleted).toEqual(['13'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('reopened re-fetches the labels after the grace period, capped at 30s', async () => {
     serveRules([{ ...kindRule, grace_period_duration: '10m' }])
     const writes = serveIssue(['kind/bug'])
@@ -253,12 +284,14 @@ describe('requireMatchingLabel handler', () => {
     const writes = serveIssue(['priority/high'])
     const issueRead = new utils.ObserveRequest()
     server.use(http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] }, issueRead)))
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 
     await requireMatchingLabel(new utils.MockContext(issueEvent('labeled', ['priority/high'], 'priority/high')))
 
     await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
     expect(issueRead.ref).toBeNull()
     expect(writes.removeLabel.ref).toBeNull()
+    expect(debug).toHaveBeenCalledWith('require-matching-label: no rule applies to issue #1 for label priority/high')
     expect(setFailed).not.toHaveBeenCalled()
   })
 
@@ -422,6 +455,27 @@ describe('requireMatchingLabel handler', () => {
 
     await expect(writes.removeLabel.called()).resolves.toBe('called')
     expect(setFailed).not.toHaveBeenCalled()
+  })
+})
+
+describe('enforceRequiredLabels', () => {
+  let sleep: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    utils.setupActionsEnv()
+    sleep = vi.spyOn(sleepModule, 'sleep').mockResolvedValue(undefined)
+  })
+
+  // the sweep job's call shape: a target and no options, so no grace period and every rule
+  it('without options applies every rule at once without waiting the configured grace period', async () => {
+    serveRules([{ ...kindRule, grace_period_duration: '5s' }])
+    const writes = serveIssue([])
+
+    await enforceRequiredLabels(newOctokit('some-token'), new utils.MockContext(issueEvent('opened', [])), { issueNumber: 1, isPullRequest: false })
+
+    expect(sleep).not.toHaveBeenCalled()
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await writes.addLabels.body()).toEqual({ labels: ['needs-kind'] })
   })
 })
 

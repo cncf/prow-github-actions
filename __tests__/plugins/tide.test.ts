@@ -146,6 +146,15 @@ describe('fetchMergeability', () => {
 
     await expect(getPull(octokit, context, 1)).resolves.toMatchObject({ draft: false })
   })
+
+  it('reads a head whose repository is gone (head.repo null) as not a fork', async () => {
+    servePull(pull([], {
+      head: { sha: 'headsha', repo: null },
+      base: { ref: 'master', sha: 'basesha', repo: { full_name: 'Codertocat/Hello-World' } },
+    }))
+
+    await expect(getPull(octokit, context, 1)).resolves.toMatchObject({ fork: false })
+  })
 })
 
 describe('mergeOnce', () => {
@@ -212,6 +221,19 @@ describe('tryMergePullRequest', () => {
     expect(info).toHaveBeenCalledWith(`skipping pr #1: not mergeable (${state})`)
     expect(gets).toHaveLength(1)
     expect(sleep).not.toHaveBeenCalled()
+  })
+
+  // the draft flag is read before mergeable_state: a draft is refused without waiting for GitHub to compute the state
+  it('does not wait for an unknown state on a draft pr', async () => {
+    const gets = servePull(pull(['lgtm'], { ...unknown, draft: true }))
+    const merge = observeMerge()
+    const info = vi.spyOn(core, 'info')
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(1)
+    expect(sleep).not.toHaveBeenCalled()
+    expect(info).toHaveBeenCalledWith('skipping pr #1: not mergeable (draft)')
   })
 
   it('waits for an unknown state when the gate passes, then merges', async () => {
@@ -464,6 +486,31 @@ describe('tryMergePullRequest', () => {
       await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
       const body = (await diff.comment.body()).body as string
       expect(body).toContain('workflow files (`.github/workflows/a.yml`, `.github/workflows/b.yml`, `.github/workflows/c.yml`, `.github/workflows/d.yml`, `.github/workflows/e.yml` and 2 more) that it changes.')
+    })
+
+    it('exactly five workflow files are all listed, with no "and 0 more"', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const own = ['a', 'b', 'c', 'd', 'e'].map(name => `.github/workflows/${name}.yml`)
+      const diff = serveDiff([], own)
+      vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+      const body = (await diff.comment.body()).body as string
+      expect(body).toContain('workflow files (`.github/workflows/a.yml`, `.github/workflows/b.yml`, `.github/workflows/c.yml`, `.github/workflows/d.yml`, `.github/workflows/e.yml`) that it changes.')
+      expect(body).not.toContain('more')
+    })
+
+    it('only paths under the top-level .github/workflows/ count: a nested copy is not a workflow file', async () => {
+      servePull(forkPull())
+      observeMerge(403, forbidden)
+      const diff = serveDiff(['docs/.github/workflows/example.yml'], ['templates/.github/workflows/prow.yml'])
+      const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+      await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('failed')
+      await expect(diff.compare.called()).resolves.toBe('called')
+      await expect(diff.comment.notCalled()).resolves.toBe('not called')
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Resource not accessible by integration'))
     })
 
     it('a same-repository pull request keeps the raw failure and never compares', async () => {

@@ -89,6 +89,33 @@ describe('protected labels', () => {
     },
   )
 
+  it('names the first protected label when several are requested', async () => {
+    issueCommentEvent.comment.body = '/label hold lgtm'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observePost = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observePost),
+      ),
+      utils.repoHasLabels(['good-first-issue', 'help-wanted', 'documentation', 'tide/merge-method-squash']),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
+        utils.mockResponse(200, withProtected),
+      ),
+      ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('label: hold is managed by its own command and cannot be changed with /label'),
+    )
+  })
+
   it.each([
     ['/remove-label hold', 'hold'],
     ['/remove-label LGTM', 'lgtm'],

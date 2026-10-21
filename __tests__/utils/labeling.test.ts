@@ -7,7 +7,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
-import { addPrefix, assertLabelsExist, getLabelConfig, labelIssue } from '../../src/utils/labeling'
+import { addPrefix, assertLabelsExist, getLabelConfig, labelIssue, removeLabels } from '../../src/utils/labeling'
 import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
@@ -159,6 +159,45 @@ describe('labelIssue refuses labels the repository does not have', () => {
     )
 
     await expect(assertLabelsExist(octokit, context, ['second', 'first'])).resolves.toBeUndefined()
+  })
+})
+
+describe('removeLabels', () => {
+  const context = new utils.MockContext(issueCommentEvent)
+  const repo = `${utils.api}/repos/Codertocat/Hello-World`
+  let octokit: Octokit
+
+  beforeEach(() => {
+    utils.setupActionsEnv()
+    octokit = newOctokit('some-token')
+  })
+
+  it('keeps removing the later labels after an earlier one is already gone', async () => {
+    const deleted: string[] = []
+    server.use(
+      http.delete(`${repo}/issues/1/labels/:name`, ({ params }) => {
+        deleted.push(String(params.name))
+        return new Response(null, { status: params.name === 'gone' ? 404 : 200 })
+      }),
+    )
+
+    await expect(removeLabels(octokit, context, 1, ['gone', 'kind/bug', 'still-there'])).resolves.toBeUndefined()
+
+    expect(deleted).toEqual(['gone', 'kind/bug', 'still-there'])
+  })
+
+  it('stops at the first failure that is not a 404 and names the label', async () => {
+    const deleted: string[] = []
+    server.use(
+      http.delete(`${repo}/issues/1/labels/:name`, ({ params }) => {
+        deleted.push(String(params.name))
+        return new Response(null, { status: params.name === 'broken' ? 500 : 200 })
+      }),
+    )
+
+    await expect(removeLabels(octokit, context, 1, ['first', 'broken', 'never'])).rejects.toThrow('could not remove label broken')
+
+    expect(deleted).toEqual(['first', 'broken'])
   })
 })
 
