@@ -161,6 +161,48 @@ describe('/cc', () => {
     expect((await observeReq.body()).reviewers.sort()).toEqual(['other-user', 'some-user'])
   })
 
+  it('requests reviews from only the authorized subset when the arguments mix authorized and unknown users', async () => {
+    issueCommentEvent.comment.body = '/cc @some-user @stranger'
+
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/stranger`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/stranger`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/requested_reviewers`,
+        utils.mockResponse(201, pullReviewRequested, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    // the write carries getOrgCollabCommentUsers' filtered list, not the raw arguments
+    expect(await observeReq.body()).toEqual({ reviewers: ['some-user'] })
+  })
+
   it('ccs user if they are an org member', async () => {
     issueCommentEvent.comment.body = '/cc @some-user'
 
