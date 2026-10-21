@@ -257,6 +257,35 @@ describe('tryMergePullRequest', () => {
     expect(info).toHaveBeenCalledWith('skipping pr #1: not mergeable (unknown)')
   })
 
+  // the gate is re-read with the state: an lgtm that disappears while the state is still
+  // unknown ends the wait at that read, before the remaining 2 s and 4 s retries
+  it('stops retrying an unknown state once the lgtm label disappears on the re-read', async () => {
+    const gets = servePull(pull(['lgtm'], unknown), pull([], unknown))
+    const merge = observeMerge()
+    const info = vi.spyOn(core, 'info')
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(1000)
+    expect(info).toHaveBeenCalledWith('skipping pr #1: missing lgtm')
+    expect(info).not.toHaveBeenCalledWith('mergeability of pr #1 is still unknown after 3 retries')
+  })
+
+  // the first read passed the gate, but the merge decision is made on the re-read: a state that
+  // becomes clean at the same moment the lgtm label is removed must not merge
+  it('does not merge when the re-read turns clean but has lost the lgtm label', async () => {
+    const gets = servePull(pull(['lgtm'], unknown), pull([]))
+    const merge = observeMerge()
+    const info = vi.spyOn(core, 'info')
+
+    await expect(tryMergePullRequest(octokit, context, 1, tide)).resolves.toBe('skipped')
+    await expect(merge.notCalled()).resolves.toBe('not called')
+    expect(gets).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(1000)
+    expect(info).toHaveBeenCalledWith('skipping pr #1: missing lgtm')
+  })
+
   it.each([
     [['kind/bug'], 'missing lgtm'],
     [['lgtm', 'do-not-merge/hold'], 'blocked by do-not-merge/hold'],
