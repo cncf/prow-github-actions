@@ -52,14 +52,25 @@ describe('dist/index.js delayed blunderbuss', () => {
     }
   }
 
-  function routeSweep(pr = pull(), timeline: unknown[] = [], reviews: unknown[] = []) {
+  function routeSweep(pr = pull(), timeline: unknown[] = [], reviews: unknown[] = [], timelinePageTwo?: unknown[]) {
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), { status: 200, body: [pr] })
     gh.route('GET', `${repo}/git/trees/master`, {
       status: 200,
       body: { sha: 'master', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: blobSha('OWNERS') }] },
     })
     routeOwners(owners, ['x.go'], pr)
-    gh.route('GET', timelinePath, { status: 200, body: timeline })
+    gh.route('GET', timelinePath, (req) => {
+      if (new URL(req.path, 'http://localhost').searchParams.get('page') === '2') {
+        return { status: 200, body: timelinePageTwo ?? [] }
+      }
+      return {
+        status: 200,
+        body: timeline,
+        ...(timelinePageTwo === undefined
+          ? {}
+          : { headers: { link: `<${gh.url}${timelinePath}?per_page=100&page=2>; rel="next"` } }),
+      }
+    })
     gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: reviews })
     gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
     // Recent candidates still run the other sweep plugins.
@@ -78,7 +89,7 @@ describe('dist/index.js delayed blunderbuss', () => {
   }
 
   function timelineReads() {
-    return gh.requestsMatching('GET', /\/timeline\?per_page=100$/)
+    return gh.requestsMatching('GET', /\/timeline\?/)
   }
 
   function reviewReads() {
@@ -157,6 +168,24 @@ describe('dist/index.js delayed blunderbuss', () => {
     expect(requested()).toEqual([])
     expect(timelineReads()).toHaveLength(reads)
     expect(reviewReads()).toHaveLength(reads)
+  })
+
+  it('uses the latest ready_for_review event from a later timeline page', async () => {
+    configure()
+    routeSweep(
+      pull({ created_at: ago(300), updated_at: ago(70) }),
+      [{ event: 'ready_for_review', created_at: ago(240) }],
+      [],
+      [{ event: 'ready_for_review', created_at: ago(70) }],
+    )
+
+    const result = await runSweep()
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(timelineReads()).toHaveLength(2)
+    expect(reviewReads()).toHaveLength(1)
+    expect(requested()).toEqual([{ reviewers: ['bob'] }])
   })
 
   it.each([

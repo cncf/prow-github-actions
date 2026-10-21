@@ -11,6 +11,7 @@ export interface RecordedRequest {
 export interface FakeResponse {
   status: number
   body?: unknown
+  headers?: Record<string, string>
 }
 
 type Handler = (req: RecordedRequest) => FakeResponse
@@ -128,6 +129,8 @@ export async function start(): Promise<FakeGithub> {
       : { status: 404, body: { message: 'Not Found (fake)' } }
 
     res.statusCode = response.status
+    for (const [name, value] of Object.entries(response.headers ?? {}))
+      res.setHeader(name, value)
     if (response.body === undefined) {
       res.end()
     }
