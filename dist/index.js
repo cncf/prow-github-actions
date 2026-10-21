@@ -41242,7 +41242,8 @@ function normalizeSweep(source, raw) {
             ms = parseDuration(raw.lookback, 'sweep.lookback');
         }
         catch (e) {
-            throw new Error(`${source}: ${e instanceof Error ? e.message : e}`);
+            // parseDuration throws only Error
+            throw new Error(`${source}: ${e instanceof Error ? e.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; configSweep.test.ts drives it */ e}`);
         }
         if (ms <= 0) {
             throw new Error(`${source}: sweep.lookback must be longer than 0`);
@@ -42622,6 +42623,9 @@ function hasCommand(command, body) {
  * @param body - the full body of the comment
  */
 function getLineArgs(command, body) {
+    // both callers (/milestone, /retitle) run only after hasCommand matched the same pattern, so at(-1) is a string from the bundle;
+    // the hint sits on the statement because a hint on one operand of a ?? expression is not honoured
+    /* v8 ignore next -- absent-command fallback unreachable from dist/index.js; command.test.ts drives it */
     return findCommandArgs(command, body).at(-1) ?? '';
 }
 /**
@@ -46905,7 +46909,9 @@ async function run() {
         await handler(context);
     }
     catch (error) {
-        setFailed(error instanceof Error ? error.message : String(error));
+        // every handler folds its rejections into an Error (runEventHandlers, normalizeError, the jobs .catch),
+        // and the only throw that reaches this catch from the bundle is a built-in TypeError
+        setFailed(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error));
     }
 }
 

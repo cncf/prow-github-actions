@@ -37,6 +37,8 @@ export async function run(): Promise<void> {
     await handler(context)
   }
   catch (error) {
-    core.setFailed(error instanceof Error ? error.message : String(error))
+    // every handler folds its rejections into an Error (runEventHandlers, normalizeError, the jobs .catch),
+    // and the only throw that reaches this catch from the bundle is a built-in TypeError
+    core.setFailed(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error))
   }
 }

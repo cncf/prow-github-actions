@@ -654,7 +654,8 @@ function normalizeSweep(source: string, raw: unknown): SweepConfig {
       ms = parseDuration(raw.lookback, 'sweep.lookback')
     }
     catch (e) {
-      throw new Error(`${source}: ${e instanceof Error ? e.message : e}`)
+      // parseDuration throws only Error
+      throw new Error(`${source}: ${e instanceof Error ? e.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; configSweep.test.ts drives it */ e}`)
     }
     if (ms <= 0) {
       throw new Error(`${source}: sweep.lookback must be longer than 0`)

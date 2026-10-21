@@ -20,6 +20,9 @@ export function hasCommand(command: string, body: string): boolean {
  * @param body - the full body of the comment
  */
 export function getLineArgs(command: string, body: string): string {
+  // both callers (/milestone, /retitle) run only after hasCommand matched the same pattern, so at(-1) is a string from the bundle;
+  // the hint sits on the statement because a hint on one operand of a ?? expression is not honoured
+  /* v8 ignore next -- absent-command fallback unreachable from dist/index.js; command.test.ts drives it */
   return findCommandArgs(command, body).at(-1) ?? ''
 }
 
