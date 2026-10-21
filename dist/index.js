@@ -1,7 +1,7 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 9659:
+/***/ 4844:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -55,7 +55,7 @@ exports.getProxyUrl = getProxyUrl;
 exports.isHttps = isHttps;
 const http = __importStar(__nccwpck_require__(8611));
 const https = __importStar(__nccwpck_require__(5692));
-const pm = __importStar(__nccwpck_require__(3335));
+const pm = __importStar(__nccwpck_require__(4988));
 const tunnel = __importStar(__nccwpck_require__(770));
 const undici_1 = __nccwpck_require__(6752);
 var HttpCodes;
@@ -745,7 +745,7 @@ const lowercaseKeys = (obj) => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCa
 
 /***/ }),
 
-/***/ 3335:
+/***/ 4988:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -4102,77 +4102,11 @@ class Request {
     }
   }
 
-  /**
-   * @param {number|null} statusCode
-   * @param {Buffer[]|null} headers
-   * @param {import('node:stream').Duplex} socket
-   * @param {string} [statusText]
-   */
-  onUpgrade (statusCode, headers, socket, statusText = '') {
-    this.onFinally()
-
+  onUpgrade (statusCode, headers, socket) {
     assert(!this.aborted)
     assert(!this.completed)
 
-    if (statusCode !== null) {
-      this.#publishUpgradeHeaders(statusCode, headers, statusText)
-    }
-
-    const result = this[kHandler].onUpgrade(statusCode, headers, socket)
-
-    if (!this.aborted) {
-      this.completed = true
-      if (statusCode !== null) {
-        this.#publishUpgradeTrailers()
-      }
-    }
-
-    return result
-  }
-
-  /**
-   * @param {number} statusCode
-   * @param {import('node:http2').IncomingHttpHeaders} headers
-   * @param {(headers: import('node:http2').IncomingHttpHeaders) => Buffer[]} parseHeaders
-   * @param {string} [statusText]
-   */
-  onUpgradeResponse (statusCode, headers, parseHeaders, statusText = '') {
-    assert(!this.aborted)
-    assert(this.completed)
-
-    if (channels.headers.hasSubscribers) {
-      this.#publishUpgradeHeaders(statusCode, parseHeaders(headers), statusText)
-    }
-    this.#publishUpgradeTrailers()
-  }
-
-  /**
-   * @param {Error} error
-   */
-  onUpgradeError (error) {
-    assert(!this.aborted)
-    assert(this.completed)
-
-    if (channels.error.hasSubscribers) {
-      channels.error.publish({ request: this, error })
-    }
-  }
-
-  /**
-   * @param {number} statusCode
-   * @param {Buffer[]} headers
-   * @param {string} statusText
-   */
-  #publishUpgradeHeaders (statusCode, headers, statusText) {
-    if (channels.headers.hasSubscribers) {
-      channels.headers.publish({ request: this, response: { statusCode, headers, statusText } })
-    }
-  }
-
-  #publishUpgradeTrailers () {
-    if (channels.trailers.hasSubscribers) {
-      channels.trailers.publish({ request: this, trailers: [] })
-    }
+    return this[kHandler].onUpgrade(statusCode, headers, socket)
   }
 
   onComplete (trailers) {
@@ -5313,7 +5247,7 @@ function defaultFactory (origin, opts) {
 }
 
 class Agent extends DispatcherBase {
-  constructor ({ factory = defaultFactory, maxRedirections = 0, connect, tls, ...options } = {}) {
+  constructor ({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
     if (typeof factory !== 'function') {
       throw new InvalidArgumentError('factory must be a function.')
     }
@@ -5332,15 +5266,11 @@ class Agent extends DispatcherBase {
       connect = { ...connect }
     }
 
-    if (tls && typeof tls !== 'function') {
-      tls = { ...tls }
-    }
-
     this[kInterceptors] = options.interceptors?.Agent && Array.isArray(options.interceptors.Agent)
       ? options.interceptors.Agent
       : [createRedirectInterceptor({ maxRedirections })]
 
-    this[kOptions] = { ...util.deepClone(options), connect, tls }
+    this[kOptions] = { ...util.deepClone(options), connect }
     this[kOptions].interceptors = options.interceptors
       ? { ...options.interceptors }
       : undefined
@@ -6080,7 +6010,7 @@ class Parser {
   }
 
   onUpgrade (head) {
-    const { upgrade, client, socket, headers, statusCode, statusText } = this
+    const { upgrade, client, socket, headers, statusCode } = this
 
     assert(upgrade)
     assert(client[kSocket] === socket)
@@ -6115,10 +6045,9 @@ class Parser {
     client.emit('disconnect', client[kUrl], [client], new InformationalError('upgrade'))
 
     try {
-      request.onUpgrade(statusCode, headers, socket, statusText)
-    } catch (error) {
-      util.errorRequest(client, request, error)
-      util.destroy(socket, error)
+      request.onUpgrade(statusCode, headers, socket)
+    } catch (err) {
+      util.destroy(socket, err)
     }
 
     client[kResume]()
@@ -6375,6 +6304,8 @@ async function connectH1 (client, socket) {
   socket[kParser] = new Parser(client, socket, llhttpInstance)
 
   addListener(socket, 'error', function (err) {
+    assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
+
     const parser = this[kParser]
 
     // On Mac OS, we get an ECONNRESET even if there is a full body to be forwarded
@@ -6697,22 +6628,12 @@ function writeH1 (client, request) {
   const socket = client[kSocket]
   clearIdleSocketValidation(socket)
 
-  /**
-   * @param {Error} [error]
-   */
-  const abort = (error) => {
-    if (request.aborted) {
+  const abort = (err) => {
+    if (request.aborted || request.completed) {
       return
     }
 
-    if (request.completed) {
-      if (request.upgrade || request.method === 'CONNECT') {
-        util.destroy(socket, new InformationalError('aborted'))
-      }
-      return
-    }
-
-    util.errorRequest(client, request, error || new RequestAbortedError())
+    util.errorRequest(client, request, err || new RequestAbortedError())
 
     util.destroy(body)
     util.destroy(socket, new InformationalError('aborted'))
@@ -7170,7 +7091,6 @@ module.exports = connectH1
 
 
 const assert = __nccwpck_require__(4589)
-const { errorMonitor } = __nccwpck_require__(8474)
 const { pipeline } = __nccwpck_require__(7075)
 const util = __nccwpck_require__(3440)
 const {
@@ -7247,15 +7167,6 @@ function parseH2Headers (headers) {
   return result
 }
 
-/**
- * @param {import('node:http2').IncomingHttpHeaders} headers
- * @returns {Buffer[]}
- */
-function parseH2ResponseHeaders (headers) {
-  const { [HTTP2_HEADER_STATUS]: _statusCode, ...realHeaders } = headers
-  return parseH2Headers(realHeaders)
-}
-
 async function connectH2 (client, socket) {
   client[kSocket] = socket
 
@@ -7305,6 +7216,8 @@ async function connectH2 (client, socket) {
   socket[kHTTP2Session] = session
 
   util.addListener(socket, 'error', function (err) {
+    assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
+
     this[kError] = err
 
     this[kClient][kOnError](err)
@@ -7378,6 +7291,8 @@ function resumeH2 (client) {
 }
 
 function onHttp2SessionError (err) {
+  assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
+
   this[kSocket][kError] = err
   this[kClient][kOnError](err)
 }
@@ -7472,32 +7387,22 @@ function writeH2 (client, request) {
   headers[HTTP2_HEADER_AUTHORITY] = host || `${hostname}${port ? `:${port}` : ''}`
   headers[HTTP2_HEADER_METHOD] = method
 
-  /**
-   * @param {Error} [error]
-   */
-  const abort = (error) => {
-    if (request.aborted) {
+  const abort = (err) => {
+    if (request.aborted || request.completed) {
       return
     }
 
-    if (request.completed) {
-      if (method === 'CONNECT' && stream != null) {
-        util.destroy(stream, error || new RequestAbortedError())
-      }
-      return
-    }
+    err = err || new RequestAbortedError()
 
-    error = error || new RequestAbortedError()
-
-    util.errorRequest(client, request, error)
+    util.errorRequest(client, request, err)
 
     if (stream != null) {
-      util.destroy(stream, error)
+      util.destroy(stream, err)
     }
 
     // We do not destroy the socket as we can continue using the session
     // the stream get's destroyed and the session remains to create new streams
-    util.destroy(body, error)
+    util.destroy(body, err)
     client[kQueue][client[kRunningIdx]++] = null
     client[kResume]()
   }
@@ -7516,57 +7421,25 @@ function writeH2 (client, request) {
 
   if (method === 'CONNECT') {
     session.ref()
+    // We are already connected, streams are pending, first request
+    // will create a new stream. We trigger a request to create the stream and wait until
+    // `ready` event is triggered
     // We disabled endStream to allow the user to write to the stream
     stream = session.request(headers, { endStream: false, signal })
-    let upgradeResponseFinished = false
 
-    /**
-     * @param {import('node:http2').IncomingHttpHeaders} headers
-     */
-    const onResponse = (headers) => {
-      upgradeResponseFinished = true
-      stream.off(errorMonitor, onUpgradeError)
-      request.onUpgradeResponse(Number(headers[HTTP2_HEADER_STATUS]), headers, parseH2ResponseHeaders)
-    }
-
-    /**
-     * @param {Error} error
-     */
-    const onUpgradeError = (error) => {
-      upgradeResponseFinished = true
-      stream.off('response', onResponse)
-      request.onUpgradeError(error)
-    }
-
-    const onReady = () => {
-      try {
-        request.onUpgrade(null, null, stream)
-      } catch (error) {
-        stream.off('response', onResponse)
-        abort(error)
-        return
-      }
-
-      if (request.aborted) {
-        return
-      }
-
-      stream.off('error', abort)
-      stream.once(errorMonitor, onUpgradeError)
+    if (stream.id && !stream.pending) {
+      request.onUpgrade(null, null, stream)
+      ++session[kOpenStreams]
       client[kQueue][client[kRunningIdx]++] = null
+    } else {
+      stream.once('ready', () => {
+        request.onUpgrade(null, null, stream)
+        ++session[kOpenStreams]
+        client[kQueue][client[kRunningIdx]++] = null
+      })
     }
-
-    stream.once('response', onResponse)
-    stream.once('error', abort)
-    ++session[kOpenStreams]
-    onReady()
 
     stream.once('close', () => {
-      if (!upgradeResponseFinished && request.completed) {
-        stream.off('response', onResponse)
-        stream.off(errorMonitor, onUpgradeError)
-        request.onUpgradeError(new InformationalError(`HTTP/2: "stream error" received - code ${stream.rstCode}`))
-      }
       session[kOpenStreams] -= 1
       if (session[kOpenStreams] === 0) session.unref()
     })
@@ -8076,10 +7949,9 @@ class Client extends DispatcherBase {
     // h2
     maxConcurrentStreams,
     allowH2,
-    webSocket,
-    eventSource
+    webSocket
   } = {}) {
-    super({ webSocket, eventSource })
+    super({ webSocket })
 
     if (keepAlive !== undefined) {
       throw new InvalidArgumentError('unsupported keepAlive, use pipelining=0 instead')
@@ -8601,7 +8473,6 @@ module.exports = Client
 "use strict";
 
 
-const buffer = __nccwpck_require__(4573)
 const Dispatcher = __nccwpck_require__(883)
 const {
   ClientDestroyedError,
@@ -8614,7 +8485,6 @@ const kOnDestroyed = Symbol('onDestroyed')
 const kOnClosed = Symbol('onClosed')
 const kInterceptedDispatch = Symbol('Intercepted Dispatch')
 const kWebSocketOptions = Symbol('webSocketOptions')
-const kEventSourceOptions = Symbol('eventSourceOptions')
 
 class DispatcherBase extends Dispatcher {
   constructor (opts) {
@@ -8625,19 +8495,12 @@ class DispatcherBase extends Dispatcher {
     this[kClosed] = false
     this[kOnClosed] = []
     this[kWebSocketOptions] = opts?.webSocket ?? {}
-    this[kEventSourceOptions] = opts?.eventSource ?? {}
   }
 
   get webSocketOptions () {
     return {
       maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
       maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
-    }
-  }
-
-  get eventSourceOptions () {
-    return {
-      maxEventSize: this[kEventSourceOptions].maxEventSize ?? buffer.kStringMaxLength
     }
   }
 
@@ -10403,10 +10266,7 @@ class RetryHandler {
     this.retryCount += 1
 
     if (statusCode >= 300) {
-      // Only expose a response if no earlier attempt has reached the caller.
-      // Otherwise abort this attempt so the error settles the existing body
-      // instead of replacing it with a new response.
-      if (!this.headersSent && this.retryOpts.statusCodes.includes(statusCode) === false) {
+      if (this.retryOpts.statusCodes.includes(statusCode) === false) {
         this.headersSent = true
         this.checkpointResponseEnd(headers, resume)
         return this.handler.onHeaders(
@@ -15038,7 +14898,6 @@ module.exports = {
 
 "use strict";
 
-const buffer = __nccwpck_require__(4573)
 const { Transform } = __nccwpck_require__(7075)
 const { isASCIINumber, isValidLastEventId } = __nccwpck_require__(4811)
 
@@ -15063,18 +14922,10 @@ const COLON = 0x3A
  */
 const SPACE = 0x20
 
-const defaultMaxEventSize = buffer.kStringMaxLength
-
 const DATA = Buffer.from('data')
 const EVENT = Buffer.from('event')
 const ID = Buffer.from('id')
 const RETRY = Buffer.from('retry')
-
-// Each data field creates a string node, and each unconsumed input chunk keeps
-// a Buffer wrapper. The absolute ceiling protects the large default byte limit.
-const minParserItems = 1024
-const maxParserItems = 131072
-const bytesPerParserItem = 128
 
 function isASCIINumberBytes (buffer, start) {
   if (start >= buffer.length) {
@@ -15112,12 +14963,6 @@ function isFieldName (line, length, field) {
   }
 
   return true
-}
-
-function createMaxEventSizeExceededError () {
-  const error = new Error('EventSource message size exceeded')
-  error.aborted = false
-  return error
 }
 
 /**
@@ -15168,13 +15013,6 @@ class EventSourceStream extends Transform {
   pos = 0
   lineChunkIndex = 0
   linePos = 0
-  lineLength = 0
-  eventSize = 0
-  eventFieldSizes = { data: 0, event: 0, id: 0, retry: 0 }
-  dataLineCount = 0
-  maxEventSize
-  maxDataLines
-  maxBufferedChunks
 
   event = {
     data: undefined,
@@ -15185,7 +15023,6 @@ class EventSourceStream extends Transform {
 
   /**
    * @param {object} options
-   * @param {number} [options.maxEventSize]
    * @param {eventSourceSettings} options.eventSourceSettings
    * @param {Function} [options.push]
    */
@@ -15197,12 +15034,6 @@ class EventSourceStream extends Transform {
     super(options)
 
     this.state = options.eventSourceSettings || {}
-    this.maxEventSize = options.maxEventSize ?? defaultMaxEventSize
-    const parserItemLimit = this.maxEventSize > 0
-      ? Math.min(maxParserItems, Math.max(minParserItems, Math.floor(this.maxEventSize / bytesPerParserItem)))
-      : 0
-    this.maxDataLines = parserItemLimit
-    this.maxBufferedChunks = parserItemLimit
     if (options.push) {
       this.push = options.push
     }
@@ -15220,14 +15051,6 @@ class EventSourceStream extends Transform {
       return
     }
 
-    // A leading line ending can immediately release the currently buffered
-    // line, even when it uses the final allowed chunk slot.
-    if (this.maxEventSize > 0 &&
-        this.chunks.length >= this.maxBufferedChunks &&
-        chunk[0] !== LF && chunk[0] !== CR) {
-      callback(createMaxEventSizeExceededError())
-      return
-    }
     this.chunks.push(chunk)
 
     // Strip leading byte-order-mark if we opened the stream and started
@@ -15306,12 +15129,7 @@ class EventSourceStream extends Transform {
 
         // In any case, we can process the line as we reached an
         // end-of-line character
-        try {
-          this.parseLine(this.readLine(), this.event)
-        } catch (error) {
-          callback(error)
-          return
-        }
+        this.parseLine(this.readLine(), this.event)
         this.consumeCurrentByte()
         // A line was processed and this could be the end of the event. We need
         // to check if the next line is empty to determine if the event is
@@ -15320,28 +15138,15 @@ class EventSourceStream extends Transform {
         continue
       }
 
-      // readLine() is only called after CR or LF. Reject an unfinished line
-      // before it can retain an unbounded number of decoded chunks. The seven
-      // extra bytes allow the longest field prefix ("event: " or "retry: ").
-      if (this.maxEventSize > 0 && ++this.lineLength > this.maxEventSize + 7) {
-        callback(createMaxEventSizeExceededError())
-        return
-      }
       this.advanceCursor()
     }
 
     callback()
   }
 
-  _destroy (error, callback) {
-    this.chunks.length = 0
-    this.clearEvent()
-    super._destroy(error, callback)
-  }
-
   /**
    * @param {Buffer} line
-   * @param {EventSourceStreamEvent} event
+   * @param {EventStreamEvent} event
    */
   parseLine (line, event) {
     // If the line is empty (a blank line)
@@ -15375,13 +15180,6 @@ class EventSourceStream extends Transform {
     }
 
     if (isFieldName(line, fieldLength, DATA)) {
-      if (this.maxEventSize > 0 && this.dataLineCount >= this.maxDataLines) {
-        throw createMaxEventSizeExceededError()
-      }
-      const valueBytes = line.length - valueStart
-      const dataSize = this.eventFieldSizes.data + (event.data === undefined ? 0 : 1) + valueBytes
-      this.setEventFieldSize('data', dataSize)
-
       const value = line.toString('utf8', valueStart)
 
       if (event.data === undefined) {
@@ -15389,13 +15187,11 @@ class EventSourceStream extends Transform {
       } else {
         event.data += `\n${value}`
       }
-      this.dataLineCount++
       return
     }
 
     if (isFieldName(line, fieldLength, RETRY)) {
       if (isASCIINumberBytes(line, valueStart)) {
-        this.setEventFieldSize('retry', line.length - valueStart)
         event.retry = line.toString('utf8', valueStart)
       }
       return
@@ -15403,27 +15199,18 @@ class EventSourceStream extends Transform {
 
     if (isFieldName(line, fieldLength, ID)) {
       if (isValidLastEventIdBytes(line, valueStart)) {
-        this.setEventFieldSize('id', line.length - valueStart)
         event.id = line.toString('utf8', valueStart)
       }
       return
     }
 
     if (isFieldName(line, fieldLength, EVENT)) {
-      if (valueStart < line.length) {
-        this.setEventFieldSize('event', line.length - valueStart)
-        event.event = line.toString('utf8', valueStart)
+      const value = line.toString('utf8', valueStart)
+
+      if (value.length > 0) {
+        event.event = value
       }
     }
-  }
-
-  setEventFieldSize (field, size) {
-    const eventSize = this.eventSize - this.eventFieldSizes[field] + size
-    if (this.maxEventSize > 0 && eventSize > this.maxEventSize) {
-      throw createMaxEventSizeExceededError()
-    }
-    this.eventSize = eventSize
-    this.eventFieldSizes[field] = size
   }
 
   /**
@@ -15456,12 +15243,6 @@ class EventSourceStream extends Transform {
     this.event.event = undefined
     this.event.id = undefined
     this.event.retry = undefined
-    this.eventSize = 0
-    this.dataLineCount = 0
-    this.eventFieldSizes.data = 0
-    this.eventFieldSizes.event = 0
-    this.eventFieldSizes.id = 0
-    this.eventFieldSizes.retry = 0
   }
 
   hasPendingEvent () {
@@ -15497,16 +15278,14 @@ class EventSourceStream extends Transform {
   syncLineStartToCursor () {
     this.lineChunkIndex = this.chunkIndex
     this.linePos = this.pos
-    this.lineLength = 0
     this.dropConsumedChunks()
   }
 
   dropConsumedChunks () {
-    if (this.lineChunkIndex > 0) {
-      const consumed = this.lineChunkIndex
-      this.chunks.splice(0, consumed)
-      this.lineChunkIndex = 0
-      this.chunkIndex -= consumed
+    while (this.lineChunkIndex > 0) {
+      this.chunks.shift()
+      this.lineChunkIndex--
+      this.chunkIndex--
     }
 
     if (this.chunkIndex === this.chunks.length) {
@@ -15632,7 +15411,6 @@ const { isNetworkError } = __nccwpck_require__(9051)
 const { delay } = __nccwpck_require__(4811)
 const { kEnumerableProperty } = __nccwpck_require__(3440)
 const { environmentSettingsObject } = __nccwpck_require__(3168)
-const { getGlobalDispatcher } = __nccwpck_require__(2581)
 
 let experimentalWarned = false
 
@@ -15914,7 +15692,6 @@ class EventSource extends EventTarget {
 
       const eventSourceStream = new EventSourceStream({
         eventSourceSettings: this.#state,
-        maxEventSize: this.#dispatcher.eventSourceOptions?.maxEventSize,
         push: (event) => {
           this.dispatchEvent(createFastMessageEvent(
             event.type,
@@ -16093,8 +15870,7 @@ webidl.converters.EventSourceInitDict = webidl.dictionaryConverter([
   },
   {
     key: 'dispatcher', // undici only
-    converter: webidl.converters.any,
-    defaultValue: () => getGlobalDispatcher()
+    converter: webidl.converters.any
   }
 ])
 
@@ -21201,10 +20977,8 @@ async function httpNetworkFetch (
   // 19. Run these steps in parallel:
 
   //    1. Run these steps, but abort when fetchParams is canceled:
-  if (!fetchParams.controller.resume) {
-    fetchParams.controller.on('terminated', onAborted)
-  }
-
+  fetchParams.controller.onAborted = onAborted
+  fetchParams.controller.on('terminated', onAborted)
   fetchParams.controller.resume = async () => {
     // 1. While true
     while (true) {
@@ -21373,6 +21147,8 @@ async function httpNetworkFetch (
           }
           location = headersList.get('location', true)
 
+          this.body = new Readable({ read: resume })
+
           const decoders = []
 
           const willFollow = location && request.redirect === 'follow' &&
@@ -21390,7 +21166,7 @@ async function httpNetworkFetch (
             // CVE fix similar to urllib3 (GHSA-gm62-xv2j-4w53) and curl (CVE-2022-32206).
             const maxContentEncodings = 5
             if (codings.length > maxContentEncodings) {
-              this.abort(new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`))
+              reject(new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`))
               return true
             }
 
@@ -21422,8 +21198,6 @@ async function httpNetworkFetch (
               }
             }
           }
-
-          this.body = new Readable({ read: resume })
 
           const onError = this.onError.bind(this)
 
@@ -21469,6 +21243,10 @@ async function httpNetworkFetch (
         onComplete () {
           if (this.abort) {
             fetchParams.controller.off('terminated', this.abort)
+          }
+
+          if (fetchParams.controller.onAborted) {
+            fetchParams.controller.off('terminated', fetchParams.controller.onAborted)
           }
 
           fetchParams.controller.ended = true
@@ -27961,20 +27739,6 @@ class ByteParser extends Writable {
         if (isControlFrame(this.#info.opcode)) {
           this.#loop = this.parseControlFrame(body)
           this.#state = parserStates.INFO
-
-          // If the automatic PONG/CLOSE reply filled the socket's write buffer,
-          // stop parsing and resume on drain so a PING flood cannot grow the
-          // outbound queue without bound.
-          const socket = this.ws[kResponse].socket
-          if (this.#loop && socket.writableNeedDrain) {
-            this.#loop = false
-            socket.once('drain', () => {
-              if (this.destroyed) return
-              this.#loop = true
-              this.run(callback)
-            })
-            return
-          }
         } else {
           if (!this.#info.compressed) {
             if (!this.writeFragments(body)) {
@@ -29776,7 +29540,7 @@ const external_path_namespaceObject = require("path");
 var external_http_ = __nccwpck_require__(8611);
 // EXTERNAL MODULE: external "https"
 var external_https_ = __nccwpck_require__(5692);
-;// CONCATENATED MODULE: ./node_modules/@actions/http-client/lib/proxy.js
+;// CONCATENATED MODULE: ./node_modules/@actions/core/node_modules/@actions/http-client/lib/proxy.js
 function getProxyUrl(reqUrl) {
     const usingSsl = reqUrl.protocol === 'https:';
     if (checkBypass(reqUrl)) {
@@ -29871,7 +29635,7 @@ class DecodedURL extends URL {
 var node_modules_tunnel = __nccwpck_require__(770);
 // EXTERNAL MODULE: ./node_modules/undici/index.js
 var undici = __nccwpck_require__(6752);
-;// CONCATENATED MODULE: ./node_modules/@actions/http-client/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/@actions/core/node_modules/@actions/http-client/lib/index.js
 /* eslint-disable @typescript-eslint/no-explicit-any */
 var __awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -30568,7 +30332,7 @@ class lib_HttpClient {
 }
 const lowercaseKeys = (obj) => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCase()] = obj[k]), c), {});
 //# sourceMappingURL=index.js.map
-;// CONCATENATED MODULE: ./node_modules/@actions/http-client/lib/auth.js
+;// CONCATENATED MODULE: ./node_modules/@actions/core/node_modules/@actions/http-client/lib/auth.js
 var auth_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -32599,8 +32363,8 @@ class Context {
     }
 }
 //# sourceMappingURL=context.js.map
-// EXTERNAL MODULE: ./node_modules/@actions/github/node_modules/@actions/http-client/lib/index.js
-var lib = __nccwpck_require__(9659);
+// EXTERNAL MODULE: ./node_modules/@actions/http-client/lib/index.js
+var lib = __nccwpck_require__(4844);
 ;// CONCATENATED MODULE: ./node_modules/@actions/github/lib/internal/utils.js
 var utils_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -33166,44 +32930,20 @@ var endpoint = withDefaults(null, DEFAULTS);
  * Copyright(c) 2015 Douglas Christopher Wilson
  * MIT Licensed
  */
-const SP = 32; // " "
-const HTAB = 9; // "\t"
-const SEMI = 59; // ";"
-const EQ = 61; // "="
-const DQUOTE = 34; // '"'
-const BSLASH = 92; // "\\"
-const COMMA = 44; // ","
-const LOWER_CASE = 1;
-const OWS = 2;
-const SEMI_FLAG = 4;
-const COMMA_FLAG = 8;
-const TOKEN_FLAG = 16;
-const NON_ASCII = 0xff00;
-const CASE_FLAGS = LOWER_CASE | NON_ASCII;
+const TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
+const TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 /**
- * Character flags used to normalize HTTP field values while scanning.
- * Out-of-range reads intentionally coerce to zero in bitwise expressions.
+ * RegExp to match chars that must be quoted-pair in RFC 9110 sec 5.6.4
  */
-const CHAR_MAP = new Uint8Array(0x100);
-CHAR_MAP[HTAB] |= OWS;
-CHAR_MAP[SP] |= OWS;
-CHAR_MAP[SEMI] |= SEMI_FLAG;
-CHAR_MAP[COMMA] |= COMMA_FLAG;
-for (let code = 0x80 /* non-ASCII */; code <= 0xff; code++) {
-    CHAR_MAP[code] |= LOWER_CASE;
-}
-for (const char of "!#$%&'*+-.^_`|~") {
-    CHAR_MAP[char.charCodeAt(0)] |= TOKEN_FLAG;
-}
-for (let code = 0x30 /* 0 */; code <= 0x39 /* 9 */; code++) {
-    CHAR_MAP[code] |= TOKEN_FLAG;
-}
-for (let code = 0x41 /* A */; code <= 0x5a /* Z */; code++) {
-    CHAR_MAP[code] |= LOWER_CASE | TOKEN_FLAG;
-}
-for (let code = 0x61 /* a */; code <= 0x7a /* z */; code++) {
-    CHAR_MAP[code] |= TOKEN_FLAG;
-}
+const QUOTE_REGEXP = /[\\"]/g;
+/**
+ * RegExp to match type in RFC 9110 sec 8.3.1
+ *
+ * media-type = type "/" subtype
+ * type       = token
+ * subtype    = token
+ */
+const TYPE_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 /**
  * Null object perf optimization. Faster than `Object.create(null)` and `{ __proto__: null }`.
  */
@@ -33213,83 +32953,20 @@ const NullObject = /* @__PURE__ */ (() => {
     return C;
 })();
 /**
- * Validate a type string against RFC 9110.
- */
-function isTypeValid(type, start = 0, end = type.length) {
-    let hasSlash = false;
-    for (let index = start; index < end; index++) {
-        const code = type.charCodeAt(index);
-        if (code === 47 /* / */) {
-            if (hasSlash || index === start || index >= end - 1)
-                return false;
-            hasSlash = true;
-        }
-        else if (!isTokenCode(code)) {
-            return false;
-        }
-    }
-    return hasSlash;
-}
-/**
- * Validate a token against RFC 9110.
- */
-function isTokenValid(token, start = 0, end = token.length) {
-    if (start >= end)
-        return false;
-    for (let index = start; index < end; index++) {
-        if (!isTokenCode(token.charCodeAt(index)))
-            return false;
-    }
-    return true;
-}
-/**
- * Check whether a character code belongs to the token production in RFC 9110.
- */
-function isTokenCode(code) {
-    return (CHAR_MAP[code] & TOKEN_FLAG) !== 0;
-}
-/**
- * Serialize a parameter value.
- */
-function parameterValue(str) {
-    const len = str.length;
-    if (len === 0)
-        return '""';
-    let index = 0;
-    while (index < len && isTokenCode(str.charCodeAt(index)))
-        index++;
-    if (index === len)
-        return str;
-    let result = '"';
-    let start = 0;
-    while (index < len) {
-        const code = str.charCodeAt(index);
-        if (code !== HTAB && (code < SP || code === 127 || code > 255)) {
-            throw new TypeError(`Invalid parameter value: ${str}`);
-        }
-        if (code === 34 /* " */ || code === 92 /* \\ */) {
-            result += `${str.slice(start, index)}\\`;
-            start = index;
-        }
-        index++;
-    }
-    return `${result}${str.slice(start)}"`;
-}
-/**
  * Format an object into a `Content-Type` header.
  */
 function format(obj) {
     const { type, parameters } = obj;
-    if (!type || !isTypeValid(type)) {
+    if (!type || !TYPE_REGEXP.test(type)) {
         throw new TypeError(`Invalid type: ${type}`);
     }
     let result = type;
     if (parameters) {
         for (const param of Object.keys(parameters)) {
-            if (!isTokenValid(param)) {
+            if (!TOKEN_REGEXP.test(param)) {
                 throw new TypeError(`Invalid parameter name: ${param}`);
             }
-            result += `; ${param}=${parameterValue(parameters[param])}`;
+            result += `; ${param}=${qstring(parameters[param])}`;
         }
     }
     return result;
@@ -33298,158 +32975,126 @@ function format(obj) {
  * Parse a `Content-Type` header.
  */
 function dist_parse(header, options) {
-    const stopFlags = SEMI_FLAG | (options?.comma === true ? COMMA_FLAG : 0);
+    const stopChar = options?.comma === true ? COMMA : 65_536; // Sentinel for "no stop char".
     const len = header.length;
-    let valueStart = options?.start ?? 0;
-    while ((CHAR_MAP[header.charCodeAt(valueStart)] & OWS) !== 0) {
-        valueStart++;
-    }
-    let index = valueStart;
-    let typeFlags = 0;
-    let whitespace = -1;
-    let stop = options?.parameters === false ? COMMA_FLAG : 0;
-    while (index < len) {
-        const code = header.charCodeAt(index);
-        const flags = CHAR_MAP[code];
-        if ((flags & stopFlags) !== 0) {
-            stop |= flags & COMMA_FLAG;
-            break;
-        }
-        if ((flags & OWS) !== 0) {
-            if (whitespace === -1)
-                whitespace = index;
-        }
-        else {
-            whitespace = -1;
-        }
-        typeFlags |= (code & NON_ASCII) | flags;
-        index++;
-    }
-    const valueEnd = whitespace === -1 ? index : whitespace;
-    const value = header.slice(valueStart, valueEnd);
-    const type = (typeFlags & CASE_FLAGS) === 0 ? value : value.toLowerCase();
-    if (index === len || stop !== 0) {
+    let index = skipOWS(header, options?.start ?? 0, len);
+    const valueStart = index;
+    index = skipValue(header, index, len, stopChar);
+    const valueEnd = trailingOWS(header, valueStart, index);
+    const type = header.slice(valueStart, valueEnd).toLowerCase();
+    if (options?.parameters === false) {
         return { type, index, parameters: new NullObject() };
     }
-    return parseParameters(header, type, index, len, stopFlags);
+    return parseParameters(header, type, index, len, stopChar);
 }
+const SP = 32; // " "
+const HTAB = 9; // "\t"
+const SEMI = 59; // ";"
+const EQ = 61; // "="
+const DQUOTE = 34; // '"'
+const BSLASH = 92; // "\\"
+const COMMA = 44; // ","
 /**
  * Parses the parameters of a `Content-Type` header starting at the given index.
  */
-function parseParameters(header, type, index, len, stopFlags) {
+function parseParameters(header, type, index, len, stopChar) {
     const parameters = new NullObject();
     parameter: while (index < len) {
-        index++; // Skip over ;
-        while ((CHAR_MAP[header.charCodeAt(index)] & OWS) !== 0) {
-            index++;
-        }
+        if (header.charCodeAt(index) === stopChar)
+            break;
+        index = skipOWS(header, index + 1 /* Skip over ; */, len);
         const keyStart = index;
-        let keyFlags = 0;
-        let keyWhitespace = -1;
         while (index < len) {
             const code = header.charCodeAt(index);
-            const flags = CHAR_MAP[code];
-            if ((flags & stopFlags) !== 0) {
-                if ((flags & COMMA_FLAG) !== 0)
-                    break parameter;
+            if (code === stopChar)
+                break parameter;
+            if (code === SEMI)
                 continue parameter;
-            }
             if (code === EQ) {
-                const keyEnd = keyWhitespace === -1 ? index : keyWhitespace;
-                const value = header.slice(keyStart, keyEnd);
-                const key = (keyFlags & CASE_FLAGS) === 0 ? value : value.toLowerCase();
-                index++;
-                while ((CHAR_MAP[header.charCodeAt(index)] & OWS) !== 0) {
-                    index++;
-                }
+                const keyEnd = trailingOWS(header, keyStart, index);
+                const key = header.slice(keyStart, keyEnd).toLowerCase();
+                index = skipOWS(header, index + 1, len);
                 if (index < len && header.charCodeAt(index) === DQUOTE) {
-                    const quotedStart = ++index;
-                    let escaped = false;
+                    index++;
+                    let value = "";
                     while (index < len) {
-                        const code = header.charCodeAt(index);
+                        const code = header.charCodeAt(index++);
                         if (code === DQUOTE) {
-                            if (parameters[key] === undefined) {
-                                parameters[key] = escaped
-                                    ? unescapeQuotedPairs(header, quotedStart, index)
-                                    : header.slice(quotedStart, index);
-                            }
-                            index++;
-                            let stop = 0;
-                            // Discard characters between quote and delimiter.
-                            while (index < len) {
-                                const code = header.charCodeAt(index);
-                                const flags = CHAR_MAP[code];
-                                if ((flags & stopFlags) !== 0) {
-                                    stop = flags & COMMA_FLAG;
-                                    break;
-                                }
-                                index++;
-                            }
-                            if (stop !== 0)
-                                break parameter;
-                            continue parameter;
+                            index = skipValue(header, index, len, stopChar);
+                            if (parameters[key] === undefined)
+                                parameters[key] = value;
+                            break;
                         }
-                        if (code === BSLASH && index + 1 < len) {
-                            escaped = true;
-                            index += 2;
+                        if (code === BSLASH && index < len) {
+                            value += header[index++];
                             continue;
                         }
-                        index++;
+                        value += String.fromCharCode(code);
                     }
                     continue parameter;
                 }
                 const valueStart = index;
-                let stop = 0;
-                let valueWhitespace = -1;
-                while (index < len) {
-                    const code = header.charCodeAt(index);
-                    const flags = CHAR_MAP[code];
-                    if ((flags & stopFlags) !== 0) {
-                        stop = flags & COMMA_FLAG;
-                        break;
-                    }
-                    if ((flags & OWS) !== 0) {
-                        if (valueWhitespace === -1)
-                            valueWhitespace = index;
-                    }
-                    else {
-                        valueWhitespace = -1;
-                    }
-                    index++;
-                }
+                index = skipValue(header, index, len, stopChar);
                 if (parameters[key] === undefined) {
-                    const valueEnd = valueWhitespace === -1 ? index : valueWhitespace;
+                    const valueEnd = trailingOWS(header, valueStart, index);
                     parameters[key] = header.slice(valueStart, valueEnd);
                 }
-                if (stop !== 0)
-                    break parameter;
                 continue parameter;
             }
-            if ((flags & OWS) !== 0) {
-                if (keyWhitespace === -1)
-                    keyWhitespace = index;
-            }
-            else {
-                keyWhitespace = -1;
-            }
-            keyFlags |= (code & NON_ASCII) | flags;
             index++;
         }
     }
     return { type, index, parameters };
 }
 /**
- * Remove backslashes from quoted pairs in a known-terminated quoted string body.
+ * Skip over characters until a semicolon or other exit character.
  */
-function unescapeQuotedPairs(str, start, end) {
-    let result = "";
-    for (let index = start; index < end; index++) {
-        if (str.charCodeAt(index) === BSLASH) {
-            result += str.slice(start, index);
-            start = ++index;
-        }
+function skipValue(str, index, len, stopChar) {
+    while (index < len) {
+        const code = str.charCodeAt(index);
+        if (code === SEMI || code === stopChar)
+            break;
+        index++;
     }
-    return result + str.slice(start, end);
+    return index;
+}
+/**
+ * Skip optional whitespace (OWS) in an HTTP header value.
+ *
+ * OWS is defined in RFC 9110 sec 5.6.3 as SP (" ") or HTAB ("\t").
+ */
+function skipOWS(header, index, len) {
+    while (index < len) {
+        const char = header.charCodeAt(index);
+        if (char !== SP && char !== HTAB)
+            break;
+        index++;
+    }
+    return index;
+}
+/**
+ * Trim optional whitespace (OWS) from the end of a substring.
+ *
+ * OWS is defined in RFC 9110 sec 5.6.3 as SP (" ") or HTAB ("\t").
+ */
+function trailingOWS(header, start, end) {
+    while (end > start) {
+        const char = header.charCodeAt(end - 1);
+        if (char !== SP && char !== HTAB)
+            break;
+        end--;
+    }
+    return end;
+}
+/**
+ * Serialize a parameter value.
+ */
+function qstring(str) {
+    if (TOKEN_REGEXP.test(str))
+        return str;
+    if (TEXT_REGEXP.test(str))
+        return `"${str.replace(QUOTE_REGEXP, "\\$&")}"`;
+    throw new TypeError(`Invalid parameter value: ${str}`);
 }
 //# sourceMappingURL=index.js.map
 ;// CONCATENATED MODULE: ./node_modules/json-with-bigint/json-with-bigint.js
@@ -37547,7 +37192,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 // EXTERNAL MODULE: external "node:buffer"
 var external_node_buffer_ = __nccwpck_require__(4573);
 ;// CONCATENATED MODULE: ./node_modules/js-yaml/dist/js-yaml.mjs
-/*! js-yaml 5.5.0 https://github.com/nodeca/js-yaml @license MIT */
+/*! js-yaml 5.4.3 https://github.com/nodeca/js-yaml @license MIT */
 //#region src/tag.ts
 /**
 * Returned by a scalar resolver when the source does not match its tag.
@@ -38373,8 +38018,10 @@ var Schema = class Schema {
 					if (tag.matchByTagPrefix) prefix.sequence.push(tag);
 					else exact.sequence[tag.tagName] = tag;
 					break;
-				case "mapping": if (tag.matchByTagPrefix) prefix.mapping.push(tag);
-				else exact.mapping[tag.tagName] = tag;
+				case "mapping":
+					if (tag.matchByTagPrefix) prefix.mapping.push(tag);
+					else exact.mapping[tag.tagName] = tag;
+					break;
 			}
 		}
 		const implicitScalarAnyFirstChar = implicitScalarTags.filter((tag) => tag.implicitFirstChars === null);
@@ -38962,17 +38609,16 @@ function getBlockValue(input, start, end, indent, chomping, folded) {
 		}
 		const content = line.slice(textIndent);
 		const first = content.charCodeAt(0);
-		if (folded) {
-			if (first === 32 || first === 9) {
-				atMoreIndented = true;
-				result += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
-			} else if (atMoreIndented) {
-				atMoreIndented = false;
-				result += "\n".repeat(emptyLines + 1);
-			} else if (emptyLines === 0) {
-				if (didReadContent) result += " ";
-			} else result += "\n".repeat(emptyLines);
-		} else result += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
+		if (folded) if (first === 32 || first === 9) {
+			atMoreIndented = true;
+			result += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
+		} else if (atMoreIndented) {
+			atMoreIndented = false;
+			result += "\n".repeat(emptyLines + 1);
+		} else if (emptyLines === 0) {
+			if (didReadContent) result += " ";
+		} else result += "\n".repeat(emptyLines);
+		else result += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
 		result += content;
 		didReadContent = true;
 		emptyLines = 0;
@@ -39006,69 +38652,24 @@ var DEFAULT_TAG_HANDLERS = Object.assign(Object.create(null), {
 	"!": "!",
 	"!!": "tag:yaml.org,2002:"
 });
-var TAG_SUFFIX_CHARS = "-#;/?:@&=+$_.~*'()";
-var TAG_URI_CHARS = TAG_SUFFIX_CHARS + "!,[]";
-var HEX = "0123456789ABCDEF";
-function percentByte(byte) {
-	return "%" + HEX[byte >> 4] + HEX[byte & 15];
-}
-function tagPercentEncode(source, isSuffix) {
-	const allowed = isSuffix ? TAG_SUFFIX_CHARS : TAG_URI_CHARS;
-	let result = "";
-	for (let index = 0; index < source.length; index++) {
-		let ch = source.charCodeAt(index);
-		if (ch >= 48 && ch <= 57 || ch >= 65 && ch <= 90 || ch >= 97 && ch <= 122 || allowed.includes(source[index])) {
-			result += source[index];
-			continue;
-		}
-		if (ch >= 55296 && ch <= 56319) ch = 65536 + ((ch & 1023) << 10) + (source.charCodeAt(++index) & 1023);
-		if (ch < 128) result += percentByte(ch);
-		else if (ch < 2048) result += percentByte(192 | ch >> 6) + percentByte(128 | ch & 63);
-		else if (ch < 65536) result += percentByte(224 | ch >> 12) + percentByte(128 | ch >> 6 & 63) + percentByte(128 | ch & 63);
-		else result += percentByte(240 | ch >> 18) + percentByte(128 | ch >> 12 & 63) + percentByte(128 | ch >> 6 & 63) + percentByte(128 | ch & 63);
-	}
-	return result;
-}
-function tagPercentDecode(source) {
-	let result = "";
-	let index = 0;
-	while (index < source.length) {
-		if (source.charCodeAt(index) !== 37) {
-			result += source[index++];
-			continue;
-		}
-		let ch = parseInt(source.slice(index + 1, index + 3), 16);
-		index += 3;
-		if (ch >= 192) {
-			let remaining = ch < 224 ? 1 : ch < 240 ? 2 : 3;
-			ch &= (1 << 6 - remaining) - 1;
-			while (remaining-- > 0) {
-				ch = ch << 6 | parseInt(source.slice(index + 1, index + 3), 16) & 63;
-				index += 3;
-			}
-		}
-		if (ch < 65536) result += String.fromCharCode(ch);
-		else {
-			ch -= 65536;
-			result += String.fromCharCode(55296 | ch >> 10, 56320 | ch & 1023);
-		}
-	}
-	return result;
+function tagPercentEncode(source) {
+	return encodeURI(source).replace(/!/g, "%21");
 }
 function tagNameFull(rawTag, tagHandlers) {
-	if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return tagPercentDecode(rawTag.slice(2, -1));
+	if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return decodeURIComponent(rawTag.slice(2, -1));
 	const handleEnd = rawTag.indexOf("!", 1);
 	const handle = handleEnd === -1 ? "!" : rawTag.slice(0, handleEnd + 1);
-	return tagPercentDecode(tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle) + tagPercentDecode(rawTag.slice(handle.length));
+	const prefix = tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle;
+	return decodeURIComponent(prefix) + decodeURIComponent(rawTag.slice(handle.length));
 }
 function tagNameShort(fullTag) {
 	let tag = fullTag;
 	if (tag.charCodeAt(0) === 33) {
 		tag = tag.slice(1);
-		return `!${tagPercentEncode(tag, true)}`;
+		return `!${tagPercentEncode(tag)}`;
 	}
-	if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18), true)}`;
-	return `!<${tagPercentEncode(tag, false)}>`;
+	if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18))}`;
+	return `!<${tagPercentEncode(tag)}>`;
 }
 //#endregion
 //#region src/parser/constructor.ts
@@ -39541,11 +39142,7 @@ function skipUntilLineEnd(state) {
 	while (ch !== 0 && !isEol(ch)) ch = state.input.charCodeAt(++state.position);
 }
 function checkPrintable(state, start, end) {
-	const match = PATTERN_NON_PRINTABLE.exec(state.input.slice(start, end));
-	if (match !== null) {
-		state.position = start + match.index + match[0].length - 1;
-		throwError(state, "the stream contains non-printable characters");
-	}
+	if (PATTERN_NON_PRINTABLE.test(state.input.slice(start, end))) throwError(state, "the stream contains non-printable characters");
 }
 function readTagProperty(state, props, inFlow) {
 	if (state.input.charCodeAt(state.position) !== 33) return false;
@@ -39572,14 +39169,12 @@ function readTagProperty(state, props, inFlow) {
 		state.position++;
 	} else {
 		while (ch !== 0 && !isWsOrEol(ch) && !(inFlow && isFlowIndicator(ch))) {
-			if (ch === 33) {
-				if (!isNamed) {
-					tagHandle = state.input.slice(suffixStart - 1, state.position + 1);
-					if (!PATTERN_TAG_HANDLE.test(tagHandle)) throwError(state, "named tag handle cannot contain such characters");
-					isNamed = true;
-					suffixStart = state.position + 1;
-				} else throwError(state, "tag suffix cannot contain exclamation marks");
-			}
+			if (ch === 33) if (!isNamed) {
+				tagHandle = state.input.slice(suffixStart - 1, state.position + 1);
+				if (!PATTERN_TAG_HANDLE.test(tagHandle)) throwError(state, "named tag handle cannot contain such characters");
+				isNamed = true;
+				suffixStart = state.position + 1;
+			} else throwError(state, "tag suffix cannot contain exclamation marks");
 			ch = state.input.charCodeAt(++state.position);
 		}
 		tagName = state.input.slice(suffixStart, state.position);
@@ -39763,7 +39358,7 @@ function readBlockScalar(state, parentIndent, props) {
 function canStartPlainScalar(state, nodeContext) {
 	const ch = state.input.charCodeAt(state.position);
 	const inFlow = nodeContext === CONTEXT_FLOW_IN;
-	if (ch === 0 || isWsOrEol(ch) || ch === 35 || ch === 38 || ch === 42 || ch === 33 || ch === 124 || ch === 62 || ch === 39 || ch === 34 || ch === 37 || ch === 64 || ch === 96 || isFlowIndicator(ch)) return false;
+	if (ch === 0 || isWsOrEol(ch) || ch === 35 || ch === 38 || ch === 42 || ch === 33 || ch === 124 || ch === 62 || ch === 39 || ch === 34 || ch === 37 || ch === 64 || ch === 96 || inFlow && isFlowIndicator(ch)) return false;
 	if (ch === 63 || ch === 45) {
 		const following = state.input.charCodeAt(state.position + 1);
 		if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) return false;
@@ -40035,20 +39630,19 @@ function parseNode(state, parentIndent, nodeContext, allowToSeek, allowCompact, 
 	if (indentStatus === 1 || nodeContext === CONTEXT_BLOCK_OUT) {
 		const flowIndent = nodeContext === CONTEXT_FLOW_IN || nodeContext === CONTEXT_FLOW_OUT ? parentIndent : parentIndent + 1;
 		const blockIndent = state.position - state.lineStart;
-		if (indentStatus === 1) {
-			if (allowBlockCollections && (readBlockSequence(state, blockIndent, props) || readBlockMapping(state, blockIndent, flowIndent, props)) || readFlowCollection(state, flowIndent, props)) hasContent = true;
-			else {
-				const ch = state.input.charCodeAt(state.position);
-				if (propertyStart !== null && allowPropertyMapping && allowBlockStyles && !allowBlockCollections && ch !== 124 && ch !== 62) {
-					const fallbackState = snapshotState(state);
-					const propertyIndent = propertyStart.position - propertyStart.lineStart;
-					restoreState(state, propertyStart);
-					if (readBlockMapping(state, propertyIndent, flowIndent, emptyProperties()) && state.events[fallbackState.eventsLength]?.type === EVENT_ID.MAPPING) hasContent = true;
-					else restoreState(state, fallbackState);
-				}
-				if (!hasContent && (allowBlockScalars && readBlockScalar(state, flowIndent, props) || readSingleQuotedScalar(state, flowIndent, props) || readDoubleQuotedScalar(state, flowIndent, props) || readAlias(state, props) || readPlainScalar(state, flowIndent, nodeContext, props))) hasContent = true;
+		if (indentStatus === 1) if (allowBlockCollections && (readBlockSequence(state, blockIndent, props) || readBlockMapping(state, blockIndent, flowIndent, props)) || readFlowCollection(state, flowIndent, props)) hasContent = true;
+		else {
+			const ch = state.input.charCodeAt(state.position);
+			if (propertyStart !== null && allowPropertyMapping && allowBlockStyles && !allowBlockCollections && ch !== 124 && ch !== 62) {
+				const fallbackState = snapshotState(state);
+				const propertyIndent = propertyStart.position - propertyStart.lineStart;
+				restoreState(state, propertyStart);
+				if (readBlockMapping(state, propertyIndent, flowIndent, emptyProperties()) && state.events[fallbackState.eventsLength]?.type === EVENT_ID.MAPPING) hasContent = true;
+				else restoreState(state, fallbackState);
 			}
-		} else if (indentStatus === 0) hasContent = allowBlockCollections && readBlockSequence(state, blockIndent, props);
+			if (!hasContent && (allowBlockScalars && readBlockScalar(state, flowIndent, props) || readSingleQuotedScalar(state, flowIndent, props) || readDoubleQuotedScalar(state, flowIndent, props) || readAlias(state, props) || readPlainScalar(state, flowIndent, nodeContext, props))) hasContent = true;
+		}
+		else if (indentStatus === 0) hasContent = allowBlockCollections && readBlockSequence(state, blockIndent, props);
 	}
 	allowBlockScalars = allowBlockScalars && !hasContent;
 	if (!hasContent && (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1 || allowBlockScalars)) {
@@ -40395,18 +39989,20 @@ function visitNode(node, visitor, ctx) {
 				isKey: false
 			})) return true;
 			break;
-		case "mapping": for (const { key, value } of node.items) {
-			if (visitNode(key, visitor, {
-				depth,
-				parent: node,
-				isKey: true
-			})) return true;
-			if (visitNode(value, visitor, {
-				depth,
-				parent: node,
-				isKey: false
-			})) return true;
-		}
+		case "mapping":
+			for (const { key, value } of node.items) {
+				if (visitNode(key, visitor, {
+					depth,
+					parent: node,
+					isKey: true
+				})) return true;
+				if (visitNode(value, visitor, {
+					depth,
+					parent: node,
+					isKey: false
+				})) return true;
+			}
+			break;
 	}
 	return false;
 }
@@ -40838,10 +40434,8 @@ function writeBlockMapping(state, level, node, compact) {
 		const keyHasLineBreak = key.kind === "scalar" && key.value.indexOf("\n") !== -1;
 		const keyIsTooLong = keyText.length > 1024 && /^[\s\S]{1025}/u.test(keyText);
 		const explicitPair = keyIsBlock || keyHasLineBreak || keyIsTooLong;
-		if (explicitPair) {
-			if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
-			else pairBuffer += "? ";
-		}
+		if (explicitPair) if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
+		else pairBuffer += "? ";
 		pairBuffer += keyText;
 		if (explicitPair) pairBuffer += generateNextLine(state, level);
 		const valueText = writeNode(state, level + 1, value, node, {
@@ -40877,15 +40471,12 @@ function writeNode(state, level, node, parent, ctx) {
 	let body;
 	let shouldPrintTag = node.tagged;
 	const useBlockCollection = block && (node.kind === "mapping" || node.kind === "sequence") && node.style === COLLECTION_STYLE.BLOCK && node.items.length !== 0;
-	if (node.kind === "mapping") {
-		if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
-		else body = writeFlowMapping(state, level, node);
-	} else if (node.kind === "sequence") {
-		if (useBlockCollection) {
-			if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
-			else body = writeBlockSequence(state, level, node, compact);
-		} else body = writeFlowSequence(state, level, node);
-	} else {
+	if (node.kind === "mapping") if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
+	else body = writeFlowMapping(state, level, node);
+	else if (node.kind === "sequence") if (useBlockCollection) if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
+	else body = writeBlockSequence(state, level, node, compact);
+	else body = writeFlowSequence(state, level, node);
+	else {
 		const layout = scalarLayout(state, node, parent, level, iskey, !block);
 		detectAllowedStyles(layout);
 		for (const rule of state.scalarStyleRules) rule(layout);
@@ -42040,11 +41631,11 @@ function labeling_isNotFound(error) {
         && error.status === 404);
 }
 
-;// CONCATENATED MODULE: ./node_modules/@octokit/plugin-request-log/dist-src/version.js
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/version.js
 const plugin_request_log_dist_src_version_VERSION = "6.0.0";
 
 
-;// CONCATENATED MODULE: ./node_modules/@octokit/plugin-request-log/dist-src/index.js
+;// CONCATENATED MODULE: ./node_modules/@octokit/rest/node_modules/@octokit/plugin-request-log/dist-src/index.js
 
 function requestLog(octokit) {
   octokit.hook.wrap("request", (request, options) => {
