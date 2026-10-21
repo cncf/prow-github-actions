@@ -497,12 +497,12 @@ describe('sweep on a repository with OWNERS files', () => {
 describe('sweep with blunderbuss.delay', () => {
   const owners = { OWNERS: 'approvers:\n- alice\nreviewers:\n- carol\n' }
 
-  function serve(specs: PullSpec[], timelines: Record<number, string[]> = {}, reviewed: number[] = []) {
+  function serve(specs: PullSpec[], timelines: Record<number, string[]> = {}, reviewed: number[] = [], config = 'blunderbuss:\n  delay: 1h\n') {
     const tree = Object.keys(owners).map(path => ({ path, type: 'blob', sha: blobSha(path) }))
     const requested: number[] = []
     const timelineReads: number[] = []
     server.use(
-      prowYaml('blunderbuss:\n  delay: 1h\n'),
+      prowYaml(config),
       utils.defaultBranchTree(Object.keys(owners)),
       http.get(`${repo}/git/trees/basesha`, utils.mockResponse(200, { sha: 'basesha', truncated: false, tree })),
       http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, [{ filename: 'x.go', status: 'modified' }])),
@@ -542,6 +542,70 @@ describe('sweep with blunderbuss.delay', () => {
     expect(requested).toEqual([])
     // #1 is not due yet: no timeline read; #2 was opened long ago and never marked ready
     expect(timelineReads).toEqual([2])
+  })
+
+  // lookback 30m and delay 1h: the due window is [now-90m, now-60m], both ends inclusive,
+  // and it ends before the candidate window starts, so every pull request here takes
+  // the delayed-reviewers path only. The sweep handles them concurrently, so the
+  // order of its timeline reads is not fixed.
+  const shifted = 'sweep:\n  lookback: 30m\nblunderbuss:\n  delay: 1h\n'
+  const dueTo = hour
+  const dueFrom = 90 * 60_000
+
+  it('requests on a pull request opened exactly at the end of the due window, not one opened 1ms later', async () => {
+    const { requested, timelineReads } = serve([
+      { number: 1, created: ago(dueTo), updated: ago(dueTo) },
+      { number: 2, created: ago(dueTo - 1), updated: ago(dueTo - 1) },
+    ], {}, [], shifted)
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
+    expect(requested).toEqual([1])
+    // #2 is not due yet: decided from created_at alone, before any timeline read
+    expect(timelineReads).toEqual([1])
+  })
+
+  it('requests on a pull request opened exactly at the start of the due window, not one opened 1ms earlier', async () => {
+    const { requested, timelineReads } = serve([
+      { number: 1, created: ago(dueFrom), updated: ago(dueFrom) },
+      { number: 2, created: ago(dueFrom + 1), updated: ago(70 * 60_000) },
+    ], {}, [], shifted)
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
+    expect(requested).toEqual([1])
+    // #2 was listed (updated inside the window) and its timeline read, but it was opened before the window
+    expect(timelineReads.sort()).toEqual([1, 2])
+  })
+
+  it('times the last ready_for_review against the same inclusive bounds', async () => {
+    const { requested } = serve([
+      { number: 1, created: ago(5 * hour), updated: ago(dueTo) },
+      { number: 2, created: ago(5 * hour), updated: ago(dueTo) },
+      { number: 3, created: ago(5 * hour), updated: ago(70 * 60_000) },
+      { number: 4, created: ago(5 * hour), updated: ago(70 * 60_000) },
+    ], {
+      1: [ago(4 * hour), ago(dueTo)],
+      2: [ago(4 * hour), ago(dueTo - 1)],
+      3: [ago(dueFrom)],
+      4: [ago(dueFrom + 1)],
+    }, [], shifted)
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
+    expect(requested.sort()).toEqual([1, 3])
+  })
+
+  it('reports a failed timeline read as a blunderbuss failure and still handles the other pull requests', async () => {
+    const { requested, timelineReads } = serve([
+      { number: 1, created: ago(5 * hour), updated: ago(70 * 60_000) },
+      { number: 2, created: ago(70 * 60_000), updated: ago(70 * 60_000) },
+    ])
+    server.use(http.get(`${repo}/issues/1/timeline`, () => {
+      timelineReads.push(1)
+      return json({ message: 'Server Error' }, 500)
+    }))
+
+    await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (blunderbuss: could not read the timeline: HttpError: Server Error)')
+    expect(requested).toEqual([2])
+    expect(timelineReads.sort()).toEqual([1, 2])
   })
 
   it('leaves alone a pull request with a requested reviewer, a requested team, a review or that is a draft', async () => {
