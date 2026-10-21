@@ -40,6 +40,19 @@ describe('dist/index.js OWNERS groups', () => {
     gh.route('GET', '/orgs/Codertocat/teams/reviewers/members', { status: 200, body: members.map(login => ({ login })) })
   }
 
+  function routePaginatedTeam(firstPage: string[], secondPage: string[]) {
+    gh.route('GET', /^\/orgs\/Codertocat\/teams\/reviewers\/members/, (req) => {
+      const page = new URL(req.path, 'http://localhost').searchParams.get('page')
+      return page === '2'
+        ? { status: 200, body: secondPage.map(login => ({ login })) }
+        : {
+            status: 200,
+            body: firstPage.map(login => ({ login })),
+            headers: { link: `<${gh.url}/orgs/Codertocat/teams/reviewers/members?per_page=100&page=2>; rel="next"` },
+          }
+    })
+  }
+
   function routeLabelWrite() {
     gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'lgtm' }] })
     gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
@@ -47,6 +60,10 @@ describe('dist/index.js OWNERS groups', () => {
 
   function lgtm(payload: Record<string, unknown>) {
     return runBundle({ eventName: 'issue_comment', payload, inputs: { ...token, 'prow-commands': '/lgtm' }, apiUrl: gh.url })
+  }
+
+  function approve(payload: Record<string, unknown>) {
+    return runBundle({ eventName: 'issue_comment', payload, inputs: { ...token, 'prow-commands': '/approve' }, apiUrl: gh.url })
   }
 
   function warnings(stdout: string) {
@@ -102,6 +119,50 @@ describe('dist/index.js OWNERS groups', () => {
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('GET', /\/teams\//)).toEqual([])
     expectCommandThenConfig([rootOwnersRead, labelsRead, labelsPost])
+  })
+
+  it('a member present only on the second team page can approve a pull request', async () => {
+    routeOwners(
+      { OWNERS: 'approvers:\n- \'@codertocat/reviewers\'\n' },
+      ['x.go'],
+      { user: { login: 'some-author' } },
+    )
+    routePaginatedTeam(['carol'], ['alice'])
+    gh.route('GET', `${repo}/issues/1/comments`, {
+      status: 200,
+      body: [{ id: 1, body: '/approve', user: { login: 'alice', type: 'User' }, created_at: new Date().toISOString() }],
+    })
+    gh.route('GET', `${repo}/pulls/1/reviews`, { status: 200, body: [] })
+    gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'approved' }] })
+    gh.route('POST', `${repo}/issues/1/labels`, { status: 200, body: [] })
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+    const result = await approve(prCommentEvent('/approve', 'alice'))
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain('approve: #1 is approved by alice')
+    expect(gh.requestsMatching('GET', /^\/orgs\/Codertocat\/teams\/reviewers\/members/)).toHaveLength(2)
+    expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
+    expect(gh.requestsMatching('POST', /\/pulls\/1\/reviews$/)).toEqual([])
+  })
+
+  it('a member present only on the second team page is selected as a reviewer', async () => {
+    routeOwners(
+      { OWNERS: 'reviewers:\n- \'@codertocat/reviewers\'\n' },
+      ['x.go'],
+    )
+    routePaginatedTeam(['carol'], ['alice'])
+    gh.route('POST', `${repo}/pulls/1/requested_reviewers`, { status: 201, body: {} })
+
+    const result = await runBundle({ eventName: 'pull_request', payload: pullReqOpenedEvent, inputs: token, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requestsMatching('GET', /^\/orgs\/Codertocat\/teams\/reviewers\/members/)).toHaveLength(2)
+    const requested = gh.requestsMatching('POST', /\/pulls\/1\/requested_reviewers$/).map(r => (r.body as { reviewers: string[] }).reviewers)
+    expect(requested).toHaveLength(1)
+    expect(requested[0]?.sort()).toEqual(['alice', 'carol'])
   })
 
   it('a team the token cannot read admits nobody: refused with one warning', async () => {
