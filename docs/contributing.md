@@ -58,37 +58,7 @@ the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
 
-### Upstream negative-count branch coverage report
-
-[vitest-dev/vitest#11690](https://github.com/vitest-dev/vitest/issues/11690)
-tracks a reduced reproduction of the negative-count `BRDA` artifact described
-in [#511](https://github.com/cncf/prow-github-actions/pull/511). Reproduced on
-Node 24.22.0 (V8 13.6.233.17-node.57), Vitest 5.0.4 and
-`@vitest/coverage-v8` 5.0.4, with Vite 8.3.4 and
-`ast-v8-to-istanbul` 1.0.7:
-
-```ts
-export async function gate(a: boolean, b: boolean): Promise<string> {
-  const ok = a || (await Promise.resolve(b))
-  if (ok)
-    return 'yes'
-  return 'no'
-}
-
-```
-
-Awaiting `gate(true, false)` three times, then `gate(false, true)` and
-`gate(false, false)`, returns `'yes'` four times and `'no'` once. Nevertheless,
-the V8 provider reports 75% branch coverage, with `BRDA:3,1,0,4` and
-`BRDA:3,1,1,-2` for the `if`. The upstream report includes the complete test,
-configuration and commands to reproduce it. The implicit-else count is
-negative even though that arm ran; this is not evidence of a missing test.
-
-To locate negative branch counts in a coverage run:
-
-```sh
-awk '/^SF:/{f=$0} /^BRDA:/{split($0,a,","); if (a[4] ~ /^-/) print f, $0}' coverage/lcov.info
-```
+### Phantom "uncovered" branches after an `await`
 
 The unit run lists four branches as uncovered that every test run in fact
 drives: `close.ts:39`, `reopen.ts:36`, `approve.ts:504` and `auth.ts:220`
@@ -101,10 +71,29 @@ only the calls that resumed from that particular `await`, while the then-block
 is counted correctly; the implicit else that the v8 provider derives as
 "enclosing minus then" then comes out as zero or negative. The giveaway is a
 negative hit count in `lcov.info`, which a well-formed `BRDA` record cannot
-carry. In the same reproduction, an explicit `else { … }` block, which owns a
-V8 range of its own, is counted correctly.
+carry:
+
+```sh
+awk '/^SF:/{f=$0} /^BRDA:/{split($0,a,","); if (a[4] ~ /^-/) print f, $0}' coverage/lcov.info
+```
 
 Do not add tests, `/* v8 ignore */` markers or a lower branch threshold for
 these: the arm is covered, and an ignore marker would hide a real miss on the
-same line. Do not remove defensive code or lower thresholds to hide this
-reporting artifact; continue to investigate genuinely uncovered paths.
+same line. A minimal reproduction against `@vitest/coverage-v8` 5.0.4 was
+filed upstream as [vitest-dev/vitest#11690](https://github.com/vitest-dev/vitest/issues/11690)
+and reproduced on Node 24.22.0 (V8 13.6.233.17-node.57), Vitest 5.0.4,
+Vite 8.3.4 and `ast-v8-to-istanbul` 1.0.7:
+
+```ts
+export async function gate(a: boolean, b: boolean): Promise<string> {
+  const ok = a || (await Promise.resolve(b))
+  if (ok)
+    return 'yes'
+  return 'no'
+}
+// gate(true, false) ×3, gate(false, true), gate(false, false)
+// → BRDA for the `if`: then 4, else -2 (it ran once)
+```
+
+In the same reproduction an explicit `else { … }` block, which owns a V8
+range of its own, is counted correctly.
