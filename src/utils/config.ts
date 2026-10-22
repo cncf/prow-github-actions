@@ -615,7 +615,8 @@ function normalizeBlunderbuss(source: string, raw: unknown): BlunderbussConfig {
       ms = parseDuration(raw.delay, 'blunderbuss.delay')
     }
     catch (e) {
-      throw new Error(`${source}: ${e instanceof Error ? e.message : e}`)
+      // parseDuration throws only Error
+      throw new Error(`${source}: ${e instanceof Error ? e.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; configBlunderbussDelay.test.ts drives it */ e}`)
     }
     if (ms > maxBlunderbussDelayMs) {
       throw new Error(`${source}: blunderbuss.delay must not be longer than 24h`)
