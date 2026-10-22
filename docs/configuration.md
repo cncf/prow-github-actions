@@ -338,7 +338,11 @@ that nobody has been asked to review yet. The clock starts at `opened`, or at th
 sweep's list reaches back the extra `delay`, so a pull request nobody touched since it opened is
 still found; those older pull requests get this step only. Install the sweep job even under
 `pull_request_target`; its other steps are idempotent. A request lands up to one sweep interval
-after it is due, plus GitHub's scheduling delay. `/auto-cc` is never delayed.
+after it is due, plus GitHub's scheduling delay. The sweep does not catch up any further back:
+when the schedule misses runs for longer than `lookback`, a pull request whose review clock
+expired before `now − delay − lookback` without a sweep seeing it is never requested by this
+step. Size `lookback` (capped at 24h) to the longest outage to ride out, or request reviewers by
+hand or with `/auto-cc`. `/auto-cc` is never delayed.
 
 ```yaml
 blunderbuss:
