@@ -1,6 +1,6 @@
 import type { FakeGithub } from './fakeGithub'
 import { Buffer } from 'node:buffer'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
@@ -36,7 +36,18 @@ describe('dist/index.js OWNERS probes', () => {
   beforeAll(async () => {
     gh = await start()
   })
-  afterEach(() => gh.reset())
+  // `queueRead` is answered "no queue" rather than left to the fake's 404, which queueState would swallow
+  // into a warning; the OWNERS probes a scenario expects to miss are allowed in that scenario, and any
+  // other unrouted request fails it
+  beforeEach(() => gh.mergeQueueFallback({ pullRequestId: 'PR_none', headOid: 'headsha', enabled: false }))
+  afterEach(() => {
+    try {
+      gh.assertNoUnexpectedRequests()
+    }
+    finally {
+      gh.reset()
+    }
+  })
   afterAll(() => gh.close())
 
   function contents(text: string) {
@@ -74,6 +85,7 @@ describe('dist/index.js OWNERS probes', () => {
     it('root OWNERS present, sdk/OWNERS absent: bob approves from the root file; no blob is read', async () => {
       routeTruncatedBase()
       gh.route('GET', `${repo}/contents/OWNERS`, contents(rootOwners))
+      gh.allowUnmatched('GET', `${repo}/contents/sdk%2FOWNERS`)
       routeApprove(['lgtm'])
       gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'o' }] } })
 
@@ -99,6 +111,8 @@ describe('dist/index.js OWNERS probes', () => {
       gh.route('GET', `${repo}/contents/OWNERS`, contents(rootOwners))
       gh.route('GET', `${repo}/contents/sdk%2FOWNERS`, { status: 500, body: { message: 'boom' } })
       routeApprove()
+      // the tide gate still probes master's tree after the failed evaluation, and nothing routes it
+      gh.allowUnmatched('GET', `${repo}/git/trees/master`)
 
       const result = await runApprove()
 
@@ -153,6 +167,7 @@ describe('dist/index.js OWNERS probes', () => {
 
     it('a truncated tree without an OWNERS blob and no root OWNERS file: the gate wants lgtm alone', async () => {
       routeApprove(['lgtm'])
+      gh.allowUnmatched('GET', `${repo}/contents/OWNERS`)
       gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: true, tree: [{ path: 'README.md', type: 'blob', sha: 'r' }] } })
 
       const result = await runApprove()
