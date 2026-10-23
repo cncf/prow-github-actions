@@ -40,4 +40,12 @@ describe('matchesLabelPattern', () => {
     expect(matchesLabelPattern('do-not-merge/*/hold', 'do-not-merge/hold')).toBe(false)
     expect(matchesLabelPattern('do-not-merge/*/hold', 'do-not-merge//hold')).toBe(true)
   })
+
+  it('does not let a middle part reuse characters of the part before it', () => {
+    // each middle part is searched for only after the end of the previous match
+    expect(matchesLabelPattern('*ab*b*', 'ab')).toBe(false)
+    expect(matchesLabelPattern('*ab*b*', 'abb')).toBe(true)
+    expect(matchesLabelPattern('x*ab*b*y', 'xaby')).toBe(false)
+    expect(matchesLabelPattern('x*ab*b*y', 'xabby')).toBe(true)
+  })
 })
