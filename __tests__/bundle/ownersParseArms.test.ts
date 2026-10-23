@@ -1,5 +1,5 @@
 import type { FakeGithub } from './fakeGithub'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
@@ -19,7 +19,21 @@ describe('dist/index.js OWNERS content shapes', () => {
   beforeAll(async () => {
     gh = await start()
   })
-  afterEach(() => gh.reset())
+  // the tide gate's merge queue read after `/approve` is answered "no queue" rather than left to the
+  // fake's 404, which queueState would swallow into a warning; the gate's OWNERS probe of master is
+  // expected to miss (nothing routes that tree); any other unrouted request fails the scenario
+  beforeEach(() => {
+    gh.mergeQueueFallback({ pullRequestId: 'PR_none', headOid: 'headsha', enabled: false })
+    gh.allowUnmatched('GET', `${repo}/git/trees/master`)
+  })
+  afterEach(() => {
+    try {
+      gh.assertNoUnexpectedRequests()
+    }
+    finally {
+      gh.reset()
+    }
+  })
   afterAll(() => gh.close())
 
   function routeApprove(owners: string) {
