@@ -9,7 +9,8 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 
 import * as utils from '../testUtils'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

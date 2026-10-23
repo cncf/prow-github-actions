@@ -10,6 +10,7 @@ import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEve
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

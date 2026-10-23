@@ -13,7 +13,8 @@ import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEven
 import * as utils from '../testUtils'
 import { prHandlers, repo } from '../utils/ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

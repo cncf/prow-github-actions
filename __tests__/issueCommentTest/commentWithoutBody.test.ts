@@ -7,6 +7,7 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 let calls: string[]
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 beforeEach(() => {

@@ -9,6 +9,7 @@ import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEven
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

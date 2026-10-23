@@ -13,7 +13,8 @@ import prOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers, repo } from '../utils/ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => {
   server.resetHandlers()
@@ -670,7 +671,7 @@ describe('/test', () => {
 
   it('refuses an outsider', async () => {
     const reply = new utils.ObserveRequest()
-    server.use(...outsiderAuth(), http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)))
+    server.use(...outsiderAuth(), http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)), ...utils.noOrgOrRepoConfigExcept())
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     vi.spyOn(core, 'error').mockImplementation(() => {})
 

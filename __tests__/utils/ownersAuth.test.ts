@@ -23,7 +23,8 @@ import {
   treeHandlers,
 } from './ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => {
   utils.setupActionsEnv()
   server.listen(utils.failOnUnhandledRequest)
@@ -336,6 +337,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     server.use(
       pullHandler(),
       filesHandler(changedFiles('src/file1.txt')),
+      branchHandler(),
       http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(500)),
     )
 

@@ -16,7 +16,8 @@ import * as utils from '../testUtils'
 // non-Error fallback of a refused write is only reachable through a stub
 vi.mock('../../src/utils/octokit', { spy: true })
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

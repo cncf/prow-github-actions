@@ -11,6 +11,7 @@ import issueListComments from '../fixtures/issues/assign/issueListComments.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

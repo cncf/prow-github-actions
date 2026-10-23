@@ -24,6 +24,7 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => {
   utils.setupActionsEnv()
   server.listen(utils.failOnUnhandledRequest)

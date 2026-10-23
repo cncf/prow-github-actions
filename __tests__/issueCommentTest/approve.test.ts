@@ -14,7 +14,8 @@ import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
 import * as utils from '../testUtils'
 import { baseBranch, blobSha, changedFiles, filesHandler, prCommentEvent, prHandlers, pullHandler, repo, treeHandlers } from '../utils/ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

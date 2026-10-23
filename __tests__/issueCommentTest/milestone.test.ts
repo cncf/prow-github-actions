@@ -11,6 +11,7 @@ import repoMilestones from '../fixtures/milestones/repoListMilestones.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )
