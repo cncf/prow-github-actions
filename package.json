@@ -26,6 +26,7 @@
     "test:coverage": "vitest run --coverage",
     "pack:coverage": "ncc build __tests__/bundle/coverageEntry/main.ts -o .coverage-bundle --source-map --no-source-map-register && tsc -p __tests__/bundle/coverageEntry/tsconfig.json --outDir .coverage-bundle/tsc && node __tests__/bundle/coverageEntry/remap.mjs",
     "test:coverage:e2e": "npm run pack:coverage && vitest run --coverage --config vitest.e2e-coverage.config.mjs __tests__/bundle",
+    "test:mutation": "stryker run",
     "test:watch": "vitest",
     "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test"
   },
@@ -37,6 +38,8 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^5.0.4",

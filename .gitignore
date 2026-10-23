@@ -100,3 +100,6 @@ lib/**/*
 # Source-mapped bundle and report written by `npm run test:coverage:e2e`
 .coverage-bundle
 coverage-e2e
+# Sandbox and reports written by `npm run test:mutation`
+.stryker-tmp
+reports/mutation

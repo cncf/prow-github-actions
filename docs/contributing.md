@@ -97,3 +97,48 @@ export async function gate(a: boolean, b: boolean): Promise<string> {
 
 In the same reproduction an explicit `else { … }` block, which owns a V8
 range of its own, is counted correctly.
+
+### Mutation checks
+
+Line coverage says a test *reached* a statement, not that it would notice the
+statement changing. `npm run test:mutation` runs [StrykerJS](https://stryker-mutator.io/docs/stryker-js/introduction/)
+(`stryker.config.mjs`) over a small default set of merge-decision code —
+`src/utils/mergeGate.ts`, `src/utils/labelMatch.ts`, `src/labels/hold.ts` and
+`src/utils/duration.ts` — where a surviving mutant means a pull request could
+merge, or be held, for the wrong reason. It is a bounded local check, not a CI
+gate: the full suite takes minutes per mutant set, so there is no `break`
+threshold and nothing fails a push.
+
+```sh
+npm run test:mutation                                   # the default set (~150 mutants, ~12 minutes)
+npm run test:mutation -- --mutate src/plugins/tide.ts   # any other file; `src/x.ts:10-40` limits the lines
+```
+
+Stryker drives Vitest through `vitest.mutation.config.mjs`, which leaves out the
+bundle harness (it runs the committed `dist/index.js`, which no mutation of
+`src/` can reach) and turns coverage off. With `coverageAnalysis: 'perTest'`
+each mutant runs only the tests that reach it, so a mutant no test reaches is
+reported as *no coverage* rather than run against the whole suite. Reports land
+in `reports/mutation/` (`index.html`, `report.json`); the incremental file there
+lets a re-run after a test change re-test only the mutants whose source or
+covering tests moved. Both directories are ignored by git.
+
+`vitest.mutation.config.mjs` also carries a shim for
+[stryker-mutator/stryker-js#6210](https://github.com/stryker-mutator/stryker-js/issues/6210):
+`@stryker-mutator/vitest-runner` 10.0.0 selects a mutant's tests with a
+`testNamePattern` of space-joined names, but Vitest 5 matches that pattern
+against the ` > `-joined chain, so without the shim every mutant inside a
+`describe()` is reported *Survived* with 0 tests run. Remove the shim once a
+vitest-runner release carries the fix.
+
+A survivor is a finding only after reading it. Add a test when the mutant
+changes an observable effect (a request made or not made, a label applied, a
+thrown message a caller reads); record it here instead when it is equivalent
+or only changes text nobody asserts on. Reviewed survivors of the default set:
+
+| Mutant | Why it is left |
+|--------|----------------|
+| `duration.ts:13` `value === ''` → `false` / other string | Equivalent: an empty string matches no duration part, `consumed` stays `0 === value.length`, and `Math.round(0)` is returned either way |
+| `hold.ts:26` `getInput('github-token', { required: true })` → `{}` / `false` | `required` is `@actions/core`'s contract, identical at every entry point; the mutant only changes which error a missing token raises |
+| `hold.ts:30` `context.payload.comment?.body` → `.comment.body` | Every `issue_comment` event carries `comment`; the two differ only on a payload GitHub never sends |
+| `hold.ts:73-74` `present.length === 0` guard and its `core.debug` text | `removeLabels` with an empty list issues no request, so the guard only saves a loop; the debug message is not asserted |
