@@ -1,6 +1,8 @@
+import type { SetupServerApi } from 'msw/node'
 import type { Context } from '../src/utils/context'
 import * as github from '@actions/github'
 import { http } from 'msw'
+import { afterEach, beforeEach, expect } from 'vitest'
 
 import { resetTideWarnings } from '../src/plugins/tide'
 import { resetProwConfigCache } from '../src/utils/config'
@@ -20,6 +22,55 @@ export const api = 'https://api.github.com'
  * suite offline on either version.
  */
 export const failOnUnhandledRequest = { onUnhandledRequest: 'error', onUnhandledFrame: 'error' } as const
+
+/**
+ * failTestOnUnhandledRequests makes a request that `failOnUnhandledRequest`
+ * rejected fail the test it happened in. The rejection alone does not: the
+ * code under test receives it as a network error, and a fallback that catches
+ * it (fail-open authorization, a warning, a skipped step) lets the test pass
+ * while the request it meant to assert on was never served.
+ *
+ * Call it once at file level, right after `setupServer()`. The listener is
+ * re-attached before every test, so an `afterEach` that calls
+ * `server.events.removeAllListeners()` does not disarm it. A test that leaves a
+ * request deliberately unserved opts out with `.allow()`; the allowance lasts
+ * for that test only.
+ *
+ * @param server - the file's msw server
+ */
+export function failTestOnUnhandledRequests(server: SetupServerApi) {
+  const unhandled: string[] = []
+  let allowed = false
+  const record = ({ request }: { request: Request }) => {
+    unhandled.push(`${request.method} ${request.url}`)
+  }
+  const check = () => {
+    if (!allowed && unhandled.length > 0) {
+      expect.fail(`${unhandled.length} request(s) no handler served (a test that leaves one unserved on purpose calls .allow() on the object failTestOnUnhandledRequests returned):\n  ${unhandled.join('\n  ')}`)
+    }
+  }
+  beforeEach(() => {
+    unhandled.length = 0
+    allowed = false
+    server.events.on('request:unhandled', record)
+  })
+  afterEach(() => {
+    server.events.removeListener('request:unhandled', record)
+    check()
+  })
+  return {
+    /** lets the current test leave requests unserved */
+    allow() {
+      allowed = true
+    },
+    /** the requests no handler served so far in the current test, as `METHOD url` */
+    seen() {
+      return [...unhandled]
+    },
+    /** what the afterEach runs: fails unless nothing is unserved or the test called allow() */
+    check,
+  }
+}
 
 /** every file the prow configuration loader probes for Codertocat/Hello-World, as `owner/repo:path` */
 export const configProbes = [
@@ -301,6 +352,15 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
   })
   return { handler, calls }
 }
+
+/**
+ * noMergeQueue answers the merge queue state query for any pull request with
+ * `isMergeQueueEnabled: false`, what GitHub reports for a base branch without a
+ * merge queue, so tide merges directly. Without it an unserved `POST /graphql`
+ * reaches the same direct merge through readQueueState's "could not read the
+ * merge queue state" fallback, which failTestOnUnhandledRequests rejects.
+ */
+export const noMergeQueue = mergeQueueGraphql({ enabled: false }).handler
 
 export function graphqlMutations(calls: GraphqlCall[], name: string) {
   return calls.filter(call => call.query.includes(name))

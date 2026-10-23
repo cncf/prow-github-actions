@@ -21,6 +21,7 @@ import {
 } from './ownersFixtures'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 beforeEach(() => utils.setupActionsEnv())
 afterEach(() => server.resetHandlers())
@@ -238,6 +239,7 @@ describe('loadPullRequestOwners', () => {
     server.use(
       pullHandler(),
       filesHandler(changedFiles('src/file1.txt')),
+      branchHandler(),
       http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(500, null, observeTree)),
       http.get(`${repo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(500)),
     )

@@ -29,6 +29,7 @@ function servePullsByNumber(prs: typeof listPullReqs) {
 }
 
 const server = setupServer(
+  utils.noMergeQueue,
   ...utils.noOrgOrRepoConfigExcept(),
   // the gate's default depends on whether the default branch has OWNERS files; none here unless a test serves a tree
   utils.defaultBranchTree(),
@@ -61,6 +62,7 @@ const server = setupServer(
     },
   ),
 )
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

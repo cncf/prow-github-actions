@@ -15,6 +15,7 @@ import * as utils from '../testUtils'
 import { baseSha, changedFiles, filesHandler, prCommentEvent, repo, treeHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

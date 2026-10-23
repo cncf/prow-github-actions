@@ -20,7 +20,8 @@ import { prCommentEvent, prHandlers } from '../utils/ownersFixtures'
 // /lgtm is only reachable when the binding itself rejects with a bare value
 vi.mock('../../src/plugins/lgtmBinding', { spy: true })
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

@@ -13,6 +13,7 @@ import * as utils from '../testUtils'
 import { prHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 beforeEach(() => utils.setupActionsEnv())
 afterEach(() => server.resetHandlers())

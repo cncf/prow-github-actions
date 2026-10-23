@@ -19,6 +19,7 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => {
   utils.setupActionsEnv()
   server.listen(utils.failOnUnhandledRequest)

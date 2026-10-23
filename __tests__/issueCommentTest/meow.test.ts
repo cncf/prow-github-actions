@@ -14,6 +14,7 @@ import * as utils from '../testUtils'
 const catApi = 'https://api.thecatapi.com/v1/images/search'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 
 // msw answers every mocked request without resolving its host, so the only
 // way a unit test reaches dns is a socket the interceptor passed through

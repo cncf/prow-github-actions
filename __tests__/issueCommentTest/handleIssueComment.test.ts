@@ -22,6 +22,7 @@ import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers, pullHandler, repo } from '../utils/ownersFixtures'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 
 // the dispatch tests below mock every command; the sweep that follows a command is stubbed the same way

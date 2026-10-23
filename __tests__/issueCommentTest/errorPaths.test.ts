@@ -20,6 +20,7 @@ import * as utils from '../testUtils'
 vi.mock('../../src/utils/auth', { spy: true })
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

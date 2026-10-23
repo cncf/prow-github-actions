@@ -13,7 +13,8 @@ import { prHandlers } from '../utils/ownersFixtures'
 // removal is tied to new commits, so the cases below run on `synchronize`
 const pullReqEvent = { ...pullReqOpenedEvent, action: 'synchronize' }
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

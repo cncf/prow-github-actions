@@ -10,6 +10,7 @@ import * as utils from '../testUtils'
 import { baseSha, changedFiles, filesHandler, prHandlers, pullHandler, repo, treeHandlers } from '../utils/ownersFixtures'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -216,6 +217,8 @@ describe('ownersLabel', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     server.use(
       ...utils.noOrgOrRepoConfigExcept(),
+      // the approve handler runs on opened too; an OWNERS-less default branch keeps it out of this test
+      utils.defaultBranchTree(),
       http.get(`${repo}/pulls/1`, utils.mockResponse(500, { message: 'boom' })),
     )
 

@@ -27,6 +27,7 @@ import * as utils from './testUtils'
 
 // every request is unexpected: the handlers must refuse before calling the API
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

@@ -16,6 +16,7 @@ import malformedFileContents from '../fixtures/labels/labelFileMalformedResponse
 import * as utils from '../testUtils'
 
 const server = setupServer()
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )
