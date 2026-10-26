@@ -16,7 +16,8 @@ import reviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEven
 import * as utils from '../testUtils'
 import { prCommentEvent } from '../utils/ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
 )

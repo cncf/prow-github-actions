@@ -13,7 +13,8 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 import { blobSha } from '../utils/ownersFixtures'
 
-const server = setupServer()
+const server = setupServer(utils.noMergeQueue)
+utils.failTestOnUnhandledRequests(server)
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
@@ -352,6 +353,7 @@ describe('sweep on a repository with OWNERS files', () => {
     const tree = Object.keys(owners).map(path => ({ path, type: 'blob', sha: blobSha(path) }))
     server.use(
       utils.defaultBranchTree(Object.keys(owners)),
+      http.get(`${repo}/branches/master`, utils.mockResponse(200, { commit: { sha: 'basesha' } })),
       http.get(`${repo}/git/trees/basesha`, utils.mockResponse(200, { sha: 'basesha', truncated: false, tree })),
       http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, files.map(filename => ({ filename, status: 'modified' })))),
       ...Object.entries(owners).map(([path, contents]) => http.get(`${repo}/git/blobs/${blobSha(path)}`, utils.mockResponse(200, { encoding: 'base64', content: Buffer.from(contents).toString('base64') }))),
@@ -504,6 +506,7 @@ describe('sweep with blunderbuss.delay', () => {
     server.use(
       prowYaml(config),
       utils.defaultBranchTree(Object.keys(owners)),
+      http.get(`${repo}/branches/master`, utils.mockResponse(200, { commit: { sha: 'basesha' } })),
       http.get(`${repo}/git/trees/basesha`, utils.mockResponse(200, { sha: 'basesha', truncated: false, tree })),
       http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, [{ filename: 'x.go', status: 'modified' }])),
       ...Object.entries(owners).map(([path, contents]) => http.get(`${repo}/git/blobs/${blobSha(path)}`, utils.mockResponse(200, { encoding: 'base64', content: Buffer.from(contents).toString('base64') }))),
