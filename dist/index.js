@@ -42350,7 +42350,12 @@ function baseBranchTip(octokit, context, branch) {
 
 function getErrorDetails(error) {
     if (typeof error === 'object' && error !== null) {
+        // @octokit/request wraps every rejection the bundle can see in a RequestError, which always carries a
+        // numeric status and a string message; the status-less and message-less arms are reached only by
+        // hand-built objects, so each statement is ignored as a whole (an arm-level hint leaves the && branch)
+        /* v8 ignore next -- status-less object arm unreachable from dist/index.js; auth.test.ts drives it */
         const status = 'status' in error ? error.status : 'unknown';
+        /* v8 ignore next -- message-less object arm unreachable from dist/index.js; auth.test.ts drives it */
         const message = 'message' in error && typeof error.message === 'string'
             ? error.message
             : String(error);

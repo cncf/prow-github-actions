@@ -61,7 +61,7 @@ check then proves that the bundle the harness just exercised matches `src/`.
 ### Phantom "uncovered" branches after an `await`
 
 The unit run lists four branches as uncovered that every test run in fact
-drives: `close.ts:39`, `reopen.ts:36`, `approve.ts:504` and `auth.ts:220`
+drives: `close.ts:39`, `reopen.ts:36`, `approve.ts:504` and `auth.ts:225`
 (it reports 1652/1656 branches because of them; the e2e run repeats the last
 two). Each is an `if` with no `else` whose condition was assigned from an
 expression in which an `await` is only sometimes reached (`a || (await b())`,
