@@ -28,6 +28,8 @@ beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 // the dispatch tests below mock every command; the sweep that follows a command is stubbed the same way
 let sweepStubs: ReturnType<typeof vi.spyOn>[]
 beforeEach(() => {
+  // the dispatch tests rewrite the shared fixture's comment; start each from the file's own body
+  issueCommentEvent.comment.body = 'Meow meow!'
   sweepStubs = [
     vi.spyOn(requireMatchingLabel, 'checkRequiredLabels').mockResolvedValue(),
     vi.spyOn(tide, 'tideOnComment').mockResolvedValue(),

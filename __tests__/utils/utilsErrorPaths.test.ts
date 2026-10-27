@@ -115,12 +115,14 @@ describe('utils error paths', () => {
 
   describe('loadProwConfig explicit sources', () => {
     const explicitUrl = `${utils.api}/repos/cncf/prow-config/contents/prow.yaml`
+    // the repository tier is probed alongside the explicit source; every rejecting case below ends it on its
+    // first probe so that no probe of its chain starts after the test has returned (see configFoundAt)
 
     it('wraps a non-404 failure reading the explicit repo file', async () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
       server.use(
         http.get(explicitUrl, utils.mockResponse(500, { message: 'boom' })),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -132,7 +134,7 @@ describe('utils error paths', () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
       server.use(
         http.get(explicitUrl, utils.mockResponse(200, [{ ...labelFileContents, name: 'a.yaml' }])),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -144,7 +146,7 @@ describe('utils error paths', () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
       server.use(
         http.get(explicitUrl, utils.mockResponse(200, { ...labelFileContents, content: undefined, encoding: 'base64' })),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow('prow.yaml is not a file')
@@ -154,7 +156,7 @@ describe('utils error paths', () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
       server.use(
         http.get('https://config.example.com/prow.yaml', () => HttpResponse.error()),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(

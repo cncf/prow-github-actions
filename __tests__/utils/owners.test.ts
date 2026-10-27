@@ -12,6 +12,9 @@ import {
   resetOwnersCaches,
 } from '../../src/utils/owners'
 
+// the group, tree and OWNERS-presence memos live on the module: no describe may inherit another's
+beforeEach(() => resetOwnersCaches())
+
 describe('parseOwners', () => {
   it('reads approvers and reviewers', () => {
     const owners = parseOwners('OWNERS', 'approvers:\n- alice\nreviewers:\n- bob\n- carol\n')
@@ -231,8 +234,6 @@ describe('expandGroups', () => {
     expect([...result].sort()).toEqual(['alice', 'bob', 'carol'])
   })
 
-  beforeEach(() => resetOwnersCaches())
-
   it('ignores groups of another org and groups it cannot read', async () => {
     const result = await expandGroups(client({}), context, ['alice', '@other/team', '@myorg/missing'])
 
@@ -310,8 +311,6 @@ describe('ownersInclude', () => {
       teams: { listMembersInOrg: vi.fn() },
     }
   }
-
-  beforeEach(() => resetOwnersCaches())
 
   it('answers a direct listing without reading any team', async () => {
     const octokit = client(['bob'])

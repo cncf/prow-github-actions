@@ -1,5 +1,6 @@
 import type { SetupServerApi } from 'msw/node'
 import type { Context } from '../src/utils/context'
+import { Buffer } from 'node:buffer'
 import * as github from '@actions/github'
 import { http } from 'msw'
 import { afterEach, beforeEach, expect } from 'vitest'
@@ -107,6 +108,26 @@ export function noOrgOrRepoConfigExcept(...except: string[]) {
   return configProbes
     .filter(source => !existing.includes(source))
     .map(source => http.get(contentsUrl(source), mockResponse(404, { message: 'Not Found' })))
+}
+
+/**
+ * configFoundAt serves an empty configuration file at the given probe and 404
+ * at every other one, so the tier that owns it ends with that single request.
+ *
+ * loadProwConfig probes the organization and repository tiers at once; when the
+ * tier a test is exercising rejects, the other tier's chain of probes keeps
+ * going after the test's await returns, and a probe started between tests is
+ * reported against whichever test runs next. Ending the other tier on its first
+ * probe leaves only a request that is already in flight when the rejection lands.
+ *
+ * @param source - `owner/repo:path` or a repo-relative path of the probe that exists
+ * @param others - further probes the caller serves itself
+ */
+export function configFoundAt(source: string, ...others: string[]) {
+  return [
+    http.get(contentsUrl(source), mockResponse(200, { type: 'file', encoding: 'base64', content: Buffer.from('{}\n').toString('base64') })),
+    ...noOrgOrRepoConfigExcept(source, ...others),
+  ]
 }
 
 /**
