@@ -99,7 +99,7 @@ describe('evaluateMerge on a branch that requires a merge queue', () => {
     const calls = serveGraphql({ enqueuePosition: null })
     const info = vi.spyOn(core, 'info')
 
-    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'enqueued' })
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toStrictEqual({ result: 'enqueued' })
     await expect(merge.notCalled()).resolves.toBe('not called')
     expect(mutations(calls, 'enqueuePullRequest')).toHaveLength(1)
     expect(info).toHaveBeenCalledWith('enqueued pr #1')
