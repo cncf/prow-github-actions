@@ -58,6 +58,16 @@ the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
 
+`__tests__/setup.ts` tightens `toThrow`: out of the box, `toThrow(message)`
+passes when the thrown value is `undefined` or `null`, because chai compares
+the message only against a truthy error
+([vitest-dev/vitest#7260](https://github.com/vitest-dev/vitest/issues/7260)).
+A helper that should build an `Error` but returns nothing — what a Stryker
+block mutant makes of `malformedSection` in `src/utils/config.ts` — would
+otherwise satisfy every message assertion in the suite. With the setup hook,
+a nullish throw fails `toThrow` and `.rejects.toThrow` whatever the argument;
+`__tests__/setupToThrowGuard.test.ts` pins that.
+
 ### Phantom "uncovered" branches after an `await`
 
 The unit run lists four branches as uncovered that every test run in fact
