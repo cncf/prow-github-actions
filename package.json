@@ -18,6 +18,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "pack": "ncc build",

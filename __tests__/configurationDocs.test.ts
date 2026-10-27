@@ -72,11 +72,11 @@ const example = parseProwConfig(docPath, yamlBlock('`prow.yaml`'))
 
 /** what the code resolves for a section nobody configured, keyed like the document headings */
 const resolvedDefaults: Record<string, Record<string, unknown>> = {
-  tide: resolveTide({}, ''),
+  tide: { ...resolveTide({}, '') },
   hold: { label: resolveHoldLabel({}) },
-  blunderbuss: blunderbussSettings(empty),
-  approve: approveSettings(empty),
-  lgtm: lgtmSettings(empty),
+  blunderbuss: { ...blunderbussSettings(empty) },
+  approve: { ...approveSettings(empty) },
+  lgtm: { ...lgtmSettings(empty) },
   sweep: { lookback: defaultSweepLookback },
   authorization: { ...resolveAuthorization({}) },
 }
@@ -89,7 +89,7 @@ describe(`${docPath} prow.yaml example`, () => {
   })
 
   it.each(['tide', 'hold', 'approve', 'lgtm', 'sweep', 'authorization'])('spells out the code defaults of %s, as its comment claims', (key) => {
-    expect(example[key as keyof typeof resolvedDefaults]).toEqual(resolvedDefaults[key])
+    expect(example[key as keyof ProwConfig]).toEqual(resolvedDefaults[key])
   })
 
   it('names the tide.labels default of a repository with OWNERS files', () => {

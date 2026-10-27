@@ -1,3 +1,4 @@
+import type { MockInstance } from 'vitest'
 import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { http } from 'msw'
@@ -62,7 +63,7 @@ function observeMerge(status = 200, body: unknown = { merged: true }) {
   return observe
 }
 
-let sleep: ReturnType<typeof vi.spyOn>
+let sleep: MockInstance<typeof sleepModule.sleep>
 let octokit: ReturnType<typeof newOctokit>
 let context: utils.MockContext
 

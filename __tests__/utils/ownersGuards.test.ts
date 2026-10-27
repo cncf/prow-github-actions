@@ -144,7 +144,7 @@ describe('branchHasOwners', () => {
     resetOwnersCaches()
   })
 
-  it.each([
+  it.each<[string | null, string]>([
     ['boom', 'a string'],
     [null, 'null'],
   ])('reports a tree rejection of %j (%s) as a listing error, not as a missing tree', async (reason) => {

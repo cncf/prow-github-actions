@@ -1,4 +1,4 @@
-import type { SetupServerApi } from 'msw/node'
+import type { SetupServer } from 'msw/node'
 import type { Context } from '../src/utils/context'
 import * as github from '@actions/github'
 import { http } from 'msw'
@@ -38,7 +38,7 @@ export const failOnUnhandledRequest = { onUnhandledRequest: 'error', onUnhandled
  *
  * @param server - the file's msw server
  */
-export function failTestOnUnhandledRequests(server: SetupServerApi) {
+export function failTestOnUnhandledRequests(server: SetupServer) {
   const unhandled: string[] = []
   let allowed = false
   const record = ({ request }: { request: Request }) => {

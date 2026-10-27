@@ -143,7 +143,7 @@ export async function start(): Promise<FakeGithub> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
 
-  return {
+  const github: FakeGithub = {
     url: `http://127.0.0.1:${port}`,
     requests,
     unmatched,
@@ -154,7 +154,7 @@ export async function start(): Promise<FakeGithub> {
       return unmatched.filter(r => !allowances.some(a => matches(a, r)))
     },
     assertNoUnexpectedRequests() {
-      const unexpected = this.unexpectedRequests()
+      const unexpected = github.unexpectedRequests()
       if (unexpected.length > 0) {
         const listing = unexpected.map(r => `  ${r.method} ${r.path}`).join('\n')
         throw new Error(`the fake GitHub API answered ${unexpected.length} request(s) no route or allowance covers:\n${listing}`)
@@ -197,6 +197,7 @@ export async function start(): Promise<FakeGithub> {
       })
     },
   }
+  return github
 }
 
 function mergeQueueRoute(queue: MergeQueueFixture): Route {

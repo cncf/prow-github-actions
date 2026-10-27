@@ -157,7 +157,7 @@ describe('dist/index.js schedule sweep job arms', () => {
     // requested_reviewers is optional on the pulls listing item (sweep.ts:153 `pr.requested_reviewers ?? []`): a fresh
     // pull request listed without it has no requested reviewers, so blunderbuss reads the one review and asks for two
     it('a fresh pull request listed without requested_reviewers: the one review is read and two reviewers are requested', async () => {
-      const pr = forkPr()
+      const pr: Partial<ReturnType<typeof forkPr>> = forkPr()
       delete pr.requested_reviewers
       routeSweep(pr)
 

@@ -46,6 +46,7 @@ function pullOwners(ownersFiles: Record<string, string>, files: string[], author
   return {
     number: 1,
     baseSha: 'basesha',
+    headSha: 'headsha',
     author,
     draft: false,
     open: true,

@@ -198,7 +198,7 @@ describe('/milestone', () => {
   })
 
   it('still sends the clear when the issue has no milestone', async () => {
-    const payload = structuredClone(issueCommentEvent) as typeof issueCommentEvent & { issue: { milestone: unknown } }
+    const payload = structuredClone(issueCommentEvent) as Omit<typeof issueCommentEvent, 'issue'> & { issue: Omit<typeof issueCommentEvent.issue, 'milestone'> & { milestone: unknown } }
     payload.comment.body = '/milestone clear'
     payload.issue.milestone = null
 

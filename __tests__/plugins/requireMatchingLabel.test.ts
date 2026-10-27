@@ -9,6 +9,7 @@ import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { handleIssues } from '../../src/issues/handleIssues'
 import { applicableRules, checkRequiredLabels, enforceRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
+import { mergeProwConfig } from '../../src/utils/config'
 import * as labeling from '../../src/utils/labeling'
 import { newOctokit } from '../../src/utils/octokit'
 import * as sleepModule from '../../src/utils/sleep'
@@ -105,7 +106,7 @@ function commentEvent(body: string, overrides: Record<string, unknown> = {}) {
 }
 
 function configWith(...rules: RequireMatchingLabel[]): ProwConfig {
-  return { labels: {}, require_matching_label: rules, tide: {}, hold: {}, blunderbuss: {}, sources: [] }
+  return { ...mergeProwConfig({}, {}), require_matching_label: rules, sources: [] }
 }
 
 const botComment = { id: 11, body: `Please add a kind label.\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'Bot' } }
