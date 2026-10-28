@@ -6,7 +6,10 @@ All commits must be signed off (`git commit -s`) to satisfy the DCO check.
 
 ## Development
 
-Node 24 or newer is required.
+Node 24 or newer is required. `package.json` names Node 24 in
+`devEngines.runtime` so that every `actions/setup-node` step in CI installs the
+same major that `action.yml` runs the bundle under (`runs.using: node24`);
+`npm ci` on a newer Node only warns.
 
 ```sh
 npm ci

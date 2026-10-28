@@ -7,7 +7,12 @@ const root = path.resolve(__dirname, '..')
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8')
 
 interface ActionManifest { runs: { using: string, main: string } }
-interface PackageManifest { engines?: Record<string, string>, devDependencies?: Record<string, string> }
+interface DevRuntime { name?: string, version?: string, onFail?: string }
+interface PackageManifest {
+  engines?: Record<string, string>
+  devEngines?: { runtime?: DevRuntime | DevRuntime[] }
+  devDependencies?: Record<string, string>
+}
 interface Step { uses?: string, with?: Record<string, unknown> }
 interface Workflow { jobs: Record<string, { steps?: Step[] }> }
 
@@ -31,6 +36,29 @@ describe(`action.yml runs the bundle under ${action.runs.using}`, () => {
 
   it('is the floor of package.json engines.node', () => {
     expect(pkg.engines?.node).toBe(`>=${runtimeMajor}`)
+  })
+
+  // setup-node reads devEngines.runtime before engines.node and resolves a range to the
+  // highest Node in the runner's tool cache that satisfies it, so the open `>=` floor alone
+  // would move every CI job and the release build to the next major the day the hosted
+  // image ships it. The bare major keeps CI on the runtime's line while still tracking
+  // its patch releases.
+  describe('is the only major package.json devEngines.runtime lets a setup-node step resolve', () => {
+    const runtimes = [pkg.devEngines?.runtime].flat()
+    const node = runtimes.find(runtime => runtime?.name === 'node')
+
+    it('names a node runtime', () => {
+      expect(node).toBeDefined()
+    })
+
+    it(`pins the bare major ${runtimeMajor}, not a range that admits a newer one`, () => {
+      expect(node?.version).toBe(String(runtimeMajor))
+    })
+
+    it('only warns a contributor on a newer Node, as docs/contributing.md allows "Node 24 or newer"', () => {
+      expect(node?.onFail).toBe('warn')
+      expect(read('docs/contributing.md')).toContain(`Node ${runtimeMajor} or newer is required.`)
+    })
   })
 
   it('is the major of the @types/node the sources compile against', () => {
