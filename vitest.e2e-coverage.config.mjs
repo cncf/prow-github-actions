@@ -48,16 +48,18 @@ export default mergeConfig(base, defineConfig({
       autoAttachSubprocess: true,
       excludeAfterRemap: true,
       // Regression floor for the bundle-only run, set just under what main reaches
-      // (100 / 99.46 / 100 / 100 at e3119ad, 1686/1695 branches, two of them the
+      // (100 / 99.88 / 100 / 100 once blunderbussDelayFailure.test.ts drives the
+      // delayed pass's catch, 1686/1688 branches, the two misses being the
       // negative-count await artifacts described in docs/contributing.md;
-      // 99.95 / 97.96 / 100 / 99.96 at 1062ce7; 99.54 / 96.25 / 98.79 / 99.56 when
-      // first set at d93ecb8) so a scenario that stops exercising a src/ path fails
-      // this run instead of silently lowering the figure. A single lost branch is
-      // ~0.06 pp and will not cross the floor on its own; the floor bounds drift,
-      // it does not detect one-branch regressions.
+      // 100 / 99.46 / 100 / 100 at e3119ad; 99.95 / 97.96 / 100 / 99.96 at 1062ce7;
+      // 99.54 / 96.25 / 98.79 / 99.56 when first set at d93ecb8) so a scenario that
+      // stops exercising a src/ path fails this run instead of silently lowering
+      // the figure. A single lost branch is ~0.06 pp and will not cross the floor
+      // on its own; the floor bounds drift, it does not detect one-branch
+      // regressions. Branches now share the unit run's 99 floor.
       thresholds: {
         lines: 99,
-        branches: 98,
+        branches: 99,
         functions: 99,
         statements: 99,
       },
