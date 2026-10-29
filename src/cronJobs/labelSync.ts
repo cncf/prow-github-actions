@@ -2,12 +2,10 @@ import type { Octokit } from '@octokit/rest'
 import type { LabelValue } from '../utils/config'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { loadProwConfig } from '../utils/config'
 import { desiredLabels } from '../utils/labelCatalog'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 export interface LabelSyncFailure {
   name: string
@@ -38,14 +36,13 @@ type LabelPatch = Partial<Pick<LabelValue, 'color' | 'description'>>
  *
  * @param context - the github actions event context
  */
-export async function labelSync(context: Context = github.context): Promise<LabelSyncResult> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
-  const dryRun = core.getInput('dry-run', { required: false }).trim().toLowerCase() === 'true'
+export async function labelSync(context: Context = platform().context()): Promise<LabelSyncResult> {
+  const octokit = newOctokitFromInputs()
+  const dryRun = platform().inputs.get('dry-run', { required: false }).trim().toLowerCase() === 'true'
 
   const config = await loadProwConfig(octokit, context)
   const desired = desiredLabels(config)
-  core.debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`)
+  platform().log.debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`)
 
   let existing: RepoLabel[]
   try {
@@ -83,11 +80,11 @@ export async function labelSync(context: Context = github.context): Promise<Labe
   }
 
   if (dryRun) {
-    core.info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`)
+    platform().log.info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`)
     return result
   }
 
-  core.info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`)
+  platform().log.info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`)
 
   if (result.failures.length > 0) {
     const list = result.failures.map(f => `${f.name} (${f.message})`).join(', ')
@@ -105,7 +102,7 @@ async function write(result: LabelSyncResult, name: string, done: string[], acti
   }
   catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    core.error(`label-sync: could not sync ${name}: ${message}`)
+    platform().log.error(`label-sync: could not sync ${name}: ${message}`)
     result.failures.push({ name, message })
   }
 }

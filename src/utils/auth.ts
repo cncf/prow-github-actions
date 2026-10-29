@@ -2,10 +2,9 @@ import type { Octokit } from '@octokit/rest'
 import type { AuthorizationPolicy, ResolvedAuthorization } from './config'
 import type { Context } from './context'
 import type { OwnersRole } from './owners'
-import { Buffer } from 'node:buffer'
+import { platform } from '../platform'
 
-import * as core from '@actions/core'
-
+import { decodeContent } from './base64'
 import { defaultAuthorization, loadProwConfig, resolveAuthorization } from './config'
 import { ownersInclude, parseOwners } from './owners'
 import { loadPullRequestOwners } from './pullRequestOwners'
@@ -46,7 +45,7 @@ export async function checkOrgMember(
 ): Promise<boolean> {
   try {
     if (context.payload.repository === undefined) {
-      core.debug(`checkOrgMember error: context payload repository undefined`)
+      platform().log.debug(`checkOrgMember error: context payload repository undefined`)
       return false
     }
 
@@ -61,11 +60,11 @@ export async function checkOrgMember(
     const { status, message } = getErrorDetails(e)
 
     if (status === 404 || status === 302) {
-      core.debug(`${user} is not an org member: ${message}`)
+      platform().log.debug(`${user} is not an org member: ${message}`)
       return false
     }
 
-    core.warning(
+    platform().log.warning(
       `encountered unexpected error: status=${status}, message=${message}`,
     )
     return false
@@ -96,13 +95,13 @@ export async function checkCollaborator(
     const { status, message } = getErrorDetails(e)
 
     if (status === 404) {
-      core.debug(
+      platform().log.debug(
         `user ${user} is not a collaborator: status=${status}, message=${message}`,
       )
       return false
     }
 
-    core.warning(
+    platform().log.warning(
       `encountered unexpected error checking collaborator status: status=${status}, message=${message}`,
     )
     return false
@@ -140,7 +139,7 @@ export async function checkIssueComments(
   }
   catch (e) {
     const { status, message } = getErrorDetails(e)
-    core.warning(
+    platform().log.warning(
       `encountered unexpected error checking issue comments: status=${status}, message=${message}`,
     )
     return false
@@ -215,7 +214,7 @@ export async function assertAuthorizedByOwnersOrMembership(
   role: OwnersRole,
   username: string,
 ): Promise<void> {
-  core.debug('Checking if the user is authorized to interact with prow')
+  platform().log.debug('Checking if the user is authorized to interact with prow')
 
   const hasOwners
     = context.payload.issue?.pull_request !== undefined
@@ -340,7 +339,7 @@ async function loadAuthorization(octokit: Octokit, context: Context): Promise<Re
     return resolveAuthorization((await loadProwConfig(octokit, context)).authorization)
   }
   catch (e) {
-    core.warning(`authorization: could not load prow config: ${e}`)
+    platform().log.warning(`authorization: could not load prow config: ${e}`)
     throw e
   }
 }
@@ -381,7 +380,7 @@ async function assertPullRequestOwner(
 ): Promise<boolean> {
   const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue!.number)
   if (!tree.hasOwners) {
-    core.debug('No OWNERS files found')
+    platform().log.debug('No OWNERS files found')
     return false
   }
 
@@ -436,7 +435,7 @@ async function retrieveOwnersFile(
   octokit: Octokit,
   context: Context,
 ): Promise<string> {
-  core.debug(`Looking for an OWNERS file at the root of the repository`)
+  platform().log.debug(`Looking for an OWNERS file at the root of the repository`)
   let data: any
   try {
     const response = await octokit.repos.getContent({
@@ -447,7 +446,7 @@ async function retrieveOwnersFile(
   }
   catch (e) {
     if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-      core.debug('No OWNERS file found')
+      platform().log.debug('No OWNERS file found')
       return ''
     }
 
@@ -460,7 +459,7 @@ async function retrieveOwnersFile(
     throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`)
   }
 
-  const decoded = Buffer.from(data.content, data.encoding).toString()
-  core.debug(`OWNERS file contents: ${decoded}`)
+  const decoded = decodeContent(data.content, data.encoding)
+  platform().log.debug(`OWNERS file contents: ${decoded}`)
   return decoded
 }

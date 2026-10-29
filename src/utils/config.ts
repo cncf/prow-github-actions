@@ -1,9 +1,9 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
-import { Buffer } from 'node:buffer'
-import * as core from '@actions/core'
 import * as yaml from 'js-yaml'
+import { platform } from '../platform'
 
+import { decodeContent } from './base64'
 import { parseDuration } from './duration'
 
 /** one allowed value of a label section, optionally with GitHub label metadata */
@@ -197,20 +197,19 @@ interface Tier {
   config: Partial<ProwConfig>
 }
 
-const cache = new Map<string, Promise<ProwConfig>>()
-
 /**
  * loadProwConfig resolves the configuration that applies to the event
  * repository: an organization tier (`<owner>/.project` then `<owner>/.github`,
  * `prow.yaml`) or, when the `config` input is set, that explicit source
  * instead; then the repository's own file layered on top. The result is
- * memoized per repository for the lifetime of the process.
+ * memoized per repository for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 export function loadProwConfig(octokit: Octokit, context: Context): Promise<ProwConfig> {
   const key = `${context.repo.owner}/${context.repo.repo}`
+  const cache = platform().state().configs as Map<string, Promise<ProwConfig>>
   let pending = cache.get(key)
   if (pending === undefined) {
     pending = load(octokit, context)
@@ -219,14 +218,8 @@ export function loadProwConfig(octokit: Octokit, context: Context): Promise<Prow
   return pending
 }
 
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetProwConfigCache(): void {
-  cache.clear()
-}
-/* v8 ignore stop */
-
 async function load(octokit: Octokit, context: Context): Promise<ProwConfig> {
-  const explicit = core.getInput('config', { required: false }).trim()
+  const explicit = platform().inputs.get('config', { required: false }).trim()
 
   // the org and repo tiers do not depend on each other, so probe both at once
   const [base, repo] = await Promise.all([
@@ -238,7 +231,7 @@ async function load(octokit: Octokit, context: Context): Promise<ProwConfig> {
   const merged = tiers.reduce<Partial<ProwConfig>>((acc, tier) => mergeProwConfig(acc, tier.config), {})
   const sources = tiers.map(tier => tier.source)
 
-  core.debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`)
+  platform().log.debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`)
 
   return { ...mergeProwConfig({}, merged), sources }
 }
@@ -333,7 +326,7 @@ async function fetchRepoFile(
     throw new TypeError(`${file.path} is not a file`)
   }
 
-  return Buffer.from(data.content, data.encoding as BufferEncoding).toString()
+  return decodeContent(data.content, data.encoding)
 }
 
 async function fetchUrl(url: string): Promise<string> {
@@ -422,7 +415,7 @@ export function parseProwConfig(source: string, text: string): Partial<ProwConfi
 
   const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !(reservedKeys as readonly string[]).includes(key))
   if (unknown.length > 0) {
-    core.debug(`${source}: ignoring unknown top level keys: ${unknown.join(', ')}`)
+    platform().log.debug(`${source}: ignoring unknown top level keys: ${unknown.join(', ')}`)
   }
 
   return config

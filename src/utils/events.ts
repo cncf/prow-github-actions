@@ -1,6 +1,5 @@
 import type { Context } from './context'
-
-import * as core from '@actions/core'
+import { platform } from '../platform'
 
 export type EventHandler = (context: Context) => Promise<void>
 
@@ -26,7 +25,7 @@ export function skipReadOnlyForkRun(context: Context): boolean {
     return false
   }
 
-  core.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`)
+  platform().log.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`)
   return true
 }
 
@@ -52,6 +51,6 @@ export async function runEventHandlers(event: string, handlers: EventHandler[], 
   }
 
   if (errors.length > 0) {
-    core.setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`)
+    platform().fail(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`)
   }
 }

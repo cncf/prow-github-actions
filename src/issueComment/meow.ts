@@ -1,10 +1,9 @@
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
-import * as github from '@actions/github'
 
+import { platform } from '../platform'
 import { commandLines } from '../utils/command'
 import { createComment } from '../utils/comments'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med'
 
@@ -23,12 +22,11 @@ export const meowConfig = {
  *
  * @param context - the github actions event context
  */
-export async function meow(context: Context = github.context): Promise<void> {
+export async function meow(context: Context = platform().context()): Promise<void> {
   if (!hasMeowCommand(context.payload.comment?.body))
     return
 
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   if (issueNumber === undefined) {
@@ -44,7 +42,7 @@ export async function meow(context: Context = github.context): Promise<void> {
     body = `![cat](<${image.href}>)`
   }
   catch (error) {
-    core.warning(`Could not fetch a cat image: ${error}`)
+    platform().log.warning(`Could not fetch a cat image: ${error}`)
     body = 'The cat API is unavailable right now.'
   }
 
@@ -58,9 +56,9 @@ function hasMeowCommand(body: unknown): boolean {
 
 async function fetchCatImage(): Promise<URL> {
   const headers: Record<string, string> = { accept: 'application/json' }
-  const key = core.getInput('cat-api-key', { required: false })
+  const key = platform().inputs.get('cat-api-key', { required: false })
   if (key !== '') {
-    core.setSecret(key)
+    platform().log.setSecret(key)
     headers['x-api-key'] = key
   }
 
@@ -107,7 +105,7 @@ async function cancelResponseBody(response: Response): Promise<void> {
     await response.body?.cancel()
   }
   catch (error) {
-    core.debug(`could not cancel cat api response body: ${error}`)
+    platform().log.debug(`could not cancel cat api response body: ${error}`)
   }
 }
 

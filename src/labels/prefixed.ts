@@ -2,13 +2,13 @@ import type { Octokit } from '@octokit/rest'
 import type { ResolvedAuthorization } from '../utils/config'
 import type { Context } from '../utils/context'
 import type { LabelConfig, LabelSection } from '../utils/labeling'
-import * as core from '@actions/core'
 
+import { platform } from '../platform'
 import { assertPolicy } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
 import { addPrefix, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 export interface PrefixedLabelCommand {
   /** the slash command, ex: '/kind' */
@@ -85,8 +85,7 @@ export function removeCommandFor(command: string): string {
  * @param cmd - the command definition
  */
 export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelCommand): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber = requireIssueNumber(context)
   const commentBody: string = context.payload.comment?.body
@@ -121,8 +120,7 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
  * @param cmd - the command definition
  */
 export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelCommand): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber = requireIssueNumber(context)
   const commentBody: string = context.payload.comment?.body
@@ -136,7 +134,7 @@ export async function removePrefixedLabels(context: Context, cmd: PrefixedLabelC
   const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)))
 
   if (present.length === 0) {
-    core.debug(`${command.slice(1)}: none of ${labels} are on the issue`)
+    platform().log.debug(`${command.slice(1)}: none of ${labels} are on the issue`)
     return
   }
 
@@ -213,7 +211,7 @@ async function allowlistFor(
       throw new Error(`${key}: yaml malformed, expected '${key}' top level key`)
     }
 
-    core.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`)
+    platform().log.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`)
 
     const { hold, authorization } = await loadProwConfig(octokit, context)
     return {
@@ -274,7 +272,7 @@ async function currentIssueLabels(
 ): Promise<string[]> {
   try {
     const currentLabels = await getCurrentLabels(octokit, context, issueNumber)
-    core.debug(`${command.slice(1)}: found labels for issue ${currentLabels}`)
+    platform().log.debug(`${command.slice(1)}: found labels for issue ${currentLabels}`)
     return currentLabels
   }
   catch (e) {

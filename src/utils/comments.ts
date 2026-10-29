@@ -1,7 +1,6 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
-
-import * as core from '@actions/core'
+import { platform } from '../platform'
 
 interface BotComment {
   id: number
@@ -56,7 +55,7 @@ export async function createCommentOnce(
 ): Promise<boolean> {
   const comments: BotComment[] = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNum, per_page: 100 })
   if (comments.some(comment => isBotUser(comment.user) && (comment.body ?? '').includes(marker))) {
-    core.debug(`#${issueNum} already carries ${marker}`)
+    platform().log.debug(`#${issueNum} already carries ${marker}`)
     return false
   }
   await createComment(octokit, context, issueNum, `${message}\n\n${marker}`)

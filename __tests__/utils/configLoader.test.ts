@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { loadProwConfig, resetProwConfigCache } from '../../src/utils/config'
+import { loadProwConfig } from '../../src/utils/config'
 import { getLabelConfig } from '../../src/utils/labeling'
 import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -347,12 +347,12 @@ describe('loadProwConfig', () => {
       expect(second).toBe(first)
     })
 
-    it('resetProwConfigCache forces a reload', async () => {
+    it('a new run reloads', async () => {
       serve('.prowlabels.yaml', 'kind: [first]\n')
       server.use(...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'))
       await loadProwConfig(octokit, context)
+      utils.newRun()
 
-      resetProwConfigCache()
       server.resetHandlers()
       serve('.prowlabels.yaml', 'kind: [second]\n')
       server.use(...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'))

@@ -1,14 +1,13 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
+import { platform } from '../platform'
 import { approveSettings, evaluateApproval } from '../plugins/approve'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 type PullsListReviewsResponseType
@@ -30,11 +29,10 @@ type PullsListReviewsResponseType
  * @param context - the github actions event context
  */
 export async function approve(
-  context: Context = github.context,
+  context: Context = platform().context(),
 ): Promise<void> {
-  core.debug(`starting approve job`)
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  platform().log.debug(`starting approve job`)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body
@@ -70,7 +68,7 @@ export async function approve(
   }
 
   try {
-    core.debug(`creating a review`)
+    platform().log.debug(`creating a review`)
     await octokit.pulls.createReview({
       ...context.repo,
       pull_number: issueNumber,
@@ -122,13 +120,13 @@ async function refuse(
   msg: string,
   cause: unknown = new Error(msg),
 ): Promise<never> {
-  core.error(msg)
+  platform().log.error(msg)
 
   try {
     await createComment(octokit, context, issueNumber, msg)
   }
   catch (commentE) {
-    core.error(`Could not comment with an auth error: ${commentE}`)
+    platform().log.error(`Could not comment with an auth error: ${commentE}`)
   }
   throw cause
 }
@@ -147,7 +145,7 @@ async function cancel(
   issueNumber: number,
   commenterLogin: string,
 ): Promise<void> {
-  core.debug(`canceling latest review`)
+  platform().log.debug(`canceling latest review`)
 
   let reviews: PullsListReviewsResponseType
   try {
@@ -163,7 +161,7 @@ async function cancel(
   let latestReview
 
   for (const e of reviews.data) {
-    core.debug(`checking review: ${e.user?.login}`)
+    platform().log.debug(`checking review: ${e.user?.login}`)
     if (e.user?.login === 'github-actions[bot]' && e.state === 'APPROVED') {
       latestReview = e
     }

@@ -2,8 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
 import type { OwnersSet, OwnersTree } from './owners'
 
-import * as core from '@actions/core'
-
+import { platform } from '../platform'
 import { effectiveOwners, expandOwnersSet, loadOwnersTree } from './owners'
 
 /** a pull request and the OWNERS covering its changed files; every login is lowercased */
@@ -24,13 +23,10 @@ export interface PullRequestOwners {
   perFile: Map<string, OwnersSet | undefined>
 }
 
-const cache = new Map<string, Promise<PullRequestOwners>>()
-const tipCache = new Map<string, Promise<string>>()
-
 /**
  * loadPullRequestOwners reads the pull request, its changed files and the
  * OWNERS files of the base branch that cover them. The result is memoized per
- * pull request for the lifetime of the process, so every plugin acting on the
+ * pull request for the duration of the run, so every plugin acting on the
  * same event shares one fetch.
  *
  * @param octokit - a hydrated github client
@@ -43,6 +39,7 @@ export function loadPullRequestOwners(
   pullNumber: number,
 ): Promise<PullRequestOwners> {
   const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`
+  const cache = platform().state().pullRequestOwners as Map<string, Promise<PullRequestOwners>>
   let pending = cache.get(key)
   if (pending === undefined) {
     pending = load(octokit, context, pullNumber)
@@ -50,13 +47,6 @@ export function loadPullRequestOwners(
   }
   return pending
 }
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetPullRequestOwnersCache(): void {
-  cache.clear()
-  tipCache.clear()
-}
-/* v8 ignore stop */
 
 async function load(
   octokit: Octokit,
@@ -81,7 +71,7 @@ async function load(
   // files landed would otherwise never see them, while the tide gate, reading the branch, would
   // require `approved` that `/approve` could not grant (cncf/automation#709).
   const baseSha = await baseBranchTip(octokit, context, pull.base.ref).catch((e) => {
-    core.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`)
+    platform().log.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`)
     return pull.base.sha
   })
   const tree = await loadOwnersTree(octokit, context, baseSha, files)
@@ -108,6 +98,7 @@ async function load(
 // `heads/` namespace that octokit percent-encodes into the path
 function baseBranchTip(octokit: Octokit, context: Context, branch: string): Promise<string> {
   const key = `${context.repo.owner}/${context.repo.repo}@${branch}`
+  const tipCache = platform().state().pullRequestTips
   let pending = tipCache.get(key)
   if (pending === undefined) {
     pending = octokit.repos.getBranch({ ...context.repo, branch }).then(response => response.data.commit.sha)

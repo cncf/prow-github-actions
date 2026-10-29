@@ -1,16 +1,13 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 import type { Context } from '../utils/context'
-import process from 'node:process'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { shortSha } from '../plugins/lgtmBinding'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { getCurrentLabels, labelIssue } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 type WorkflowRun = RestEndpointMethodTypes['actions']['listWorkflowRunsForRepo']['response']['data']['workflow_runs'][number]
@@ -29,7 +26,7 @@ const failedConclusions = new Set(['failure', 'cancelled', 'timed_out'])
  *
  * @param context - the github actions event context
  */
-export async function retest(context: Context = github.context): Promise<void> {
+export async function retest(context: Context = platform().context()): Promise<void> {
   const cmd = await prepare(context, '/retest')
   if (cmd === undefined) {
     return
@@ -67,7 +64,7 @@ export async function retest(context: Context = github.context): Promise<void> {
  *
  * @param context - the github actions event context
  */
-export async function test(context: Context = github.context): Promise<void> {
+export async function test(context: Context = platform().context()): Promise<void> {
   const cmd = await prepare(context, '/test')
   if (cmd === undefined) {
     return
@@ -108,7 +105,7 @@ export async function test(context: Context = github.context): Promise<void> {
  *
  * @param context - the github actions event context
  */
-export async function okToTest(context: Context = github.context): Promise<void> {
+export async function okToTest(context: Context = platform().context()): Promise<void> {
   const cmd = await prepare(context, '/ok-to-test', { refuseAuthor: 'you cannot approve the workflow runs of your own pull request' })
   if (cmd === undefined) {
     return
@@ -159,7 +156,7 @@ export async function approvePendingRuns(octokit: Octokit, context: Context, num
     }
   }
 
-  core.info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`)
+  platform().log.info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`)
   return approved
 }
 
@@ -170,7 +167,7 @@ export async function approvePendingRuns(octokit: Octokit, context: Context, num
  *
  * @param context - the github context of the current action event
  */
-export async function okToTestOnPullRequest(context: Context = github.context): Promise<void> {
+export async function okToTestOnPullRequest(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action !== 'synchronize' && action !== 'reopened') {
     return
@@ -179,7 +176,7 @@ export async function okToTestOnPullRequest(context: Context = github.context): 
   const pull = context.payload.pull_request
   const labels: unknown = pull?.labels
   if (!Array.isArray(labels) || !labels.some(label => String(label?.name ?? '').toLowerCase() === okToTestLabel)) {
-    core.debug('trigger: the pull request does not carry ok-to-test')
+    platform().log.debug('trigger: the pull request does not carry ok-to-test')
     return
   }
 
@@ -188,7 +185,7 @@ export async function okToTestOnPullRequest(context: Context = github.context): 
     throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`)
   }
 
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   await approvePendingRuns(octokit, context, pull.number, sha)
 }
 
@@ -199,7 +196,7 @@ interface PreparedCommand {
 }
 
 async function prepare(context: Context, command: string, options: { refuseAuthor?: string } = {}): Promise<PreparedCommand | undefined> {
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   const issueNumber: number | undefined = context.payload.issue?.number
   const commenter: string = context.payload.comment?.user?.login
 
@@ -227,10 +224,10 @@ async function prepare(context: Context, command: string, options: { refuseAutho
   return { octokit, issueNumber, headSha }
 }
 
-// the reusable workflow runs inside the caller's workflow, whose name GITHUB_WORKFLOW carries;
+// the reusable workflow runs inside the caller's workflow, whose name the platform reports (GITHUB_WORKFLOW on Actions);
 // re-running or approving that run would re-run this very command
 async function headRuns(octokit: Octokit, context: Context, headSha: string): Promise<WorkflowRun[]> {
-  const current = process.env.GITHUB_WORKFLOW
+  const current = platform().currentWorkflowName()
   let runs: WorkflowRun[]
   try {
     runs = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, { ...context.repo, head_sha: headSha, per_page: 100 })
@@ -256,7 +253,7 @@ async function rerunEach(
     }
     catch (e) {
       if (isConflict(e)) {
-        core.debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`)
+        platform().log.debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`)
         continue
       }
       if (isForbidden(e)) {
@@ -296,17 +293,17 @@ async function react(octokit: Octokit, context: Context): Promise<void> {
     await octokit.reactions.createForIssueComment({ ...context.repo, comment_id: commentId, content: 'rocket' })
   }
   catch (e) {
-    core.warning(`trigger: could not react to the comment: ${e}`)
+    platform().log.warning(`trigger: could not react to the comment: ${e}`)
   }
 }
 
 async function refuse(octokit: Octokit, context: Context, issueNumber: number, msg: string, cause: unknown = new Error(msg)): Promise<never> {
-  core.error(msg)
+  platform().log.error(msg)
   try {
     await createComment(octokit, context, issueNumber, msg)
   }
   catch (commentE) {
-    core.error(`Could not comment with an auth error: ${commentE}`)
+    platform().log.error(`Could not comment with an auth error: ${commentE}`)
   }
   throw cause
 }

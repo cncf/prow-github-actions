@@ -12,7 +12,6 @@ import {
   parseGroup,
   parseOwners,
   repoHasOwners,
-  resetOwnersCaches,
 } from '../../src/utils/owners'
 import * as utils from '../testUtils'
 import { repo } from './ownersFixtures'
@@ -55,8 +54,6 @@ describe('expandGroups', () => {
     return { paginate, teams: { listMembersInOrg: vi.fn() } } as never
   }
 
-  beforeEach(() => resetOwnersCaches())
-
   it('reads each of two same-org teams separately: the second does not reuse the first team\'s members', async () => {
     const api = client({ approvers: ['alice'], reviewers: ['bob'] })
 
@@ -89,7 +86,7 @@ describe('loadOwnersTree', () => {
 
   beforeEach(() => {
     utils.setupActionsEnv()
-    resetOwnersCaches()
+    utils.newRun()
   })
 
   it('rejects a blob that names an encoding but carries no content as an invalid OWNERS file', async () => {
@@ -107,7 +104,7 @@ describe('loadOwnersTree', () => {
 describe('repoHasOwners', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
-    resetOwnersCaches()
+    utils.newRun()
   })
 
   it('reads the default branch from the api when the payload has no repository at all', async () => {
@@ -141,7 +138,7 @@ describe('repoHasOwners', () => {
 describe('branchHasOwners', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
-    resetOwnersCaches()
+    utils.newRun()
   })
 
   it.each([

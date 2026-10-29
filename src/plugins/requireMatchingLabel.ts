@@ -2,14 +2,12 @@ import type { Octokit } from '@octokit/rest'
 import type { ProwConfig, RequireMatchingLabel } from '../utils/config'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { parseDuration } from '../utils/duration'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { sleep } from '../utils/sleep'
 
 export { parseDuration } from '../utils/duration'
@@ -90,10 +88,10 @@ export function evaluate(rule: RequireMatchingLabel, labels: string[]): Verdict 
  *
  * @param context - the github context of the current action event
  */
-export async function requireMatchingLabel(context: Context = github.context): Promise<void> {
+export async function requireMatchingLabel(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !triggerActions.has(action)) {
-    core.debug(`require-matching-label: skipping ${action} action`)
+    platform().log.debug(`require-matching-label: skipping ${action} action`)
     return
   }
 
@@ -110,9 +108,9 @@ export async function requireMatchingLabel(context: Context = github.context): P
  *
  * @param context - the github context of the current action event
  */
-export async function checkRequiredLabels(context: Context = github.context): Promise<void> {
+export async function checkRequiredLabels(context: Context = platform().context()): Promise<void> {
   if (context.payload.issue?.state !== 'open') {
-    core.debug('require-matching-label: the issue is not open, nothing to check')
+    platform().log.debug('require-matching-label: the issue is not open, nothing to check')
     return
   }
 
@@ -120,8 +118,7 @@ export async function checkRequiredLabels(context: Context = github.context): Pr
 }
 
 async function enforce(context: Context, changedLabel: string | undefined, withGracePeriod: boolean): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod })
 }
@@ -139,20 +136,20 @@ export async function enforceRequiredLabels(octokit: Octokit, context: Context, 
   const { changedLabel, withGracePeriod = false } = options
   const config = await loadProwConfig(octokit, context)
   if (config.require_matching_label.length === 0) {
-    core.debug('require-matching-label: no rules configured')
+    platform().log.debug('require-matching-label: no rules configured')
     return
   }
 
   const { issueNumber, isPullRequest } = target
   const rules = applicableRules(config, isPullRequest, changedLabel)
   if (rules.length === 0) {
-    core.debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`)
+    platform().log.debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`)
     return
   }
 
   const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))))
   if (withGracePeriod && graceMs > 0) {
-    core.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`)
+    platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`)
     await sleep(graceMs)
   }
 
@@ -207,7 +204,7 @@ async function apply(octokit: Octokit, context: Context, issueNumber: number, ru
     }
 
     default:
-      core.debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`)
+      platform().log.debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`)
   }
 }
 
@@ -219,7 +216,7 @@ function markerFor(rule: RequireMatchingLabel): string {
 async function postMissingComment(octokit: Octokit, context: Context, issueNumber: number, rule: RequireMatchingLabel): Promise<void> {
   const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule)
   if (existing.length > 0) {
-    core.debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`)
+    platform().log.debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`)
     return
   }
 

@@ -1,11 +1,9 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { getCurrentLabels, labelIssue, repoLabelNames } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 const triggerActions = new Set(['opened', 'reopened', 'synchronize'])
@@ -18,10 +16,10 @@ const triggerActions = new Set(['opened', 'reopened', 'synchronize'])
  *
  * @param context - the github context of the current action event
  */
-export async function ownersLabel(context: Context = github.context): Promise<void> {
+export async function ownersLabel(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !triggerActions.has(action)) {
-    core.debug(`owners-label: skipping ${action} action`)
+    platform().log.debug(`owners-label: skipping ${action} action`)
     return
   }
 
@@ -30,8 +28,7 @@ export async function ownersLabel(context: Context = github.context): Promise<vo
     throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`)
   }
 
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   await applyOwnersLabels(octokit, context, pullNumber)
 }
@@ -51,14 +48,14 @@ export async function applyOwnersLabels(octokit: Octokit, context: Context, pull
     owners?.labels.forEach(label => declared.add(label))
   }
   if (declared.size === 0) {
-    core.debug('owners-label: no OWNERS file covering the changed files declares labels')
+    platform().log.debug('owners-label: no OWNERS file covering the changed files declares labels')
     return
   }
 
   const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower))
   const missing = [...declared].filter(label => !current.has(lower(label)))
   if (missing.length === 0) {
-    core.debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`)
+    platform().log.debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`)
     return
   }
 
@@ -74,7 +71,7 @@ export async function applyOwnersLabels(octokit: Octokit, context: Context, pull
     if (known.has(lower(label))) {
       return true
     }
-    core.info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`)
+    platform().log.info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`)
     return false
   })
   if (toAdd.length === 0) {

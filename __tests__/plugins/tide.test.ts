@@ -7,7 +7,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { fetchMergeability, getPull, loadTide, mergeOnce, tideOnCheckSuite, tideOnComment, tideOnPullRequest, tideOnReview, tryMergePullRequest, unknownRetryDelaysMs } from '../../src/plugins/tide'
 import { resolveTide } from '../../src/utils/config'
 import { newOctokit } from '../../src/utils/octokit'
-import { resetOwnersCaches } from '../../src/utils/owners'
 import * as sleepModule from '../../src/utils/sleep'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEvent.json'
@@ -168,7 +167,7 @@ describe('mergeOnce', () => {
 
 describe('loadTide', () => {
   beforeEach(() => {
-    resetOwnersCaches()
+    utils.newRun()
     server.use(...utils.noOrgOrRepoConfigExcept())
   })
 
@@ -442,7 +441,7 @@ describe('tryMergePullRequest', () => {
       expect(gets).toHaveLength(2)
     })
 
-    it('resetTideWarnings forgets the evaluated pull requests', async () => {
+    it('a new run forgets the evaluated pull requests', async () => {
       servePull(pull(['lgtm']))
       observeMerge()
 
