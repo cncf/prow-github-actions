@@ -1,3 +1,4 @@
+import type { Deferred } from '../../src/platform'
 import type { ProwConfig, RequireMatchingLabel } from '../../src/utils/config'
 import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
@@ -5,8 +6,10 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resumeDeferred } from '../../src/deferred'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { handleIssues } from '../../src/issues/handleIssues'
+import { platform, setPlatform } from '../../src/platform'
 import { applicableRules, checkRequiredLabels, enforceRequiredLabels, evaluate, maxGracePeriodMs, parseDuration, requireMatchingLabel } from '../../src/plugins/requireMatchingLabel'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import * as labeling from '../../src/utils/labeling'
@@ -175,6 +178,33 @@ describe('requireMatchingLabel handler', () => {
     utils.setupActionsEnv()
     setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     sleep = vi.spyOn(sleepModule, 'sleep').mockResolvedValue(undefined)
+  })
+
+  it('on a platform that defers, stops at the grace period and resumeDeferred finishes the check', async () => {
+    serveRules([{ ...kindRule, grace_period_duration: '5s' }])
+    const writes = serveIssue([])
+    const deferred: Deferred[] = []
+    const base = platform()
+    setPlatform({ ...base, defer: async (delayMs, resume) => {
+      deferred.push(resume)
+      expect(delayMs).toBe(5000)
+      return 'deferred'
+    } })
+    const context = new utils.MockContext(issueEvent('opened', []))
+
+    await requireMatchingLabel(context)
+
+    expect(sleep).not.toHaveBeenCalled()
+    expect(deferred).toEqual([{ kind: 'require-matching-label', context }])
+    await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
+
+    setPlatform(base)
+    await resumeDeferred(deferred[0]!)
+
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await writes.addLabels.body()).toEqual({ labels: ['needs-kind'] })
+    expect(sleep).not.toHaveBeenCalled()
+    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('issue opened without a kind label waits the grace period, then adds needs-kind and the comment', async () => {

@@ -13,7 +13,7 @@ export interface WebhookReceiver {
   deliveries: DeliveryStore
   sink: LogSink
   /** the handler every accepted delivery runs; `run` from src/run.ts in production */
-  dispatch: (context: Context) => Promise<void>
+  dispatch: (context: Context, delivery: Delivery) => Promise<void>
   /** how work continues after the response; Node lets the promise run, Workers need waitUntil */
   background: (work: Promise<void>) => void
 }
@@ -69,7 +69,7 @@ export async function receiveWebhook(receiver: WebhookReceiver, request: Request
   const handled = (async () => {
     try {
       await run.resolveToken()
-      await runWithPlatform(run.platform, () => receiver.dispatch(run.platform.context()))
+      await runWithPlatform(run.platform, () => receiver.dispatch(run.platform.context(), delivery))
     }
     catch (error) {
       run.platform.fail(error instanceof Error ? error.message : String(error))

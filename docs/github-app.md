@@ -43,7 +43,7 @@ the organization (all repositories, or the ones Prow should manage).
 | Variable | Required | Meaning |
 |---|---|---|
 | `GITHUB_APP_ID` | yes | the App ID |
-| `GITHUB_APP_PRIVATE_KEY` | yes | the PEM; a single line with literal `\n` is accepted |
+| `GITHUB_APP_PRIVATE_KEY` | yes | the PEM; a single line with literal `\n` is accepted. PKCS#1 as GitHub serves it works on Node; Workers need PKCS#8 (see below) |
 | `GITHUB_WEBHOOK_SECRET` | yes | the webhook secret |
 | `GITHUB_API_URL` | no | the REST root for GitHub Enterprise Server, e.g. `https://ghes.example/api/v3` |
 | `PORT` | no | listening port, default `8080` |
@@ -104,9 +104,40 @@ App's token can, so the App handles those events directly and does not need
 `sweep`. `label-sync` on a schedule works but is usually better run on a `push`
 to `prow.yaml` (automatic) or with the `/label-sync` command.
 
+## Cloudflare Workers
+
+The same adapter runs as a Worker, with the platform's services standing in
+for what a container does in memory:
+
+| Concern | Container | Worker |
+|---|---|---|
+| Delivery dedupe | process memory | KV (`DELIVERIES`, 24 h) |
+| Ordering a pull request's events | one replica | a Durable Object per pull request (`PULL_REQUEST_LOCK`) |
+| Scheduled jobs | `cron` command / interval | Cron Trigger → one Queue message per installation |
+| The `require_matching_label` grace period | waits in place | a delayed Queue message resumes the check |
+
+Set up once, from the repository (`wrangler.toml` is committed):
+
+```sh
+npx wrangler kv namespace create DELIVERIES     # paste the id into wrangler.toml
+npx wrangler queues create prow-jobs
+openssl pkcs8 -topk8 -nocrypt -in prow.private-key.pem -out prow.pkcs8.pem   # Workers sign with WebCrypto, which needs PKCS#8
+npx wrangler secret put GITHUB_APP_ID
+npx wrangler secret put GITHUB_APP_PRIVATE_KEY < prow.pkcs8.pem
+npx wrangler secret put GITHUB_WEBHOOK_SECRET
+npx wrangler deploy
+```
+
+The webhook URL is `https://<worker>.<account>.workers.dev/webhook`. `PROW_*`
+variables go under `[vars]`. Logs are JSON lines in Workers Logs. The Worker
+answers `202` and finishes the event in the background; an event that needs
+longer than the platform allows after the response is not a concern today
+(tide's mergeability retries total seven seconds).
+
 ## How it fits the code
 
 `src/adapters/app/` implements the `Platform` the handlers run against (see
 [overview](./overview.md#runtime-adapters)); `src/server/node.ts` is the HTTP
-server. `npm run pack:server` builds `dist-server/index.js`, which is not
-committed.
+server and `src/server/worker.ts` the Worker. `npm run pack:server` builds
+`dist-server/index.js` and `npm run pack:worker` `dist-worker/worker.js`; neither
+is committed. `__tests__/worker/` runs the Worker bundle in miniflare.

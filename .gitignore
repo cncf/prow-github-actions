@@ -104,3 +104,4 @@ coverage-e2e
 .stryker-tmp
 reports/mutation
 dist-server
+dist-worker

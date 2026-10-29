@@ -30,6 +30,16 @@ function required(env: Record<string, string | undefined>, name: string): string
   return value
 }
 
+/**
+ * normalizePrivateKey accepts the key as GitHub serves it or as a deployment
+ * stores it: a single-line variable arrives with literal \n. On Node either
+ * PKCS#1 (`BEGIN RSA PRIVATE KEY`) or PKCS#8 (`BEGIN PRIVATE KEY`) signs; on
+ * Workers only PKCS#8 does, which docs/github-app.md explains how to produce.
+ */
+export function normalizePrivateKey(key: string): string {
+  return key.replace(/\\n/g, '\n').trim()
+}
+
 export function settingsFromEnv(env: Record<string, string | undefined>): AppSettings {
   // the scheduler runs the merger unless told otherwise, as the reusable workflow does
   const inputs: AppSettings['inputs'] = { jobs: 'lgtm' }
@@ -41,8 +51,7 @@ export function settingsFromEnv(env: Record<string, string | undefined>): AppSet
   }
   return {
     appId: required(env, 'GITHUB_APP_ID'),
-    // a key pasted into a single-line environment variable arrives with literal \n
-    privateKey: required(env, 'GITHUB_APP_PRIVATE_KEY').replace(/\\n/g, '\n'),
+    privateKey: normalizePrivateKey(required(env, 'GITHUB_APP_PRIVATE_KEY')),
     webhookSecret: required(env, 'GITHUB_WEBHOOK_SECRET'),
     apiBaseUrl: env.GITHUB_API_URL || 'https://api.github.com',
     inputs,

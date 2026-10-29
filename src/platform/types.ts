@@ -135,6 +135,19 @@ export interface Platform {
   state: () => RunState
   /** what the runtime's token can and cannot do */
   capabilities: () => Capabilities
+  /**
+   * defer waits `delayMs` and then continues. A runtime that may hold a
+   * request open (Actions, a Node server) resolves `continue` after the delay;
+   * one that may not (Workers) enqueues `resume` for later and resolves
+   * `deferred`, and the caller returns without doing the work now.
+   */
+  defer: (delayMs: number, resume: Deferred) => Promise<'continue' | 'deferred'>
+}
+
+/** what to re-enter after a deferral; the Context is the event being handled */
+export interface Deferred {
+  kind: 'require-matching-label'
+  context: Context
 }
 
 export interface Capabilities {

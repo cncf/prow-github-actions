@@ -44,7 +44,7 @@ export default mergeConfig(base, defineConfig({
       include: ['src/**/*.ts', '.coverage-bundle/index.js'],
       // this run measures what the action's bundle exercises; the GitHub App adapter
       // and its server are not part of that bundle (unit coverage holds them to 100%)
-      exclude: ['src/adapters/app/**', 'src/server/**'],
+      exclude: ['src/adapters/app/**', 'src/server/**', 'src/deferred.ts'],
       autoAttachSubprocess: true,
       excludeAfterRemap: true,
       // Regression floor for the bundle-only run, set just under what main reaches

@@ -1,9 +1,10 @@
-import type { Context, Logger, Platform, RunState } from '../../platform'
+import type { Context, Deferred, Logger, Platform, RunState } from '../../platform'
 import type { AppSettings } from './settings'
 import { createAppAuth } from '@octokit/auth-app'
 import { request } from '@octokit/request'
 
 import { newRunState } from '../../platform'
+import { sleep } from '../../utils/sleep'
 
 export interface Delivery {
   id: string
@@ -17,6 +18,14 @@ export interface AppRun {
   failures: string[]
   /** mints the installation token; inputs.get('github-token') is synchronous, so call this before dispatching */
   resolveToken: () => Promise<void>
+}
+
+/** how a deployment waits: in place (a server) or by enqueuing the resumption (Workers) */
+export type DeferStrategy = (delayMs: number, resume: Deferred) => Promise<'continue' | 'deferred'>
+
+export const deferInPlace: DeferStrategy = async (delayMs) => {
+  await sleep(delayMs)
+  return 'continue'
 }
 
 export interface TokenSource {
@@ -74,7 +83,7 @@ export function jsonLogger(sink: LogSink, fields: Record<string, unknown>, secre
  * the deployment, a token minted for the delivery's installation on first use,
  * one RunState, and a logger that tags every line with the delivery.
  */
-export function appPlatform(settings: AppSettings, tokens: TokenSource, delivery: Delivery, sink: LogSink): AppRun {
+export function appPlatform(settings: AppSettings, tokens: TokenSource, delivery: Delivery, sink: LogSink, defer: DeferStrategy = deferInPlace): AppRun {
   const context = contextFromDelivery(delivery)
   const installationId: unknown = delivery.payload.installation?.id
   if (typeof installationId !== 'number') {
@@ -112,6 +121,7 @@ export function appPlatform(settings: AppSettings, tokens: TokenSource, delivery
     },
     state: () => state,
     capabilities: () => ({ readOnlyForkToken: false }),
+    defer,
   }
 
   return {

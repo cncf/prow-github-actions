@@ -17,7 +17,7 @@ describe('dist/index.js is self-contained', () => {
   })
 
   // the GitHub App adapter and its server have their own bundle (dist-server/) and are not part of this one
-  const appOnly = /^(?:adapters\/app|server)\//
+  const appOnly = /^(?:adapters\/app|server)\/|^deferred\.ts$/
 
   it('inlines every package src/ imports', () => {
     const packages = new Set<string>()

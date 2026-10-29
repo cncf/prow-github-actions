@@ -3,7 +3,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
-import { platform, setPlatform } from '../../src/platform'
+import { newRunState, platform, setPlatform } from '../../src/platform'
 import { run } from '../../src/run'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
@@ -11,6 +11,7 @@ import * as utils from '../testUtils'
 function memoryPlatform(inputs: Partial<Record<InputName, string>>, context: Context, apiBaseUrl: string) {
   const logs: string[] = []
   const failures: string[] = []
+  const state = newRunState()
   const log = (level: string) => (message: string) => {
     logs.push(`${level}: ${message}`)
   }
@@ -29,6 +30,9 @@ function memoryPlatform(inputs: Partial<Record<InputName, string>>, context: Con
     apiBaseUrl: () => apiBaseUrl,
     currentWorkflowName: () => undefined,
     fail: message => failures.push(message),
+    state: () => state,
+    capabilities: () => ({ readOnlyForkToken: false }),
+    defer: async () => 'continue',
   }
   return { fake, logs, failures }
 }

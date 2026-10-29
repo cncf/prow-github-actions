@@ -37480,7 +37480,21 @@ function platform_platform() {
     return found;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/sleep.js
+/**
+ * sleep resolves after the given delay. It lives in its own module so callers
+ * bind to it through an import and tests can replace it with a spy.
+ *
+ * @param ms - milliseconds to wait
+ */
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
 ;// CONCATENATED MODULE: ./lib/adapters/actions.js
+
 
 
 
@@ -37509,6 +37523,10 @@ function actionsPlatform() {
         fail: message => setFailed(message),
         state: () => state,
         capabilities: () => ({ readOnlyForkToken: true }),
+        defer: async (delayMs) => {
+            await sleep(delayMs);
+            return 'continue';
+        },
     };
 }
 
@@ -44069,19 +44087,6 @@ async function pullRequestsForSha(octokit, context, sha) {
     }
 }
 
-;// CONCATENATED MODULE: ./lib/utils/sleep.js
-/**
- * sleep resolves after the given delay. It lives in its own module so callers
- * bind to it through an import and tests can replace it with a spy.
- *
- * @param ms - milliseconds to wait
- */
-function sleep(ms) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
 ;// CONCATENATED MODULE: ./lib/plugins/tide.js
 
 
@@ -45483,7 +45488,6 @@ function lower(label) {
 
 
 
-
 const requireMatchingLabel_triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
 const graceActions = new Set(['opened', 'reopened']);
 /** github actions minutes are billed, so a rule may not park the runner for longer */
@@ -45558,6 +45562,15 @@ async function checkRequiredLabels(context = platform_platform().context()) {
     }
     await enforce(context, undefined, false);
 }
+/**
+ * resumeRequiredLabels finishes a check a platform deferred past the grace
+ * period: the same evaluation, without waiting again.
+ *
+ * @param context - the github context of the deferred event
+ */
+async function resumeRequiredLabels(context) {
+    await enforce(context, undefined, false);
+}
 async function enforce(context, changedLabel, withGracePeriod) {
     const octokit = newOctokitFromInputs();
     await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod });
@@ -45587,7 +45600,10 @@ async function enforceRequiredLabels(octokit, context, target, options = {}) {
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
         platform_platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep(graceMs);
+        if (await platform_platform().defer(graceMs, { kind: 'require-matching-label', context }) === 'deferred') {
+            platform_platform().log.debug('require-matching-label: the check resumes after the grace period');
+            return;
+        }
     }
     const labels = await getCurrentLabels(octokit, context, issueNumber);
     const errors = [];

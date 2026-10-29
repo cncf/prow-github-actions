@@ -27,7 +27,7 @@ a logger, the API base url and `fail()`. The entry point installs an implementat
 | Adapter | Entry point | Token | Events |
 |---|---|---|---|
 | [`src/adapters/actions.ts`](../src/adapters/actions.ts) | `dist/index.js` (the action) | `GITHUB_TOKEN` or the `token` secret | the workflow's `on:` |
-| [`src/adapters/app/`](../src/adapters/app/) | `dist-server/index.js` ([GitHub App](./github-app.md), beta) | an installation token per event | the App's webhook subscriptions |
+| [`src/adapters/app/`](../src/adapters/app/) | `dist-server/index.js` (a container) or `dist-worker/worker.js` (Cloudflare Workers) — [GitHub App](./github-app.md), beta | an installation token per event | the App's webhook subscriptions |
 
 Everything a handler memoizes for an event — configuration, repository labels, OWNERS
 trees, warnings already shown — lives in the platform's `RunState`, created once per
