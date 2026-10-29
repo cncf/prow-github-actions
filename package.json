@@ -20,7 +20,7 @@
     "build": "tsc && tsc -p tsconfig.core.json",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
-    "pack": "ncc build",
+    "pack": "ncc build && npm run pack:server",
     "test": "vitest run",
     "test-all": "npm run build && npm run pack && npm test",
     "test:coverage": "vitest run --coverage",
@@ -28,12 +28,18 @@
     "test:coverage:e2e": "npm run pack:coverage && vitest run --coverage --config vitest.e2e-coverage.config.mjs __tests__/bundle",
     "test:mutation": "stryker run",
     "test:watch": "vitest",
-    "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test"
+    "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test",
+    "pack:server": "ncc build src/server/main.ts -o dist-server"
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
+    "@hono/node-server": "^2.1.5",
+    "@octokit/auth-app": "^8.3.1",
+    "@octokit/request": "^10.0.16",
     "@octokit/rest": "^22.0.1",
+    "@octokit/webhooks-methods": "^6.0.0",
+    "hono": "^4.13.14",
     "js-yaml": "^5.5.0"
   },
   "devDependencies": {

@@ -133,4 +133,15 @@ export interface Platform {
   fail: (message: string) => void
   /** the memoized state of the event being handled */
   state: () => RunState
+  /** what the runtime's token can and cannot do */
+  capabilities: () => Capabilities
+}
+
+export interface Capabilities {
+  /**
+   * whether `pull_request` and `pull_request_review` events for a pull request
+   * from a fork come with a token that cannot write: true for GITHUB_TOKEN in
+   * an Actions run, false for a GitHub App's installation token
+   */
+  readOnlyForkToken: boolean
 }

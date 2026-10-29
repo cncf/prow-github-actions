@@ -28,5 +28,6 @@ export function actionsPlatform(): Platform {
     currentWorkflowName: () => process.env.GITHUB_WORKFLOW,
     fail: message => core.setFailed(message),
     state: () => state,
+    capabilities: () => ({ readOnlyForkToken: true }),
   }
 }

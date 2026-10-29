@@ -108,6 +108,7 @@ This is the full list of available commands. Prow-style aliases (`/unhold`, `/re
 ## Documentation
 - [Prow for your organization](./docs/prow-for-your-org.md)
 - [Installing](./docs/installing.md)
+- [Running as a GitHub App](./docs/github-app.md) (beta)
 - [Overview](./docs/overview.md)
 - [Events](./docs/events.md)
 - [Commands](./docs/commands.md)

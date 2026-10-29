@@ -10,12 +10,13 @@ const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review'])
  * GitHub gives `pull_request` and `pull_request_review` runs for a pull
  * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
  * same-repository pull requests get a write token). The `sweep` job covers
- * those pull requests instead.
+ * those pull requests instead. A platform whose token can write on fork pull
+ * requests, such as a GitHub App, never skips.
  *
  * @param context - the github context of the current action event
  */
 export function skipReadOnlyForkRun(context: Context): boolean {
-  if (!readOnlyForkEvents.has(context.eventName)) {
+  if (!platform().capabilities().readOnlyForkToken || !readOnlyForkEvents.has(context.eventName)) {
     return false
   }
 

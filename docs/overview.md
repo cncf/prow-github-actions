@@ -22,9 +22,12 @@ The handlers under `src/` reach the runtime they run on only through the `Platfo
 interface in [`src/platform/types.ts`](../src/platform/types.ts): the event
 (`Context`: event name, payload, repository), the seven inputs `action.yml` declares,
 a logger, the API base url and `fail()`. The entry point installs an implementation with
-`setPlatform()` before dispatching; today the only one is
-[`src/adapters/actions.ts`](../src/adapters/actions.ts), backed by `@actions/core`,
-`@actions/github` and the runner's `GITHUB_*` environment.
+`setPlatform()` (or runs each event under `runWithPlatform()`) before dispatching.
+
+| Adapter | Entry point | Token | Events |
+|---|---|---|---|
+| [`src/adapters/actions.ts`](../src/adapters/actions.ts) | `dist/index.js` (the action) | `GITHUB_TOKEN` or the `token` secret | the workflow's `on:` |
+| [`src/adapters/app/`](../src/adapters/app/) | `dist-server/index.js` ([GitHub App](./github-app.md), beta) | an installation token per event | the App's webhook subscriptions |
 
 Everything a handler memoizes for an event — configuration, repository labels, OWNERS
 trees, warnings already shown — lives in the platform's `RunState`, created once per
@@ -32,7 +35,7 @@ event by the adapter, so nothing carries over between events or repositories in 
 long-lived process.
 
 Handlers therefore import from `../platform`, never from `@actions/*` or `node:*`;
-ESLint rejects such imports outside `src/adapters/` and `src/main.ts`, and
+ESLint rejects such imports outside `src/adapters/`, `src/main.ts` and `src/server/`, and
 `tsconfig.core.json` type-checks the handlers with no Node types at all. This keeps the
 door open to a second adapter, such as a GitHub App receiving webhooks, without touching
 the handlers.

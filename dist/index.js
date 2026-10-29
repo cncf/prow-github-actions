@@ -37508,6 +37508,7 @@ function actionsPlatform() {
         currentWorkflowName: () => (external_node_process_default()).env.GITHUB_WORKFLOW,
         fail: message => setFailed(message),
         state: () => state,
+        capabilities: () => ({ readOnlyForkToken: true }),
     };
 }
 
@@ -47090,12 +47091,13 @@ const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review']);
  * GitHub gives `pull_request` and `pull_request_review` runs for a pull
  * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
  * same-repository pull requests get a write token). The `sweep` job covers
- * those pull requests instead.
+ * those pull requests instead. A platform whose token can write on fork pull
+ * requests, such as a GitHub App, never skips.
  *
  * @param context - the github context of the current action event
  */
 function skipReadOnlyForkRun(context) {
-    if (!readOnlyForkEvents.has(context.eventName)) {
+    if (!platform_platform().capabilities().readOnlyForkToken || !readOnlyForkEvents.has(context.eventName)) {
         return false;
     }
     const head = context.payload.pull_request?.head?.repo?.full_name;

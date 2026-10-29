@@ -103,3 +103,4 @@ coverage-e2e
 # Sandbox and reports written by `npm run test:mutation`
 .stryker-tmp
 reports/mutation
+dist-server

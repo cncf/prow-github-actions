@@ -16,9 +16,12 @@ describe('dist/index.js is self-contained', () => {
     expect(specifiers.filter(specifier => !isBuiltin(specifier))).toEqual([])
   })
 
+  // the GitHub App adapter and its server have their own bundle (dist-server/) and are not part of this one
+  const appOnly = /^(?:adapters\/app|server)\//
+
   it('inlines every package src/ imports', () => {
     const packages = new Set<string>()
-    for (const file of fs.readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(name => name.endsWith('.ts'))) {
+    for (const file of fs.readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(name => name.endsWith('.ts') && !appOnly.test(name))) {
       for (const match of fs.readFileSync(`src/${file}`, 'utf8').matchAll(/^import .* from '([^'.][^']*)'/gm)) {
         if (!isBuiltin(match[1])) {
           packages.add(match[1])
