@@ -42,7 +42,7 @@ function contextFor(body: string) {
 // prefix, a url with only a username or only a password is refused, and the
 // length bound is inclusive at 4096.
 describe('/meow image validation edges', () => {
-  let createComment: ReturnType<typeof vi.spyOn<typeof comments, 'createComment'>>
+  let createComment: MockInstance<typeof comments.createComment>
 
   beforeEach(() => {
     utils.setupActionsEnv('/meow')

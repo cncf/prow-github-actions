@@ -16,7 +16,7 @@ vi.mock('@actions/core', { spy: true })
 // through the same chai method.
 chai.use((_chai, utils) => {
   for (const method of ['throw', 'throws', 'Throw']) {
-    utils.overwriteMethod(_chai.Assertion.prototype, method, _super => function (this: object, ...args: unknown[]) {
+    utils.overwriteMethod(_chai.Assertion.prototype, method, (_super: (...args: unknown[]) => unknown) => function (this: object, ...args: unknown[]) {
       const object: unknown = utils.flag(this, 'object')
       const negate = Boolean(utils.flag(this, 'negate'))
       const promise = utils.flag(this, 'promise')
