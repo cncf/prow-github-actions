@@ -1,6 +1,5 @@
 import type { Context } from './context'
-
-import * as core from '@actions/core'
+import { platform } from '../platform'
 
 export type EventHandler = (context: Context) => Promise<void>
 
@@ -11,12 +10,13 @@ const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review'])
  * GitHub gives `pull_request` and `pull_request_review` runs for a pull
  * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
  * same-repository pull requests get a write token). The `sweep` job covers
- * those pull requests instead.
+ * those pull requests instead. A platform whose token can write on fork pull
+ * requests, such as a GitHub App, never skips.
  *
  * @param context - the github context of the current action event
  */
 export function skipReadOnlyForkRun(context: Context): boolean {
-  if (!readOnlyForkEvents.has(context.eventName)) {
+  if (!platform().capabilities().readOnlyForkToken || !readOnlyForkEvents.has(context.eventName)) {
     return false
   }
 
@@ -26,7 +26,7 @@ export function skipReadOnlyForkRun(context: Context): boolean {
     return false
   }
 
-  core.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`)
+  platform().log.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`)
   return true
 }
 
@@ -52,6 +52,6 @@ export async function runEventHandlers(event: string, handlers: EventHandler[], 
   }
 
   if (errors.length > 0) {
-    core.setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`)
+    platform().fail(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`)
   }
 }

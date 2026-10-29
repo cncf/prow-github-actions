@@ -5,7 +5,6 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sweep } from '../../src/cronJobs/sweep'
-import { resetOwnersCaches } from '../../src/utils/owners'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
@@ -73,7 +72,7 @@ describe('sweep with blunderbuss.delay after missed schedule runs', () => {
   beforeEach(() => {
     utils.setupJobsEnv('sweep')
     vi.useFakeTimers({ now, toFake: ['Date'] })
-    resetOwnersCaches()
+    utils.newRun()
     context = new utils.MockContext(pullReqOpenedEvent)
     context.eventName = 'schedule'
     calls = []

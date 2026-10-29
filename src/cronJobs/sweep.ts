@@ -3,10 +3,8 @@ import type { BlunderbussSettings } from '../plugins/blunderbuss'
 import type { ProwConfig } from '../utils/config'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
 import { approvePendingRuns, okToTestLabel } from '../issueComment/trigger'
+import { platform } from '../platform'
 import { evaluateApproval } from '../plugins/approve'
 import { blunderbussSettings, requestOwnersReviewers } from '../plugins/blunderbuss'
 import { lgtmSettings } from '../plugins/lgtmBinding'
@@ -14,7 +12,7 @@ import { applyOwnersLabels } from '../plugins/ownersLabel'
 import { enforceRequiredLabels } from '../plugins/requireMatchingLabel'
 import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig, resolveSweepLookback } from '../utils/config'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { branchHasOwners } from '../utils/owners'
 
 type PullsListItem = RestEndpointMethodTypes['pulls']['list']['response']['data'][number]
@@ -56,8 +54,8 @@ const pageSize = 100
  * @param context - the github actions event context
  * @param now - the current time, injectable for tests
  */
-export async function sweep(context: Context = github.context, now: Date = new Date()): Promise<SweepResult> {
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+export async function sweep(context: Context = platform().context(), now: Date = new Date()): Promise<SweepResult> {
+  const octokit = newOctokitFromInputs()
   const config = await loadProwConfig(octokit, context)
   const lookbackMs = resolveSweepLookback(config.sweep)
   const since = new Date(now.getTime() - lookbackMs)
@@ -67,9 +65,9 @@ export async function sweep(context: Context = github.context, now: Date = new D
   const listed = await recentlyUpdatedPulls(octokit, context, due.from)
   const candidates = listed.filter(pr => new Date(pr.updated_at) >= since)
   const delayedOnly = listed.filter(pr => new Date(pr.updated_at) < since)
-  core.info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`)
+  platform().log.info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`)
   if (reviewers.delay > 0) {
-    core.info(`sweep: ${delayedOnly.length} more checked for delayed reviewers, updated since ${due.from.toISOString()}`)
+    platform().log.info(`sweep: ${delayedOnly.length} more checked for delayed reviewers, updated since ${due.from.toISOString()}`)
   }
 
   const result: SweepResult = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] }
@@ -163,13 +161,13 @@ async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsLis
     }
   }
 
-  core.info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`)
+  platform().log.info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`)
   return outcome
 }
 
 async function approveIfTrusted(octokit: Octokit, context: Context, pr: PullsListItem): Promise<void> {
   if (!(pr.labels ?? []).some(label => label.name.toLowerCase() === okToTestLabel)) {
-    core.debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`)
+    platform().log.debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`)
     return
   }
   await approvePendingRuns(octokit, context, pr.number, pr.head.sha)
@@ -177,16 +175,16 @@ async function approveIfTrusted(octokit: Octokit, context: Context, pr: PullsLis
 
 async function requestReviewersIfFresh(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<void> {
   if (new Date(pr.created_at) < plugins.since) {
-    core.debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`)
+    platform().log.debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`)
     return
   }
   if (pr.draft === true || (pr.requested_reviewers ?? []).length > 0) {
-    core.debug(`sweep: #${pr.number} is a draft or already has requested reviewers`)
+    platform().log.debug(`sweep: #${pr.number} is a draft or already has requested reviewers`)
     return
   }
   const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 })
   if (reviews.length > 0) {
-    core.debug(`sweep: #${pr.number} already has reviews`)
+    platform().log.debug(`sweep: #${pr.number} already has reviews`)
     return
   }
 
@@ -202,17 +200,17 @@ async function requestReviewersIfFresh(octokit: Octokit, context: Context, pr: P
 async function requestReviewersIfDue(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<void> {
   const { reviewers: settings, due } = plugins
   if (settings.ignore_drafts && pr.draft === true) {
-    core.debug(`sweep: #${pr.number} is a draft`)
+    platform().log.debug(`sweep: #${pr.number} is a draft`)
     return
   }
   if ((pr.requested_reviewers ?? []).length > 0 || (pr.requested_teams ?? []).length > 0) {
-    core.debug(`sweep: #${pr.number} already has requested reviewers`)
+    platform().log.debug(`sweep: #${pr.number} already has requested reviewers`)
     return
   }
 
   let start = new Date(pr.created_at)
   if (start > due.to) {
-    core.debug(`sweep: #${pr.number} is not due for reviewers before ${new Date(start.getTime() + settings.delay).toISOString()}`)
+    platform().log.debug(`sweep: #${pr.number} is not due for reviewers before ${new Date(start.getTime() + settings.delay).toISOString()}`)
     return
   }
   if (settings.ignore_drafts) {
@@ -222,13 +220,13 @@ async function requestReviewersIfDue(octokit: Octokit, context: Context, pr: Pul
     }
   }
   if (start < due.from || start > due.to) {
-    core.debug(`sweep: #${pr.number} became ready at ${start.toISOString()}, outside the due window`)
+    platform().log.debug(`sweep: #${pr.number} became ready at ${start.toISOString()}, outside the due window`)
     return
   }
 
   const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 })
   if (reviews.length > 0) {
-    core.debug(`sweep: #${pr.number} already has reviews`)
+    platform().log.debug(`sweep: #${pr.number} already has reviews`)
     return
   }
 

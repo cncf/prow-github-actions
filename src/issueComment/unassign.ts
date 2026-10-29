@@ -1,10 +1,9 @@
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
-import * as github from '@actions/github'
 
+import { platform } from '../platform'
 import { checkCommenterAuth } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 /**
  * /unassign will remove the assignment for argument users (or self)
@@ -12,10 +11,9 @@ import { newOctokit } from '../utils/octokit'
  * @param context - the github actions event context
  */
 export async function unassign(
-  context: Context = github.context,
+  context: Context = platform().context(),
 ): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commenterId: string = context.payload.comment?.user?.login

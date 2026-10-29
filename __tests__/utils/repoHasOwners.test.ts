@@ -4,7 +4,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { branchHasOwners, repoHasOwners, resetOwnersCaches } from '../../src/utils/owners'
+import { branchHasOwners, repoHasOwners } from '../../src/utils/owners'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import * as utils from '../testUtils'
 import { contentsResponse, repo } from './ownersFixtures'
@@ -25,10 +25,7 @@ function treeResponse(paths: string[], truncated = false) {
 }
 
 describe('repoHasOwners', () => {
-  beforeEach(() => {
-    utils.setupActionsEnv()
-    resetOwnersCaches()
-  })
+  beforeEach(() => utils.setupActionsEnv())
 
   it('is true when the default branch tree lists an OWNERS file anywhere', async () => {
     server.use(utils.defaultBranchTree(['README.md', 'sdk/OWNERS']))
@@ -123,14 +120,14 @@ describe('repoHasOwners', () => {
     )
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(true)
 
-    resetOwnersCaches()
+    utils.newRun()
     server.use(
       http.get(`${repo}/git/trees/master`, utils.mockResponse(200, treeResponse(['README.md'], true))),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404, { message: 'Not Found' })),
     )
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(false)
 
-    resetOwnersCaches()
+    utils.newRun()
     server.use(
       http.get(`${repo}/git/trees/master`, utils.mockResponse(200, treeResponse(['README.md'], true))),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(500, { message: 'boom' })),
@@ -151,10 +148,7 @@ describe('repoHasOwners', () => {
 })
 
 describe('branchHasOwners', () => {
-  beforeEach(() => {
-    utils.setupActionsEnv()
-    resetOwnersCaches()
-  })
+  beforeEach(() => utils.setupActionsEnv())
 
   it('reads the tree of the given branch, not the default one', async () => {
     const observeDefault = new utils.ObserveRequest()

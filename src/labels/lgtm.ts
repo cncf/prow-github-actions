@@ -1,16 +1,14 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
 
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { bindLgtm, lgtmLabel, lgtmSettings, unbindLgtm } from '../plugins/lgtmBinding'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 /**
@@ -25,9 +23,8 @@ import { loadPullRequestOwners } from '../utils/pullRequestOwners'
  *
  * @param context - the github actions event context
  */
-export async function lgtm(context: Context = github.context): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+export async function lgtm(context: Context = platform().context()): Promise<void> {
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body
@@ -93,7 +90,7 @@ async function cancelLgtm(
   }
 
   if (!currentLabels.includes(lgtmLabel)) {
-    core.debug(`could not find ${lgtmLabel} to remove`)
+    platform().log.debug(`could not find ${lgtmLabel} to remove`)
     return
   }
 
@@ -137,13 +134,13 @@ async function refuse(
   msg: string,
   cause: unknown = new Error(msg),
 ): Promise<never> {
-  core.error(msg)
+  platform().log.error(msg)
 
   try {
     await createComment(octokit, context, issueNumber, msg)
   }
   catch (commentE) {
-    core.error(`Could not comment with an auth error: ${commentE}`)
+    platform().log.error(`Could not comment with an auth error: ${commentE}`)
   }
   throw cause
 }

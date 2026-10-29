@@ -42,6 +42,9 @@ export default mergeConfig(base, defineConfig({
       // Own directory so a local or CI e2e run never overwrites the unit run's coverage/.
       reportsDirectory: 'coverage-e2e',
       include: ['src/**/*.ts', '.coverage-bundle/index.js'],
+      // this run measures what the action's bundle exercises; the GitHub App adapter
+      // and its server are not part of that bundle (unit coverage holds them to 100%)
+      exclude: ['src/adapters/app/**', 'src/server/**'],
       autoAttachSubprocess: true,
       excludeAfterRemap: true,
       // Regression floor for the bundle-only run, set just under what main reaches

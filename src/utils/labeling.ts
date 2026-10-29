@@ -2,8 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { LabelSection } from './config'
 import type { Context } from './context'
 
-import * as core from '@actions/core'
-
+import { platform } from '../platform'
 import { loadProwConfig, orgConfigPath, orgConfigRepos, repoConfigPaths } from './config'
 
 export type { LabelSection } from './config'
@@ -67,17 +66,16 @@ export async function labelIssue(
   }
 }
 
-const repoLabelCache = new Map<string, Promise<string[]>>()
-
 /**
  * repoLabelNames lists the names of every label of the event repository,
- * memoized per repository for the lifetime of the process.
+ * memoized per repository for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 export function repoLabelNames(octokit: Octokit, context: Context): Promise<string[]> {
   const key = `${context.repo.owner}/${context.repo.repo}`
+  const repoLabelCache = platform().state().repoLabels
   let pending = repoLabelCache.get(key)
   if (pending === undefined) {
     pending = octokit
@@ -87,12 +85,6 @@ export function repoLabelNames(octokit: Octokit, context: Context): Promise<stri
   }
   return pending
 }
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetLabelCache(): void {
-  repoLabelCache.clear()
-}
-/* v8 ignore stop */
 
 /**
  * assertLabelsExist throws, naming every offender, when one of the labels is
@@ -180,7 +172,7 @@ export async function removeLabels(
     catch (e) {
       // a gone label is a benign race; anything else is a real failure
       if (isNotFound(e))
-        core.debug(`label ${label} was already absent: ${e}`)
+        platform().log.debug(`label ${label} was already absent: ${e}`)
       else
         throw new Error(`could not remove label ${label}: ${e}`)
     }

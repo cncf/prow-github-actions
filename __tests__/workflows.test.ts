@@ -46,11 +46,11 @@ function sourceFiles(dir: string): string[] {
   })
 }
 
-/** every input name src/ reads through @actions/core, by file */
+/** every input name src/ reads through the platform's inputs (or @actions/core in the adapter), by file */
 function inputReads(): Map<string, Set<string>> {
   const reads = new Map<string, Set<string>>()
   for (const file of sourceFiles('src')) {
-    for (const match of read(file).matchAll(/\bget(?:Boolean|Multiline)?Input\(\s*(['"`])([^'"`]+)\1/g)) {
+    for (const match of read(file).matchAll(/\b(?:get(?:Boolean|Multiline)?Input|inputs\s*\.\s*get)\(\s*(['"`])([^'"`]+)\1/g)) {
       const readers = reads.get(match[2]) ?? new Set<string>()
       readers.add(file)
       reads.set(match[2], readers)

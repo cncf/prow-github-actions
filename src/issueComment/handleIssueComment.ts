@@ -1,15 +1,13 @@
 import type { FixedLabelCommand } from '../labels/fixed'
 import type { PrefixedLabelCommand } from '../labels/prefixed'
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
-
-import * as github from '@actions/github'
 
 import { addFixedLabels, fixedLabelCommands, removeFixedLabels } from '../labels/fixed'
 import { hold } from '../labels/hold'
 import { lgtm } from '../labels/lgtm'
 import { addPrefixedLabels, dynamicPrefixedCommand, labelCommandName, prefixedLabelCommands, removeCommandFor, removePrefixedLabels } from '../labels/prefixed'
 import { remove } from '../labels/remove'
+import { platform } from '../platform'
 import { autoCc } from '../plugins/blunderbuss'
 import { checkRequiredLabels } from '../plugins/requireMatchingLabel'
 import { tideOnComment } from '../plugins/tide'
@@ -105,19 +103,15 @@ function commandForms(command: string): string[] {
  *
  * @param context - the github context of the current action event
  */
-export async function handleIssueComment(context: Context = github.context): Promise<void> {
+export async function handleIssueComment(context: Context = platform().context()): Promise<void> {
   const commandConfig = [...new Set(
-    core
-      .getInput('prow-commands', { required: false })
-      .split(/\s+/)
-      .filter(command => command !== '')
-      .map(command => canonicalCommand(command.toLowerCase())),
+    platform().inputs.get('prow-commands', { required: false }).split(/\s+/).filter(command => command !== '').map(command => canonicalCommand(command.toLowerCase())),
   )]
   // GitHub allows an empty comment, whose body arrives as null
   const commentBody: string = context.payload.comment?.body ?? ''
 
   if (commandConfig.length === 0) {
-    core.setFailed(
+    platform().fail(
       `please provide a list of space delimited commands / jobs to run. None found`,
     )
     return
@@ -166,7 +160,7 @@ export async function handleIssueComment(context: Context = github.context): Pro
   }
 
   if (failures.length > 0) {
-    core.setFailed(failures.join('; '))
+    platform().fail(failures.join('; '))
   }
 }
 

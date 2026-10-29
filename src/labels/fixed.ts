@@ -1,11 +1,11 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
 
+import { platform } from '../platform'
 import { assertPolicy } from '../utils/auth'
 import { loadProwConfig, resolveAuthorization } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { commenter, removeCommandFor, sameLabel } from './prefixed'
 
 export interface FixedLabelCommand {
@@ -30,8 +30,7 @@ export const fixedLabelCommands: FixedLabelCommand[] = [
  * @param cmd - the command definition
  */
 export async function addFixedLabels(context: Context, cmd: FixedLabelCommand): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
   const issueNumber = requireIssueNumber(context)
 
   await assertLabelsPolicy(octokit, context, cmd.command)
@@ -45,8 +44,7 @@ export async function addFixedLabels(context: Context, cmd: FixedLabelCommand): 
  * @param cmd - the command definition
  */
 export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
   const issueNumber = requireIssueNumber(context)
 
   await assertLabelsPolicy(octokit, context, removeCommandFor(cmd.command))
@@ -54,7 +52,7 @@ export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand
   let currentLabels: string[] = []
   try {
     currentLabels = await getCurrentLabels(octokit, context, issueNumber)
-    core.debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`)
+    platform().log.debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`)
   }
   catch (e) {
     throw new Error(`could not get labels from issue: ${e}`)
@@ -63,7 +61,7 @@ export async function removeFixedLabels(context: Context, cmd: FixedLabelCommand
   const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)))
 
   if (present.length === 0) {
-    core.debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`)
+    platform().log.debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`)
     return
   }
 
