@@ -1,0 +1,6 @@
+# ct install: two replicas against a plain redis Deployment the job applies from ci/redis.yaml
+replicaCount: 2
+github:
+  existingSecret: prow-ci-github
+redis:
+  url: redis://ci-redis:6379

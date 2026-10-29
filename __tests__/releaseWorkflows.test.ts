@@ -119,3 +119,73 @@ describe('pre-release.yml version input', () => {
     expect(new RegExp(pattern as string).test(version)).toBe(accepted)
   })
 })
+
+describe.each([
+  [releasePath, release],
+  [preReleasePath, preRelease],
+])('%s publishes the App image and chart', (_file, workflow) => {
+  const image = workflow.jobs.image
+  const chart = workflow.jobs.chart
+  const publishPermissions = { 'contents': 'read', 'packages': 'write', 'id-token': 'write', 'attestations': 'write' }
+
+  it('runs image after verify, chart after image, and the release after all three', () => {
+    expect(image.needs).toBe('verify')
+    expect(chart.needs).toBe('image')
+    expect(workflow.jobs['github-release'].needs).toEqual(['verify', 'image', 'chart'])
+  })
+
+  it('grants both publishing jobs exactly what pushing, signing and attesting need', () => {
+    expect(image.permissions).toEqual(publishPermissions)
+    expect(chart.permissions).toEqual(publishPermissions)
+  })
+
+  it('builds for amd64 and arm64 and pushes to ghcr.io under the repository', () => {
+    const build = steps(image).find(s => s.uses?.startsWith('docker/build-push-action@'))
+    expect(build?.with).toMatchObject({ platforms: 'linux/amd64,linux/arm64', push: true })
+    const meta = steps(image).find(s => s.uses?.startsWith('docker/metadata-action@'))
+    expect(meta?.with?.images).toBe(`ghcr.io/${expression('github.repository')}`)
+    const login = steps(image).find(s => s.uses?.startsWith('docker/login-action@'))
+    expect(login?.with).toMatchObject({ registry: 'ghcr.io', password: expression('secrets.GITHUB_TOKEN') })
+  })
+
+  it('signs and attests the image by the digest the build produced', () => {
+    const digest = expression('steps.build.outputs.digest')
+    expect(runOf(image, 'Sign image')).toContain(`@${digest}`)
+    const attest = steps(image).find(s => s.uses?.startsWith('actions/attest-build-provenance@'))
+    expect(attest?.with).toEqual({ 'subject-name': `ghcr.io/${expression('github.repository')}`, 'subject-digest': digest, 'push-to-registry': true })
+  })
+
+  it('packages the chart at the release version, pushes it under <repository>/charts, then signs and attests that digest', () => {
+    const push = runOf(chart, 'Package and push chart')
+    expect(push).toContain('helm package charts/prow-github-app --version "$VERSION" --app-version "$VERSION"')
+    expect(push).toContain(`oci://ghcr.io/${expression('github.repository')}/charts`)
+    expect(push).toMatch(/sha256:\[a-f0-9\]\{64\}/)
+    const digest = expression('steps.push.outputs.digest')
+    expect(runOf(chart, 'Sign chart')).toContain(`charts/prow-github-app@${digest}`)
+    const attest = steps(chart).find(s => s.uses?.startsWith('actions/attest-build-provenance@'))
+    expect(attest?.with).toEqual({ 'subject-name': `ghcr.io/${expression('github.repository')}/charts/prow-github-app`, 'subject-digest': digest, 'push-to-registry': true })
+  })
+
+  it('pins every action by sha', () => {
+    for (const uses of [...usesOf(image), ...usesOf(chart)]) {
+      expect(uses, uses).toMatch(/@[0-9a-f]{40}$/)
+    }
+  })
+})
+
+describe('image tags', () => {
+  const tagsOf = (workflow: Workflow) => String(steps(workflow.jobs.image).find(s => s.uses?.startsWith('docker/metadata-action@'))?.with?.tags)
+
+  it('a release gets its version, and the floating minor, major and latest only when it is not a pre-release', () => {
+    const tags = tagsOf(release)
+    expect(tags).toContain('type=semver,pattern={{version}}')
+    const gate = `enable=${expression('!contains(github.ref_name, \'-\')')}`
+    expect(tags).toContain(`type=semver,pattern={{major}}.{{minor}},${gate}`)
+    expect(tags).toContain(`type=semver,pattern={{major}},${gate}`)
+    expect(tags).toContain(`type=raw,value=latest,${gate}`)
+  })
+
+  it('a pre-release gets only its own version', () => {
+    expect(tagsOf(preRelease).trim()).toBe(`type=raw,value=${expression('inputs.version')}`)
+  })
+})

@@ -1,0 +1,89 @@
+# Default values for prow-github-app.
+# Register the GitHub App first: https://github.com/cncf/prow-github-actions/blob/main/docs/github-app.md#register-the-app
+
+image:
+  repository: ghcr.io/cncf/prow-github-actions
+  # defaults to the chart's appVersion
+  tag: ''
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# More than one replica needs redis.url: the replicas share delivery dedupe and
+# the per-pull-request lock through it.
+replicaCount: 1
+
+github:
+  # the App's id, private key (PEM) and webhook secret, either inline ...
+  appId: ''
+  privateKey: ''
+  webhookSecret: ''
+  # ... or from an existing Secret with keys appId, privateKey, webhookSecret
+  existingSecret: ''
+  # GitHub Enterprise Server REST root, e.g. https://ghes.example/api/v3
+  apiUrl: ''
+
+# the same inputs the action takes; see docs/configuration.md
+prow:
+  # space-separated /commands to enable; empty means every built-in command except /meow
+  commands: ''
+  # scheduled jobs the CronJob runs
+  jobs: lgtm
+  mergeMethod: ''
+  # explicit prow.yaml source, owner/repo:path[@ref] or an https:// url
+  config: ''
+  dryRun: false
+
+# Any Redis 6+ or Valkey; the chart does not ship one. For a quick development
+# instance: kubectl create deployment redis --image=redis:7-alpine --port=6379 && kubectl expose deployment redis
+redis:
+  # redis://host:6379 or rediss://...; required when replicaCount > 1
+  url: ''
+  # or read the url from an existing Secret
+  existingSecret: ''
+  existingSecretKey: url
+
+cronjob:
+  enabled: true
+  schedule: '0 * * * *'
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  hosts: []
+  # - host: prow.example.com
+  #   paths: [{ path: /webhook, pathType: Exact }]
+  tls: []
+
+serviceAccount:
+  create: true
+  name: ''
+  annotations: {}
+
+podDisruptionBudget:
+  # created when replicaCount > 1
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+# seconds SIGTERM waits for in-flight events before the pod is killed; the server itself waits PROW_SHUTDOWN_GRACE_MS (25 s)
+terminationGracePeriodSeconds: 30
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+extraEnv: []

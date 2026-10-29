@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import * as path from 'node:path'
+import Ajv from 'ajv/dist/2020'
 import * as yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -89,7 +90,7 @@ const sectionFields: Record<string, string[]> = {
 const ownersKeys = ['approvers', 'reviewers', 'emeritus_approvers', 'emeritus_reviewers', 'filters', 'labels', 'options']
 const workflowKeys = ['on', 'jobs', 'permissions', 'concurrency', 'steps', 'runs-on']
 
-type Kind = 'workflow' | 'owners' | 'prow'
+type Kind = 'workflow' | 'owners' | 'prow' | 'helm'
 
 /** a job's `steps:` list quoted on its own, e.g. `- uses: cncf/prow-github-actions@v3` */
 function isStepList(loaded: unknown): boolean {
@@ -110,9 +111,23 @@ function isOwners(block: Block): boolean {
   return /OWNERS|`approvers`|`reviewers`/.test(block.intro) || (comment.startsWith('#') && comment.includes('OWNERS'))
 }
 
+/** a Helm values example for charts/prow-github-app: its keys are the chart's top-level values */
+const chartDir = path.join(root, 'charts', 'prow-github-app')
+const chartDefaults = yaml.load(readFileSync(path.join(chartDir, 'values.yaml'), 'utf8')) as Record<string, unknown>
+const chartSchema = JSON.parse(readFileSync(path.join(chartDir, 'values.schema.json'), 'utf8')) as object
+const validateValues = new Ajv({ allErrors: true, strict: false }).compile(chartSchema)
+
+function isHelmValues(loaded: Record<string, unknown>): boolean {
+  const keys = Object.keys(loaded)
+  return keys.length > 0 && keys.every(key => key in chartDefaults)
+}
+
 function classify(block: Block, loaded: unknown): Kind {
   if (isStepList(loaded) || !isMapping(loaded)) {
     return 'workflow'
+  }
+  if (isHelmValues(loaded)) {
+    return 'helm'
   }
   const keys = Object.keys(loaded)
   if (keys.some(key => workflowKeys.includes(key))) {
@@ -143,6 +158,11 @@ describe('every fenced yaml block in the guides', () => {
 
     const doc = isMapping(loaded) ? loaded : {}
     const kind = classify(block, loaded)
+
+    it.runIf(kind === 'helm')('is a values fragment the chart schema accepts on top of the defaults', () => {
+      const merged = { ...chartDefaults, ...doc, github: { ...(chartDefaults.github as object), appId: '1', privateKey: 'k', webhookSecret: 's', ...((doc.github as object | undefined) ?? {}) } }
+      expect(validateValues(merged), `${at}: ${JSON.stringify(validateValues.errors)}`).toBe(true)
+    })
 
     it.runIf(kind === 'owners')('parses as an OWNERS file naming somebody, with no key parseOwners would skip', () => {
       for (const key of Object.keys(doc)) {

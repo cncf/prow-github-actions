@@ -1,0 +1,14 @@
+apiVersion: v2
+name: prow-github-app
+description: Prow-style chat-ops, OWNERS review and automatic merging for GitHub, running as a GitHub App
+type: application
+# version and appVersion are set by release.yml from the git tag; these are placeholders for local work
+version: 0.0.0-dev
+appVersion: 0.0.0-dev
+home: https://github.com/cncf/prow-github-actions
+sources:
+  - https://github.com/cncf/prow-github-actions
+keywords: [prow, github, chatops, owners, lgtm]
+maintainers:
+  - name: CNCF
+    url: https://github.com/cncf/prow-github-actions

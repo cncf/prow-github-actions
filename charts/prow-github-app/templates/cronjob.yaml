@@ -1,0 +1,48 @@
+{{- if .Values.cronjob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "prow-github-app.fullname" . }}-jobs
+  labels: {{- include "prow-github-app.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: {{ .Values.cronjob.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cronjob.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: {{- include "prow-github-app.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: jobs
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "prow-github-app.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: prow-jobs
+              image: {{ include "prow-github-app.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["dist-server/index.js", "cron"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              envFrom:
+                - configMapRef:
+                    name: {{ include "prow-github-app.fullname" . }}
+              env: {{- include "prow-github-app.env" . | nindent 16 }}
+              resources: {{- toYaml .Values.resources | nindent 16 }}
+{{- end }}

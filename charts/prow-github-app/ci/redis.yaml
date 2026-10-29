@@ -1,0 +1,34 @@
+# a throwaway Redis for ct install's HA scenario; not part of the chart
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ci-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: ci-redis}
+  template:
+    metadata:
+      labels: {app: ci-redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{containerPort: 6379}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ci-redis
+spec:
+  selector: {app: ci-redis}
+  ports: [{port: 6379}]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: prow-ci-github
+stringData:
+  appId: '1'
+  privateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----"
+  webhookSecret: ci-secret

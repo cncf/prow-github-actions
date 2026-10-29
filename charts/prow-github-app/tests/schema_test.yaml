@@ -1,0 +1,28 @@
+suite: values schema
+templates: [deployment.yaml]
+values: [./values/creds.yaml]
+tests:
+  - it: refuses several replicas without a redis source
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a non-redis url
+    set:
+      replicaCount: 2
+      redis.url: http://nope
+    asserts:
+      - failedTemplate: {}
+  - it: refuses missing credentials
+    set:
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    asserts:
+      - failedTemplate: {}
+  - it: accepts several replicas with a redis url
+    set:
+      replicaCount: 2
+      redis.url: rediss://r
+    asserts:
+      - hasDocuments: {count: 1}

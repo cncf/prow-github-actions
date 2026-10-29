@@ -9,6 +9,8 @@ export default antfu({
     'node_modules/',
     '**/node_modules/**/',
     '.sisyphus/',
+    // Go templates, not yaml
+    'charts/*/templates/**',
   ],
 }, {
   files: ['__tests__/**/*.test.ts'],
