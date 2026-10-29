@@ -68,7 +68,9 @@ that PR is on `main`.
 3. Write `docs/releases/vX.Y.Z.md`: what changed, breaking changes, upgrade
    steps ([`v3.0.0`](./releases/v3.0.0.md) is the model). `release.yml`
    prepends it to GitHub's generated notes; the same test checks the file
-   exists.
+   exists and that every link is an absolute URL (a relative `../foo.md`
+   works in the repository but breaks on the release page; link to
+   `https://github.com/cncf/prow-github-actions/blob/vX.Y.Z/docs/foo.md`).
 
 4. Build, lint, pack and test, then commit everything including `dist/`:
 
