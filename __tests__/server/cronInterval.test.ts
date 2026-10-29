@@ -14,7 +14,7 @@ const env = { GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_WEB
 const server = setupServer()
 utils.failTestOnUnhandledRequests(server)
 
-function stdoutLines(write: ReturnType<typeof vi.spyOn>): Record<string, unknown>[] {
+function stdoutLines(write: { mock: { calls: unknown[][] } }): Record<string, unknown>[] {
   return write.mock.calls.map(([chunk]) => JSON.parse(String(chunk)) as Record<string, unknown>)
 }
 
