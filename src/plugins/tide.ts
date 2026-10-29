@@ -3,14 +3,12 @@ import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 import type { LgtmSettings } from './lgtmBinding'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { createCommentOnce } from '../utils/comments'
 import { loadProwConfig, resolveTide } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { dequeue, enqueue, enqueuedByBot, queueState } from '../utils/mergeQueue'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
@@ -100,13 +98,13 @@ export async function fetchMergeability(
     if (!isUnknown(pr) || !retryIf(pr)) {
       return pr
     }
-    core.debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`)
+    platform().log.debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`)
     await sleep(delay)
     pr = await getPull(octokit, context, number)
   }
 
   if (isUnknown(pr)) {
-    core.info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`)
+    platform().log.info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`)
   }
   return pr
 }
@@ -210,7 +208,7 @@ export async function evaluateMerge(
 
   const outcome = await mergeOnce(octokit, context, number, tide, first.sha)
   if (outcome.result === 'merged') {
-    core.info(`merged pr #${number}`)
+    platform().log.info(`merged pr #${number}`)
     return outcome
   }
 
@@ -226,7 +224,7 @@ export async function evaluateMerge(
     return skip(number, 'fork pull request with workflow changes: the token may not merge it')
   }
 
-  core.error(`could not merge pr #${number}: ${outcome.message}`)
+  platform().log.error(`could not merge pr #${number}: ${outcome.message}`)
   return outcome
 }
 
@@ -260,7 +258,7 @@ async function explainForkWorkflows(octokit: Octokit, context: Context, number: 
     own = workflowFiles(changed.map(file => file.filename))
   }
   catch (e) {
-    core.debug(`could not diagnose the 403 on pr #${number}: ${e}`)
+    platform().log.debug(`could not diagnose the 403 on pr #${number}: ${e}`)
     return false
   }
   if (behind.length === 0 && own.length === 0) {
@@ -271,7 +269,7 @@ async function explainForkWorkflows(octokit: Octokit, context: Context, number: 
     ...(behind.length > 0 ? [`(${fileList(behind)}) that the branch does not contain`] : []),
     ...(own.length > 0 ? [`(${fileList(own)}) that it changes`] : []),
   ].join(' and ')
-  core.warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`)
+  platform().log.warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`)
   try {
     await createCommentOnce(octokit, context, number, `<!-- prow-github-actions/fork-workflows: ${shortSha(pr.sha)} -->`, [
       `GitHub does not let the workflow token merge this pull request: it comes from a fork and the merge involves workflow files ${what}.`,
@@ -279,7 +277,7 @@ async function explainForkWorkflows(octokit: Octokit, context: Context, number: 
     ].join(' '))
   }
   catch (e) {
-    core.warning(`could not comment on pr #${number} about the workflow files: ${e}`)
+    platform().log.warning(`could not comment on pr #${number} about the workflow files: ${e}`)
   }
   return true
 }
@@ -318,17 +316,17 @@ async function evaluateInQueue(
     return skip(number, 'head moved during evaluation')
   }
   if (!mergeableStates.has(pr.state)) {
-    core.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`)
+    platform().log.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`)
   }
-  if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || core.getInput('merge-method', { required: false }) !== '')) {
+  if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || platform().inputs.get('merge-method', { required: false }) !== '')) {
     warnedMergeMethodIgnored = true
-    core.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`)
+    platform().log.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`)
   }
 
   // the gate is the ticket; the queue does the rest
   const outcome = await enqueue(octokit, context, queue, first.sha)
   if (outcome.ok) {
-    core.info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`)
+    platform().log.info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`)
     return outcome.position === undefined ? { result: 'enqueued' } : { result: 'enqueued', position: outcome.position }
   }
 
@@ -341,11 +339,11 @@ async function evaluateInQueue(
       return skip(number, `not ready for the merge queue: ${outcome.message}`)
     case 'forbidden': {
       const message = `cannot add pr #${number} to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues): ${outcome.message}`
-      core.error(message)
+      platform().log.error(message)
       return { result: 'failed', message }
     }
     default:
-      core.error(`could not enqueue pr #${number}: ${outcome.message}`)
+      platform().log.error(`could not enqueue pr #${number}: ${outcome.message}`)
       return { result: 'failed', message: outcome.message }
   }
 }
@@ -360,13 +358,13 @@ async function dequeueIfOurs(octokit: Octokit, context: Context, number: number,
     return false
   }
   if (!enqueuedByBot(queue.entry)) {
-    core.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`)
+    platform().log.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`)
     return false
   }
   if (!(await dequeue(octokit, context, queue, number))) {
     return false
   }
-  core.info(`dequeued pr #${number}: ${reason}`)
+  platform().log.info(`dequeued pr #${number}: ${reason}`)
   return true
 }
 
@@ -392,7 +390,7 @@ export async function tryMergePullRequest(
 }
 
 function skip(number: number, reason: string): MergeVerdict {
-  core.info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`)
+  platform().log.info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`)
   return { result: 'skipped', reason }
 }
 
@@ -450,10 +448,10 @@ async function isMerged(octokit: Octokit, context: Context, number: number): Pro
  *
  * @param context - the github context of the current action event
  */
-export async function tideOnPullRequest(context: Context = github.context): Promise<void> {
+export async function tideOnPullRequest(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !pullRequestActions.has(action)) {
-    core.debug(`tide: skipping ${action} action`)
+    platform().log.debug(`tide: skipping ${action} action`)
     return
   }
 
@@ -467,10 +465,10 @@ export async function tideOnPullRequest(context: Context = github.context): Prom
  *
  * @param context - the github context of the current action event
  */
-export async function tideOnReview(context: Context = github.context): Promise<void> {
+export async function tideOnReview(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !reviewActions.has(action)) {
-    core.debug(`tide: skipping ${action} review action`)
+    platform().log.debug(`tide: skipping ${action} review action`)
     return
   }
 
@@ -485,17 +483,17 @@ export async function tideOnReview(context: Context = github.context): Promise<v
  *
  * @param context - the github context of the current action event
  */
-export async function tideOnComment(context: Context = github.context): Promise<void> {
+export async function tideOnComment(context: Context = platform().context()): Promise<void> {
   const issue = context.payload.issue
   if (issue === undefined) {
     throw new Error(`github context payload missing issue: ${JSON.stringify(context.payload)}`)
   }
   if (issue.pull_request === undefined) {
-    core.debug(`tide: #${issue.number} is not a pull request`)
+    platform().log.debug(`tide: #${issue.number} is not a pull request`)
     return
   }
   if (issue.state !== 'open') {
-    core.debug(`tide: pull request #${issue.number} is ${issue.state}`)
+    platform().log.debug(`tide: pull request #${issue.number} is ${issue.state}`)
     return
   }
 
@@ -509,11 +507,11 @@ export async function tideOnComment(context: Context = github.context): Promise<
  *
  * @param context - the github context of the current action event
  */
-export async function tideOnCheckSuite(context: Context = github.context): Promise<void> {
+export async function tideOnCheckSuite(context: Context = platform().context()): Promise<void> {
   const suite = context.payload.check_suite
   const conclusion: string | undefined = suite?.conclusion ?? context.payload.state
   if (conclusion !== undefined && hopelessConclusions.has(conclusion)) {
-    core.debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`)
+    platform().log.debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`)
     return
   }
 
@@ -544,7 +542,7 @@ export async function loadTide(octokit: Octokit, context: Context, base?: string
   if (config.tide.labels === undefined) {
     hasOwners = base === undefined ? await repoHasOwners(octokit, context) : await branchHasOwners(octokit, context, base)
   }
-  return resolveTide(config.tide, core.getInput('merge-method', { required: false }), { hasOwners })
+  return resolveTide(config.tide, platform().inputs.get('merge-method', { required: false }), { hasOwners })
 }
 
 async function evaluate(
@@ -552,10 +550,10 @@ async function evaluate(
   numbers: number[],
   lookup?: (octokit: Octokit) => Promise<number[]>,
 ): Promise<void> {
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   const config = await loadProwConfig(octokit, context)
   if (config.tide.merge_on_events === false) {
-    core.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
+    platform().log.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron')
     return
   }
   const tide: TideSource = base => loadTide(octokit, context, base)
@@ -563,7 +561,7 @@ async function evaluate(
 
   const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers
   if (candidates.length === 0) {
-    core.debug('tide: no open pull request to evaluate')
+    platform().log.debug('tide: no open pull request to evaluate')
     return
   }
 

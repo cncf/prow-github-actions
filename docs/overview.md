@@ -16,6 +16,22 @@ that can be run with specific [Github "events"](https://docs.github.com/en/actio
 One caller workflow installs everything through the reusable workflow; see
 [installing](./installing.md).
 
+## Runtime adapters
+
+The handlers under `src/` reach the runtime they run on only through the `Platform`
+interface in [`src/platform/types.ts`](../src/platform/types.ts): the event
+(`Context`: event name, payload, repository), the seven inputs `action.yml` declares,
+a logger, the API base url and `fail()`. The entry point installs an implementation with
+`setPlatform()` before dispatching; today the only one is
+[`src/adapters/actions.ts`](../src/adapters/actions.ts), backed by `@actions/core`,
+`@actions/github` and the runner's `GITHUB_*` environment.
+
+Handlers therefore import from `../platform`, never from `@actions/*` or `node:*`;
+ESLint rejects such imports outside `src/adapters/` and `src/main.ts`, and
+`tsconfig.core.json` type-checks the handlers with no Node types at all. This keeps the
+door open to a second adapter, such as a GitHub App receiving webhooks, without touching
+the handlers.
+
 ## Read more
 - [Prow for your organization: the guided path](./prow-for-your-org.md)
 - [Installing: one repository, an organization, upgrading](./installing.md)

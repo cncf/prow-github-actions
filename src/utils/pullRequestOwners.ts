@@ -2,8 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
 import type { OwnersSet, OwnersTree } from './owners'
 
-import * as core from '@actions/core'
-
+import { platform } from '../platform'
 import { effectiveOwners, expandOwnersSet, loadOwnersTree } from './owners'
 
 /** a pull request and the OWNERS covering its changed files; every login is lowercased */
@@ -81,7 +80,7 @@ async function load(
   // files landed would otherwise never see them, while the tide gate, reading the branch, would
   // require `approved` that `/approve` could not grant (cncf/automation#709).
   const baseSha = await baseBranchTip(octokit, context, pull.base.ref).catch((e) => {
-    core.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`)
+    platform().log.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`)
     return pull.base.sha
   })
   const tree = await loadOwnersTree(octokit, context, baseSha, files)

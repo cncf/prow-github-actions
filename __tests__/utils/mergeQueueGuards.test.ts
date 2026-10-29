@@ -41,7 +41,8 @@ describe('errorMessage', () => {
 
 describe('queueState warning', () => {
   it('warns on the first failure of a run without any reset having happened', async () => {
-    const [core, fresh] = await Promise.all([import('@actions/core'), import('../../src/utils/mergeQueue')])
+    const [core, fresh, freshPlatform, adapter] = await Promise.all([import('@actions/core'), import('../../src/utils/mergeQueue'), import('../../src/platform'), import('../../src/adapters/actions')])
+    freshPlatform.setPlatform(adapter.actionsPlatform())
     vi.mocked(core.warning).mockClear()
 
     await expect(fresh.queueState(rejectingWith(new Error('first failure')), context, 7)).resolves.toBeUndefined()

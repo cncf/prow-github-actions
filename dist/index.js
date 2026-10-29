@@ -29601,6 +29601,9 @@ var __webpack_exports__ = {};
 (() => {
 "use strict";
 
+;// CONCATENATED MODULE: external "node:process"
+const external_node_process_namespaceObject = require("node:process");
+var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
 ;// CONCATENATED MODULE: external "os"
 const external_os_namespaceObject = require("os");
 ;// CONCATENATED MODULE: ./node_modules/@actions/core/lib/utils.js
@@ -32412,7 +32415,7 @@ function setCommandEcho(enabled) {
  */
 function setFailed(message) {
     process.exitCode = ExitCode.Failure;
-    core_error(message);
+    error(message);
 }
 //-----------------------------------------------------------------------
 // Logging Commands
@@ -32435,7 +32438,7 @@ function core_debug(message) {
  * @param message error issue message. Errors will be converted to string via toString()
  * @param properties optional properties to add to the annotation.
  */
-function core_error(message, properties = {}) {
+function error(message, properties = {}) {
     command_issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
@@ -37425,8 +37428,46 @@ function getOctokit(token, options, ...additionalPlugins) {
     return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 //# sourceMappingURL=github.js.map
-// EXTERNAL MODULE: external "node:buffer"
-var external_node_buffer_ = __nccwpck_require__(4573);
+;// CONCATENATED MODULE: ./lib/adapters/actions.js
+
+
+
+function actionsContext() {
+    const { eventName, payload, repo } = github_context;
+    return { eventName, payload, repo };
+}
+function actionsPlatform() {
+    return {
+        inputs: {
+            get: (name, options) => getInput(name, options),
+        },
+        log: {
+            debug: message => core_debug(message),
+            info: message => info(message),
+            notice: message => notice(message),
+            warning: message => warning(message),
+            error: message => error(message),
+            setSecret: value => core_setSecret(value),
+        },
+        context: actionsContext,
+        apiBaseUrl: () => (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
+        currentWorkflowName: () => (external_node_process_default()).env.GITHUB_WORKFLOW,
+        fail: message => setFailed(message),
+    };
+}
+
+;// CONCATENATED MODULE: ./lib/platform/index.js
+let current;
+function setPlatform(next) {
+    current = next;
+}
+function platform_platform() {
+    if (!current) {
+        throw new Error('no platform installed: the entry point must call setPlatform() before dispatching an event');
+    }
+    return current;
+}
+
 ;// CONCATENATED MODULE: ./node_modules/js-yaml/dist/js-yaml.mjs
 /*! js-yaml 5.5.0 https://github.com/nodeca/js-yaml @license MIT */
 //#region src/tag.ts
@@ -41084,6 +41125,23 @@ var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 
 //# sourceMappingURL=js-yaml.mjs.map
+;// CONCATENATED MODULE: ./lib/utils/base64.js
+/**
+ * decodeContent turns a contents API body into text. GitHub serves file bodies
+ * base64 encoded with newlines inserted every 60 characters, which `atob`
+ * rejects, so they are stripped first.
+ *
+ * @param content - the `content` field
+ * @param encoding - the `encoding` field; only `base64` is supported
+ */
+function decodeContent(content, encoding) {
+    if (encoding !== 'base64') {
+        throw new Error(`unsupported content encoding ${encoding}`);
+    }
+    const bytes = Uint8Array.from(atob(content.replace(/\s+/g, '')), char => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+}
+
 ;// CONCATENATED MODULE: ./lib/utils/duration.js
 const durationUnits = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
 const durationPart = /(\d+(?:\.\d+)?)(ms|[smh])/gy;
@@ -41183,7 +41241,7 @@ function resetProwConfigCache() {
 }
 /* v8 ignore stop */
 async function config_load(octokit, context) {
-    const explicit = getInput('config', { required: false }).trim();
+    const explicit = platform_platform().inputs.get('config', { required: false }).trim();
     // the org and repo tiers do not depend on each other, so probe both at once
     const [base, repo] = await Promise.all([
         explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
@@ -41192,7 +41250,7 @@ async function config_load(octokit, context) {
     const tiers = [base, repo].filter((tier) => tier !== undefined);
     const merged = tiers.reduce((acc, tier) => mergeProwConfig(acc, tier.config), {});
     const sources = tiers.map(tier => tier.source);
-    core_debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`);
+    platform_platform().log.debug(sources.length === 0 ? 'no prow configuration found' : `prow configuration loaded from ${sources.join(', ')}`);
     return { ...mergeProwConfig({}, merged), sources };
 }
 async function loadOrgTier(octokit, context) {
@@ -41268,7 +41326,7 @@ async function fetchRepoFile(octokit, file) {
     if (!isMapping(data) || typeof data.content !== 'string' || typeof data.encoding !== 'string') {
         throw new TypeError(`${file.path} is not a file`);
     }
-    return external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
+    return decodeContent(data.content, data.encoding);
 }
 async function fetchUrl(url) {
     let response;
@@ -41345,7 +41403,7 @@ function parseProwConfig(source, text) {
     }
     const unknown = Object.keys(loaded).filter(key => key !== 'labels' && !reservedKeys.includes(key));
     if (unknown.length > 0) {
-        core_debug(`${source}: ignoring unknown top level keys: ${unknown.join(', ')}`);
+        platform_platform().log.debug(`${source}: ignoring unknown top level keys: ${unknown.join(', ')}`);
     }
     return config;
 }
@@ -41707,9 +41765,6 @@ function stripUndefined(value) {
     return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
 }
 
-;// CONCATENATED MODULE: external "node:process"
-const external_node_process_namespaceObject = require("node:process");
-var external_node_process_default = /*#__PURE__*/__nccwpck_require__.n(external_node_process_namespaceObject);
 ;// CONCATENATED MODULE: ./lib/utils/comments.js
 
 /**
@@ -41747,7 +41802,7 @@ async function createComment(octokit, context, issueNum, message) {
 async function createCommentOnce(octokit, context, issueNum, marker, message) {
     const comments = await octokit.paginate(octokit.issues.listComments, { ...context.repo, issue_number: issueNum, per_page: 100 });
     if (comments.some(comment => isBotUser(comment.user) && (comment.body ?? '').includes(marker))) {
-        core_debug(`#${issueNum} already carries ${marker}`);
+        platform_platform().log.debug(`#${issueNum} already carries ${marker}`);
         return false;
     }
     await createComment(octokit, context, issueNum, `${message}\n\n${marker}`);
@@ -41892,7 +41947,7 @@ async function removeLabels(octokit, context, issueNum, labels) {
         catch (e) {
             // a gone label is a benign race; anything else is a real failure
             if (labeling_isNotFound(e))
-                core_debug(`label ${label} was already absent: ${e}`);
+                platform_platform().log.debug(`label ${label} was already absent: ${e}`);
             else
                 throw new Error(`could not remove label ${label}: ${e}`);
         }
@@ -41973,16 +42028,17 @@ const dist_src_Octokit = Octokit.plugin(requestLog, legacyRestEndpointMethods, p
 ;// CONCATENATED MODULE: ./lib/utils/octokit.js
 
 
-// GITHUB_API_URL is set by the runner and differs on GitHub Enterprise Server
 function newOctokit(token) {
     return new dist_src_Octokit({
         auth: token,
-        baseUrl: (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
+        baseUrl: platform_platform().apiBaseUrl(),
     });
+}
+function newOctokitFromInputs() {
+    return newOctokit(platform_platform().inputs.get('github-token', { required: true }));
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
-
 
 
 
@@ -42062,7 +42118,7 @@ async function unbindLgtm(octokit, context, sha, description) {
         });
     }
     catch (e) {
-        warning(`could not set the ${lgtmStatusContext} status of ${shortSha(sha)} to pending: ${e}`);
+        platform_platform().log.warning(`could not set the ${lgtmStatusContext} status of ${shortSha(sha)} to pending: ${e}`);
     }
 }
 /**
@@ -42103,7 +42159,7 @@ async function stripStaleLgtm(octokit, context, number, sha) {
         await createCommentOnce(octokit, context, number, staleMarker(sha), `\`lgtm\` is not bound to the current head commit (\`${short}\`): either commits were pushed after it was applied, or it was applied by hand where the bot could not record the commit. Removed. Re-apply with \`/lgtm\` once the current commits are reviewed.`);
     }
     catch (e) {
-        warning(`could not comment on pr #${number} about the stale lgtm: ${e}`);
+        platform_platform().log.warning(`could not comment on pr #${number} about the stale lgtm: ${e}`);
     }
 }
 /**
@@ -42114,26 +42170,26 @@ async function stripStaleLgtm(octokit, context, number, sha) {
  *
  * @param context - the github context of the current action event
  */
-async function lgtmOnPullRequest(context = github_context) {
+async function lgtmOnPullRequest(context = platform_platform().context()) {
     if (context.payload.action !== 'labeled' || String(context.payload.label?.name ?? '').toLowerCase() !== lgtmLabel) {
         return;
     }
     const sender = context.payload.sender;
     if (isBotUser(sender)) {
-        core_debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`);
+        platform_platform().log.debug(`lgtm: labeled by ${sender?.login}, a bot; nothing to bind`);
         return;
     }
     const sha = context.payload.pull_request?.head?.sha;
     if (typeof sha !== 'string') {
         throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`);
     }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     if (!lgtmSettings(await loadProwConfig(octokit, context)).bind_to_commit) {
-        core_debug('lgtm: bind_to_commit is false');
+        platform_platform().log.debug('lgtm: bind_to_commit is false');
         return;
     }
     await bindLgtm(octokit, context, sha, String(sender?.login ?? 'unknown'), context.payload.pull_request?.html_url);
-    info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`);
+    platform_platform().log.info(`lgtm: bound the hand-applied label on #${context.payload.pull_request?.number} to ${shortSha(sha)}`);
 }
 function isForbidden(error) {
     return typeof error === 'object' && error !== null && 'status' in error && error.status === 403;
@@ -42156,7 +42212,7 @@ function parseOwners(path, contents) {
         ? loaded
         : {};
     if ('filters' in doc) {
-        core_debug(`OWNERS at ${path}: filters are not supported; ignoring`);
+        platform_platform().log.debug(`OWNERS at ${path}: filters are not supported; ignoring`);
     }
     const options = doc.options;
     const noParentOwners = typeof options === 'object'
@@ -42199,7 +42255,7 @@ const warnedEntries = new Set();
 function warnOnce(entry, message) {
     if (!warnedEntries.has(entry)) {
         warnedEntries.add(entry);
-        warning(message);
+        platform_platform().log.warning(message);
     }
 }
 /**
@@ -42243,7 +42299,7 @@ async function expandGroups(octokit, context, entries) {
             return listed.map(member => member.login.toLowerCase());
         }
         catch (e) {
-            warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`);
+            platform_platform().log.warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`);
             return [];
         }
     })));
@@ -42340,7 +42396,7 @@ function decode(data, path) {
     if (file.content === undefined || !file.encoding) {
         throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`);
     }
-    return external_node_buffer_.Buffer.from(file.content, file.encoding).toString();
+    return decodeContent(file.content, file.encoding);
 }
 const treeCache = new Map();
 /**
@@ -42364,7 +42420,7 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
     }
     if (tree.truncated) {
         // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
-        core_debug(`tree at ${ref} is truncated; probing for OWNERS files`);
+        platform_platform().log.debug(`tree at ${ref} is truncated; probing for OWNERS files`);
         return probeOwners(octokit, context, ref, dirs);
     }
     const entries = tree.tree.filter(entry => entry.type === 'blob'
@@ -42462,7 +42518,7 @@ async function probeBranchOwners(octokit, context, branch) {
     }
     catch (e) {
         if (owners_isNotFound(e)) {
-            core_debug(`no tree at ${branch}: treating the repository as having no OWNERS files`);
+            platform_platform().log.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`);
             return false;
         }
         throw new Error(`error listing the tree of ${branch}: ${e}`);
@@ -42547,7 +42603,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
     // files landed would otherwise never see them, while the tide gate, reading the branch, would
     // require `approved` that `/approve` could not grant (cncf/automation#709).
     const baseSha = await baseBranchTip(octokit, context, pull.base.ref).catch((e) => {
-        warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`);
+        platform_platform().log.warning(`could not read the tip of ${pull.base.ref}; reading OWNERS at ${pull.base.sha}: ${e}`);
         return pull.base.sha;
     });
     const tree = await loadOwnersTree(octokit, context, baseSha, files);
@@ -42613,7 +42669,7 @@ function getErrorDetails(error) {
 async function checkOrgMember(octokit, context, user) {
     try {
         if (context.payload.repository === undefined) {
-            core_debug(`checkOrgMember error: context payload repository undefined`);
+            platform_platform().log.debug(`checkOrgMember error: context payload repository undefined`);
             return false;
         }
         await octokit.orgs.checkMembershipForUser({
@@ -42625,10 +42681,10 @@ async function checkOrgMember(octokit, context, user) {
     catch (e) {
         const { status, message } = getErrorDetails(e);
         if (status === 404 || status === 302) {
-            core_debug(`${user} is not an org member: ${message}`);
+            platform_platform().log.debug(`${user} is not an org member: ${message}`);
             return false;
         }
-        warning(`encountered unexpected error: status=${status}, message=${message}`);
+        platform_platform().log.warning(`encountered unexpected error: status=${status}, message=${message}`);
         return false;
     }
 }
@@ -42650,10 +42706,10 @@ async function checkCollaborator(octokit, context, user) {
     catch (e) {
         const { status, message } = getErrorDetails(e);
         if (status === 404) {
-            core_debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
+            platform_platform().log.debug(`user ${user} is not a collaborator: status=${status}, message=${message}`);
             return false;
         }
-        warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
+        platform_platform().log.warning(`encountered unexpected error checking collaborator status: status=${status}, message=${message}`);
         return false;
     }
 }
@@ -42681,7 +42737,7 @@ async function checkIssueComments(octokit, context, issueNum, user) {
     }
     catch (e) {
         const { status, message } = getErrorDetails(e);
-        warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
+        platform_platform().log.warning(`encountered unexpected error checking issue comments: status=${status}, message=${message}`);
         return false;
     }
 }
@@ -42731,7 +42787,7 @@ async function checkCommenterAuth(octokit, context, issueNum, user) {
  * @param username - the user to authorize
  */
 async function assertAuthorizedByOwnersOrMembership(octokit, context, role, username) {
-    core_debug('Checking if the user is authorized to interact with prow');
+    platform_platform().log.debug('Checking if the user is authorized to interact with prow');
     const hasOwners = context.payload.issue?.pull_request !== undefined
         ? await assertPullRequestOwner(octokit, context, role, username)
         : await assertRootOwner(octokit, context, role, username);
@@ -42824,7 +42880,7 @@ async function loadAuthorization(octokit, context) {
         return resolveAuthorization((await loadProwConfig(octokit, context)).authorization);
     }
     catch (e) {
-        warning(`authorization: could not load prow config: ${e}`);
+        platform_platform().log.warning(`authorization: could not load prow config: ${e}`);
         throw e;
     }
 }
@@ -42850,7 +42906,7 @@ async function assertRootOwner(octokit, context, role, username) {
 async function assertPullRequestOwner(octokit, context, role, username) {
     const { files, tree, perFile } = await loadPullRequestOwners(octokit, context, context.payload.issue.number);
     if (!tree.hasOwners) {
-        core_debug('No OWNERS files found');
+        platform_platform().log.debug('No OWNERS files found');
         return false;
     }
     const login = username.toLowerCase();
@@ -42890,7 +42946,7 @@ async function rootOwnersIncludes(octokit, context, user) {
  * If the file does not exist, returns an empty string.
  */
 async function retrieveOwnersFile(octokit, context) {
-    core_debug(`Looking for an OWNERS file at the root of the repository`);
+    platform_platform().log.debug(`Looking for an OWNERS file at the root of the repository`);
     let data;
     try {
         const response = await octokit.repos.getContent({
@@ -42901,7 +42957,7 @@ async function retrieveOwnersFile(octokit, context) {
     }
     catch (e) {
         if (typeof e === 'object' && e && 'status' in e && e.status === 404) {
-            core_debug('No OWNERS file found');
+            platform_platform().log.debug('No OWNERS file found');
             return '';
         }
         throw new Error(`error checking for an OWNERS file at the root of the repository: ${e}`);
@@ -42909,8 +42965,8 @@ async function retrieveOwnersFile(octokit, context) {
     if (data.content === undefined || !data.encoding) {
         throw new Error(`invalid OWNERS file returned from GitHub API: ${data}`);
     }
-    const decoded = external_node_buffer_.Buffer.from(data.content, data.encoding).toString();
-    core_debug(`OWNERS file contents: ${decoded}`);
+    const decoded = decodeContent(data.content, data.encoding);
+    platform_platform().log.debug(`OWNERS file contents: ${decoded}`);
     return decoded;
 }
 
@@ -43076,8 +43132,6 @@ function stripAtSign(args) {
 
 
 
-
-
 /** the label `/ok-to-test` applies; while a pull request carries it, its pending runs are approved on every push and by the sweep */
 const okToTestLabel = 'ok-to-test';
 const actionsPermissionHint = 'grant `actions: write` to the workflow';
@@ -43089,7 +43143,7 @@ const failedConclusions = new Set(['failure', 'cancelled', 'timed_out']);
  *
  * @param context - the github actions event context
  */
-async function retest(context = github_context) {
+async function retest(context = platform_platform().context()) {
     const cmd = await prepare(context, '/retest');
     if (cmd === undefined) {
         return;
@@ -43122,7 +43176,7 @@ async function retest(context = github_context) {
  *
  * @param context - the github actions event context
  */
-async function test(context = github_context) {
+async function test(context = platform_platform().context()) {
     const cmd = await prepare(context, '/test');
     if (cmd === undefined) {
         return;
@@ -43157,7 +43211,7 @@ async function test(context = github_context) {
  *
  * @param context - the github actions event context
  */
-async function okToTest(context = github_context) {
+async function okToTest(context = platform_platform().context()) {
     const cmd = await prepare(context, '/ok-to-test', { refuseAuthor: 'you cannot approve the workflow runs of your own pull request' });
     if (cmd === undefined) {
         return;
@@ -43201,7 +43255,7 @@ async function approvePendingRuns(octokit, context, number, headSha) {
             throw new Error(`could not approve run ${run.id} (${run.name}): ${e}`);
         }
     }
-    info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`);
+    platform_platform().log.info(`trigger: #${number} approved ${approved} run(s) on ${shortSha(headSha)}`);
     return approved;
 }
 /**
@@ -43211,7 +43265,7 @@ async function approvePendingRuns(octokit, context, number, headSha) {
  *
  * @param context - the github context of the current action event
  */
-async function okToTestOnPullRequest(context = github_context) {
+async function okToTestOnPullRequest(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action !== 'synchronize' && action !== 'reopened') {
         return;
@@ -43219,18 +43273,18 @@ async function okToTestOnPullRequest(context = github_context) {
     const pull = context.payload.pull_request;
     const labels = pull?.labels;
     if (!Array.isArray(labels) || !labels.some(label => String(label?.name ?? '').toLowerCase() === okToTestLabel)) {
-        core_debug('trigger: the pull request does not carry ok-to-test');
+        platform_platform().log.debug('trigger: the pull request does not carry ok-to-test');
         return;
     }
     const sha = pull?.head?.sha;
     if (typeof sha !== 'string' || pull?.number === undefined) {
         throw new TypeError(`github context payload missing pull request head: ${JSON.stringify(context.payload)}`);
     }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     await approvePendingRuns(octokit, context, pull.number, sha);
 }
 async function prepare(context, command, options = {}) {
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenter = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
@@ -43252,10 +43306,10 @@ async function prepare(context, command, options = {}) {
     const { headSha } = await loadPullRequestOwners(octokit, context, issueNumber);
     return { octokit, issueNumber, headSha };
 }
-// the reusable workflow runs inside the caller's workflow, whose name GITHUB_WORKFLOW carries;
+// the reusable workflow runs inside the caller's workflow, whose name the platform reports (GITHUB_WORKFLOW on Actions);
 // re-running or approving that run would re-run this very command
 async function headRuns(octokit, context, headSha) {
-    const current = (external_node_process_default()).env.GITHUB_WORKFLOW;
+    const current = platform_platform().currentWorkflowName();
     let runs;
     try {
         runs = await octokit.paginate(octokit.actions.listWorkflowRunsForRepo, { ...context.repo, head_sha: headSha, per_page: 100 });
@@ -43274,7 +43328,7 @@ async function rerunEach(octokit, context, issueNumber, runs, rerun) {
         }
         catch (e) {
             if (isConflict(e)) {
-                core_debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`);
+                platform_platform().log.debug(`trigger: run ${run.id} (${run.name}) is not completed or already re-running: ${e}`);
                 continue;
             }
             if (trigger_isForbidden(e)) {
@@ -43311,16 +43365,16 @@ async function react(octokit, context) {
         await octokit.reactions.createForIssueComment({ ...context.repo, comment_id: commentId, content: 'rocket' });
     }
     catch (e) {
-        warning(`trigger: could not react to the comment: ${e}`);
+        platform_platform().log.warning(`trigger: could not react to the comment: ${e}`);
     }
 }
 async function refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    core_error(msg);
+    platform_platform().log.error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        core_error(`Could not comment with an auth error: ${commentE}`);
+        platform_platform().log.error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -43397,8 +43451,7 @@ function removeCommandFor(command) {
  * @param cmd - the command definition
  */
 async function addPrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const section = await allowlistFor(octokit, context, cmd);
@@ -43426,8 +43479,7 @@ async function addPrefixedLabels(context, cmd) {
  * @param cmd - the command definition
  */
 async function removePrefixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const issueNumber = requireIssueNumber(context);
     const commentBody = context.payload.comment?.body;
     const command = removeCommandFor(cmd.command);
@@ -43437,7 +43489,7 @@ async function removePrefixedLabels(context, cmd) {
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, command);
     const present = currentLabels.filter(label => labels.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
-        core_debug(`${command.slice(1)}: none of ${labels} are on the issue`);
+        platform_platform().log.debug(`${command.slice(1)}: none of ${labels} are on the issue`);
         return;
     }
     await removeLabels(octokit, context, issueNumber, present);
@@ -43487,7 +43539,7 @@ async function allowlistFor(octokit, context, cmd) {
         if (section === undefined) {
             throw new Error(`${key}: yaml malformed, expected '${key}' top level key`);
         }
-        core_debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
+        platform_platform().log.debug(`${key}: ${key in labels ? 'found' : 'using built-in'} labels ${section.values}`);
         const { hold, authorization } = await loadProwConfig(octokit, context);
         return {
             values: section.values,
@@ -43529,7 +43581,7 @@ function sameLabel(a, b) {
 async function currentIssueLabels(octokit, context, issueNumber, command) {
     try {
         const currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
+        platform_platform().log.debug(`${command.slice(1)}: found labels for issue ${currentLabels}`);
         return currentLabels;
     }
     catch (e) {
@@ -43538,7 +43590,6 @@ async function currentIssueLabels(octokit, context, issueNumber, command) {
 }
 
 ;// CONCATENATED MODULE: ./lib/labels/hold.js
-
 
 
 
@@ -43556,9 +43607,8 @@ const legacyHoldLabel = 'hold';
  *
  * @param context - the github actions event context
  */
-async function hold(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function hold(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     if (issueNumber === undefined) {
@@ -43588,7 +43638,7 @@ async function cancelHold(octokit, context, issueNumber, holdLabel) {
     const wanted = new Set([holdLabel, legacyHoldLabel].map(name => name.toLowerCase()));
     const present = currentLabels.filter(label => wanted.has(label.toLowerCase()));
     if (present.length === 0) {
-        core_debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
+        platform_platform().log.debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`);
         return;
     }
     try {
@@ -43691,7 +43741,6 @@ function labelCatalog_withDefaults(label) {
 
 
 
-
 /**
  * labelSync creates the labels the prow configuration describes and updates
  * the color or description of those that drifted. It never deletes or
@@ -43701,13 +43750,12 @@ function labelCatalog_withDefaults(label) {
  *
  * @param context - the github actions event context
  */
-async function labelSync(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
-    const dryRun = getInput('dry-run', { required: false }).trim().toLowerCase() === 'true';
+async function labelSync(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
+    const dryRun = platform_platform().inputs.get('dry-run', { required: false }).trim().toLowerCase() === 'true';
     const config = await loadProwConfig(octokit, context);
     const desired = desiredLabels(config);
-    core_debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`);
+    platform_platform().log.debug(`label-sync: ${desired.length} labels from ${config.sources.length === 0 ? 'the built-in defaults only' : config.sources.join(', ')}`);
     let existing;
     try {
         existing = await octokit.paginate(octokit.issues.listLabelsForRepo, { ...context.repo, per_page: 100 });
@@ -43738,10 +43786,10 @@ async function labelSync(context = github_context) {
         }
     }
     if (dryRun) {
-        info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`);
+        platform_platform().log.info(`label-sync (dry-run): would create ${plan.create.length} [${plan.create.join(', ')}], would update ${plan.update.length} [${plan.update.join(', ')}], unchanged ${result.unchanged}`);
         return result;
     }
-    info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`);
+    platform_platform().log.info(`label-sync: created ${result.created.length} [${result.created.join(', ')}], updated ${result.updated.length} [${result.updated.join(', ')}], unchanged ${result.unchanged}, failed ${result.failures.length}`);
     if (result.failures.length > 0) {
         const list = result.failures.map(f => `${f.name} (${f.message})`).join(', ');
         throw new Error(`${result.failures.length} label(s) could not be synced: ${list}`);
@@ -43756,7 +43804,7 @@ async function write(result, name, done, action) {
     }
     catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        core_error(`label-sync: could not sync ${name}: ${message}`);
+        platform_platform().log.error(`label-sync: could not sync ${name}: ${message}`);
         result.failures.push({ name, message });
     }
 }
@@ -43890,7 +43938,7 @@ async function queueState(octokit, context, number) {
     catch (e) {
         if (!warnedUnavailable) {
             warnedUnavailable = true;
-            warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`);
+            platform_platform().log.warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`);
         }
         return undefined;
     }
@@ -43943,7 +43991,7 @@ async function dequeue(octokit, context, state, number) {
         return true;
     }
     catch (e) {
-        warning(`could not dequeue pr #${number}: ${errorMessage(e)}`);
+        platform_platform().log.warning(`could not dequeue pr #${number}: ${errorMessage(e)}`);
         return false;
     }
 }
@@ -44033,7 +44081,6 @@ function sleep(ms) {
 
 
 
-
 /** the verdicts that count as success: the pull request is merged, or handed to GitHub's merge queue */
 const successfulResults = new Set(['merged', 'enqueued']);
 // GitHub computes mergeability lazily: the first GET after a push starts the job and answers
@@ -44067,12 +44114,12 @@ async function fetchMergeability(octokit, context, number, options) {
         if (!isUnknown(pr) || !retryIf(pr)) {
             return pr;
         }
-        core_debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`);
+        platform_platform().log.debug(`mergeability of pr #${number} is not computed yet, retrying in ${delay}ms`);
         await sleep(delay);
         pr = await getPull(octokit, context, number);
     }
     if (isUnknown(pr)) {
-        info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`);
+        platform_platform().log.info(`mergeability of pr #${number} is still unknown after ${unknownRetryDelaysMs.length} retries`);
     }
     return pr;
 }
@@ -44161,7 +44208,7 @@ async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgt
     }
     const outcome = await mergeOnce(octokit, context, number, tide, first.sha);
     if (outcome.result === 'merged') {
-        info(`merged pr #${number}`);
+        platform_platform().log.info(`merged pr #${number}`);
         return outcome;
     }
     // two events for one pull request can race; the loser's merge is refused with 405 once the winner landed
@@ -44175,7 +44222,7 @@ async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgt
     if (outcome.status === 403 && first.fork && await explainForkWorkflows(octokit, context, number, first)) {
         return skip(number, 'fork pull request with workflow changes: the token may not merge it');
     }
-    core_error(`could not merge pr #${number}: ${outcome.message}`);
+    platform_platform().log.error(`could not merge pr #${number}: ${outcome.message}`);
     return outcome;
 }
 let warnedMergeMethodIgnored = false;
@@ -44205,7 +44252,7 @@ async function explainForkWorkflows(octokit, context, number, pr) {
         own = workflowFiles(changed.map(file => file.filename));
     }
     catch (e) {
-        core_debug(`could not diagnose the 403 on pr #${number}: ${e}`);
+        platform_platform().log.debug(`could not diagnose the 403 on pr #${number}: ${e}`);
         return false;
     }
     if (behind.length === 0 && own.length === 0) {
@@ -44215,7 +44262,7 @@ async function explainForkWorkflows(octokit, context, number, pr) {
         ...(behind.length > 0 ? [`(${fileList(behind)}) that the branch does not contain`] : []),
         ...(own.length > 0 ? [`(${fileList(own)}) that it changes`] : []),
     ].join(' and ');
-    warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`);
+    platform_platform().log.warning(`pr #${number} is a fork pull request whose merge involves workflow files ${what}; the token may not merge it`);
     try {
         await createCommentOnce(octokit, context, number, `<!-- prow-github-actions/fork-workflows: ${shortSha(pr.sha)} -->`, [
             `GitHub does not let the workflow token merge this pull request: it comes from a fork and the merge involves workflow files ${what}.`,
@@ -44223,7 +44270,7 @@ async function explainForkWorkflows(octokit, context, number, pr) {
         ].join(' '));
     }
     catch (e) {
-        warning(`could not comment on pr #${number} about the workflow files: ${e}`);
+        platform_platform().log.warning(`could not comment on pr #${number} about the workflow files: ${e}`);
     }
     return true;
 }
@@ -44251,16 +44298,16 @@ async function evaluateInQueue(octokit, context, number, tide, first, queue) {
         return skip(number, 'head moved during evaluation');
     }
     if (!mergeableStates.has(pr.state)) {
-        core_debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`);
+        platform_platform().log.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`);
     }
-    if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || getInput('merge-method', { required: false }) !== '')) {
+    if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || platform_platform().inputs.get('merge-method', { required: false }) !== '')) {
         warnedMergeMethodIgnored = true;
-        core_debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`);
+        platform_platform().log.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`);
     }
     // the gate is the ticket; the queue does the rest
     const outcome = await enqueue(octokit, context, queue, first.sha);
     if (outcome.ok) {
-        info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`);
+        platform_platform().log.info(`enqueued pr #${number}${outcome.position === undefined ? '' : ` (position ${outcome.position})`}`);
         return outcome.position === undefined ? { result: 'enqueued' } : { result: 'enqueued', position: outcome.position };
     }
     switch (outcome.kind) {
@@ -44272,11 +44319,11 @@ async function evaluateInQueue(octokit, context, number, tide, first, queue) {
             return skip(number, `not ready for the merge queue: ${outcome.message}`);
         case 'forbidden': {
             const message = `cannot add pr #${number} to the merge queue: the token may not enqueue (grant contents: write and pull-requests: write, or pass a token that can — see automatic-merging.md#merge-queues): ${outcome.message}`;
-            core_error(message);
+            platform_platform().log.error(message);
             return { result: 'failed', message };
         }
         default:
-            core_error(`could not enqueue pr #${number}: ${outcome.message}`);
+            platform_platform().log.error(`could not enqueue pr #${number}: ${outcome.message}`);
             return { result: 'failed', message: outcome.message };
     }
 }
@@ -44290,13 +44337,13 @@ async function dequeueIfOurs(octokit, context, number, tide, reason) {
         return false;
     }
     if (!enqueuedByBot(queue.entry)) {
-        core_debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`);
+        platform_platform().log.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`);
         return false;
     }
     if (!(await dequeue(octokit, context, queue, number))) {
         return false;
     }
-    info(`dequeued pr #${number}: ${reason}`);
+    platform_platform().log.info(`dequeued pr #${number}: ${reason}`);
     return true;
 }
 /**
@@ -44313,7 +44360,7 @@ async function tryMergePullRequest(octokit, context, number, tide, lgtm = defaul
     return (await evaluateMerge(octokit, context, number, tide, lgtm, options)).result;
 }
 function skip(number, reason) {
-    info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`);
+    platform_platform().log.info(reason === 'merged concurrently' ? `pr #${number} was merged concurrently` : `skipping pr #${number}: ${reason}`);
     return { result: 'skipped', reason };
 }
 function blockedReason(pr, tide) {
@@ -44366,10 +44413,10 @@ async function isMerged(octokit, context, number) {
  *
  * @param context - the github context of the current action event
  */
-async function tideOnPullRequest(context = github_context) {
+async function tideOnPullRequest(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !pullRequestActions.has(action)) {
-        core_debug(`tide: skipping ${action} action`);
+        platform_platform().log.debug(`tide: skipping ${action} action`);
         return;
     }
     await evaluate(context, [pullNumber(context)]);
@@ -44381,10 +44428,10 @@ async function tideOnPullRequest(context = github_context) {
  *
  * @param context - the github context of the current action event
  */
-async function tideOnReview(context = github_context) {
+async function tideOnReview(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !reviewActions.has(action)) {
-        core_debug(`tide: skipping ${action} review action`);
+        platform_platform().log.debug(`tide: skipping ${action} review action`);
         return;
     }
     await evaluate(context, [pullNumber(context)]);
@@ -44397,17 +44444,17 @@ async function tideOnReview(context = github_context) {
  *
  * @param context - the github context of the current action event
  */
-async function tideOnComment(context = github_context) {
+async function tideOnComment(context = platform_platform().context()) {
     const issue = context.payload.issue;
     if (issue === undefined) {
         throw new Error(`github context payload missing issue: ${JSON.stringify(context.payload)}`);
     }
     if (issue.pull_request === undefined) {
-        core_debug(`tide: #${issue.number} is not a pull request`);
+        platform_platform().log.debug(`tide: #${issue.number} is not a pull request`);
         return;
     }
     if (issue.state !== 'open') {
-        core_debug(`tide: pull request #${issue.number} is ${issue.state}`);
+        platform_platform().log.debug(`tide: pull request #${issue.number} is ${issue.state}`);
         return;
     }
     await evaluate(context, [issue.number]);
@@ -44419,11 +44466,11 @@ async function tideOnComment(context = github_context) {
  *
  * @param context - the github context of the current action event
  */
-async function tideOnCheckSuite(context = github_context) {
+async function tideOnCheckSuite(context = platform_platform().context()) {
     const suite = context.payload.check_suite;
     const conclusion = suite?.conclusion ?? context.payload.state;
     if (conclusion !== undefined && hopelessConclusions.has(conclusion)) {
-        core_debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`);
+        platform_platform().log.debug(`tide: a ${conclusion} ${context.eventName} cannot make a pull request mergeable`);
         return;
     }
     const sha = suite?.head_sha ?? context.payload.sha;
@@ -44451,20 +44498,20 @@ async function loadTide(octokit, context, base) {
     if (config.tide.labels === undefined) {
         hasOwners = base === undefined ? await repoHasOwners(octokit, context) : await branchHasOwners(octokit, context, base);
     }
-    return resolveTide(config.tide, getInput('merge-method', { required: false }), { hasOwners });
+    return resolveTide(config.tide, platform_platform().inputs.get('merge-method', { required: false }), { hasOwners });
 }
 async function evaluate(context, numbers, lookup) {
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     const config = await loadProwConfig(octokit, context);
     if (config.tide.merge_on_events === false) {
-        core_debug('tide: merge_on_events is false, leaving the merge to the lgtm cron');
+        platform_platform().log.debug('tide: merge_on_events is false, leaving the merge to the lgtm cron');
         return;
     }
     const tide = base => loadTide(octokit, context, base);
     const lgtm = lgtmSettings(config);
     const candidates = numbers.length === 0 && lookup !== undefined ? await lookup(octokit) : numbers;
     if (candidates.length === 0) {
-        core_debug('tide: no open pull request to evaluate');
+        platform_platform().log.debug('tide: no open pull request to evaluate');
         return;
     }
     const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
@@ -44488,7 +44535,6 @@ function pullNumber(context) {
 
 
 
-
 /**
  * Inspired by https://github.com/actions/stale
  * this will recurse through the pages of PRs for a repo
@@ -44505,9 +44551,8 @@ function pullNumber(context) {
  * @param progress - merges done and failures collected on earlier pages
  */
 async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
-    info(`starting lgtm merger page: ${currentPage}`);
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    platform_platform().log.info(`starting lgtm merger page: ${currentPage}`);
+    const octokit = newOctokitFromInputs();
     const policy = {
         tide: base => loadTide(octokit, context, base),
         lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
@@ -44529,7 +44574,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
         return progress.jobsDone;
     }
     await Promise.all(prs.map(async (pr) => {
-        info(`processing pr: ${pr.number}`);
+        platform_platform().log.info(`processing pr: ${pr.number}`);
         if (pr.state === 'closed') {
             return;
         }
@@ -44543,7 +44588,7 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
         }
         catch (error) {
             // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
-            core_error(`could not evaluate pr #${pr.number}: ${error}`);
+            platform_platform().log.error(`could not evaluate pr #${pr.number}: ${error}`);
             progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
         }
     }));
@@ -44557,14 +44602,14 @@ async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures
  * @param context - the github actions workflow context
  * @param page - the page number to get from the api
  */
-async function getOpenPrs(octokit, context = github_context, page) {
-    core_debug(`getting prs page ${page}...`);
+async function getOpenPrs(octokit, context = platform_platform().context(), page) {
+    platform_platform().log.debug(`getting prs page ${page}...`);
     const prResults = await octokit.pulls.list({
         ...context.repo,
         state: 'open',
         page,
     });
-    core_debug(`got: ${prResults.data}`);
+    platform_platform().log.debug(`got: ${prResults.data}`);
     return prResults.data;
 }
 /**
@@ -44581,11 +44626,11 @@ async function getOpenPrs(octokit, context = github_context, page) {
  * @param failures - collects PRs whose merge the api refused
  * @returns whether the PR was merged or enqueued
  */
-async function tryMergePr(pr, octokit, context = github_context, policy, failures) {
+async function tryMergePr(pr, octokit, context = platform_platform().context(), policy, failures) {
     const tide = await policy.tide(pr.base.ref);
     const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
     if (!gate.ok) {
-        info(`skipping pr #${pr.number}: ${gate.reason}`);
+        platform_platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`);
         return false;
     }
     const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
@@ -44617,7 +44662,7 @@ function tokenIdentity(octokit) {
         pending = octokit.users.getAuthenticated().then(({ data }) => ({ login: data.login.toLowerCase() }), (e) => {
             const status = errorStatus(e);
             if (status === 403 || status === 404) {
-                core_debug(`approve: GET /user answered ${status}; the token is an installation token`);
+                platform_platform().log.debug(`approve: GET /user answered ${status}; the token is an installation token`);
                 return {};
             }
             throw new Error(`could not identify the token for approve.github_review: ${e}`);
@@ -44714,13 +44759,13 @@ async function syncApprovalReview(octokit, context, input) {
     const { owners, state, reviews, identity } = input;
     const number = owners.number;
     if (!owners.open) {
-        core_debug(`approve: #${number} is not open; its approval review is left alone`);
+        platform_platform().log.debug(`approve: #${number} is not open; its approval review is left alone`);
         return;
     }
     const own = reviews.filter(review => review.state === 'APPROVED' && isOwnReview(review, identity));
     if (!state.approved) {
         if (own.length === 0) {
-            core_debug(`approve: #${number} carries no approval review to dismiss`);
+            platform_platform().log.debug(`approve: #${number} carries no approval review to dismiss`);
             return;
         }
         const message = `approved removed: ${input.reason()}`;
@@ -44731,20 +44776,20 @@ async function syncApprovalReview(octokit, context, input) {
             catch (e) {
                 throw new Error(`could not dismiss the approval review ${review.id}: ${e}`);
             }
-            info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`);
+            platform_platform().log.info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`);
         }
         return;
     }
     if (own.some(review => review.commit_id === owners.headSha)) {
-        core_debug(`approve: #${number} already carries the approval review on ${owners.headSha}`);
+        platform_platform().log.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`);
         return;
     }
     if (owners.draft) {
-        core_debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`);
+        platform_platform().log.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`);
         return;
     }
     if (identity.login !== undefined && identity.login === owners.author) {
-        warning(selfApprovalWarning(number, identity.login));
+        platform_platform().log.warning(selfApprovalWarning(number, identity.login));
         return;
     }
     try {
@@ -44759,20 +44804,20 @@ async function syncApprovalReview(octokit, context, input) {
     catch (e) {
         const message = approveReview_errorMessage(e);
         if (/approve your own pull request/i.test(message)) {
-            warning(selfApprovalWarning(number, owners.author));
+            platform_platform().log.warning(selfApprovalWarning(number, owners.author));
             return;
         }
         if (/not permitted to approve pull requests/i.test(message)) {
-            warning(`${notPermittedWarning}: ${message}`);
+            platform_platform().log.warning(`${notPermittedWarning}: ${message}`);
             return;
         }
         if (errorStatus(e) === 403) {
-            warning(`${forbiddenWarning}: ${message}`);
+            platform_platform().log.warning(`${forbiddenWarning}: ${message}`);
             return;
         }
         throw new Error(`could not submit the approval review: ${e}`);
     }
-    info(`approve: submitted the approval review on #${number} at ${owners.headSha}`);
+    platform_platform().log.info(`approve: submitted the approval review on #${number} at ${owners.headSha}`);
 }
 function selfApprovalWarning(number, login) {
     return `cannot submit the approval review: #${number} was opened by the token's own identity (${login}), and GitHub does not let an author approve their own pull request (approve.github_review)`;
@@ -44785,7 +44830,6 @@ function approveReview_errorMessage(e) {
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approve.js
-
 
 
 
@@ -44926,7 +44970,7 @@ function computeApproval(owners, events, settings) {
     }
     for (const login of approving) {
         if (!covering.has(login)) {
-            core_debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`);
+            platform_platform().log.debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`);
         }
     }
     const excluded = new Set(covering);
@@ -45065,7 +45109,7 @@ function ownersEntries(state, owners) {
 async function evaluateApproval(octokit, context, pullNumber) {
     const owners = await loadPullRequestOwners(octokit, context, pullNumber);
     if (!owners.tree.hasOwners) {
-        core_debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`);
+        platform_platform().log.debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`);
         return;
     }
     const settings = approveSettings(await loadProwConfig(octokit, context));
@@ -45075,7 +45119,7 @@ async function evaluateApproval(octokit, context, pullNumber) {
     const reviews = settings.ignore_review_state && identity === undefined ? [] : await listReviews(octokit, context, pullNumber);
     const events = approvalEvents(comments, settings.ignore_review_state ? [] : reviews, identity?.login);
     const state = computeApproval(owners, events, settings);
-    info(state.approved
+    platform_platform().log.info(state.approved
         ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
         : `approve: #${pullNumber} is not approved; nobody approves ${state.uncoveredFiles.join(', ') || 'anything'}`);
     await syncLabel(octokit, context, owners, state.approved);
@@ -45093,7 +45137,7 @@ async function syncLabel(octokit, context, owners, approved) {
         await removeLabels(octokit, context, owners.number, present);
     }
     else {
-        core_debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`);
+        platform_platform().log.debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`);
     }
 }
 async function upsertNotifier(octokit, context, pullNumber, comments, body) {
@@ -45103,7 +45147,7 @@ async function upsertNotifier(octokit, context, pullNumber, comments, body) {
         return;
     }
     if (existing.body.trim() === body.trim()) {
-        core_debug(`approve: the notifier on #${pullNumber} is up to date`);
+        platform_platform().log.debug(`approve: the notifier on #${pullNumber} is up to date`);
         return;
     }
     try {
@@ -45141,14 +45185,14 @@ async function listReviews(octokit, context, pullNumber) {
  *
  * @param context - the github context of the current action event
  */
-async function approveOnPullRequest(context = github_context) {
+async function approveOnPullRequest(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !approve_pullRequestActions.has(action)) {
-        core_debug(`approve: skipping ${action} action`);
+        platform_platform().log.debug(`approve: skipping ${action} action`);
         return;
     }
     if ((action === 'labeled' || action === 'unlabeled') && String(context.payload.label?.name ?? '').toLowerCase() !== approvedLabel) {
-        core_debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
+        platform_platform().log.debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
         return;
     }
     await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
@@ -45161,14 +45205,14 @@ async function approveOnPullRequest(context = github_context) {
  *
  * @param context - the github context of the current action event
  */
-async function approveOnReview(context = github_context) {
+async function approveOnReview(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !approve_reviewActions.has(action)) {
-        core_debug(`approve: skipping ${action} review action`);
+        platform_platform().log.debug(`approve: skipping ${action} review action`);
         return;
     }
     if (String(context.payload.review?.body ?? '').includes(reviewMarker)) {
-        core_debug(`approve: review ${context.payload.review?.id} is the approval review this action mirrors; nothing to evaluate`);
+        platform_platform().log.debug(`approve: review ${context.payload.review?.id} is the approval review this action mirrors; nothing to evaluate`);
         return;
     }
     await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
@@ -45177,18 +45221,17 @@ async function evaluateOnOwnersRepo(context, pullNumber) {
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     const base = context.payload.pull_request?.base?.ref;
     const hasOwners = typeof base === 'string' ? await branchHasOwners(octokit, context, base) : await repoHasOwners(octokit, context);
     if (!hasOwners) {
-        core_debug('approve: the base branch has no OWNERS files');
+        platform_platform().log.debug('approve: the base branch has no OWNERS files');
         return;
     }
     await evaluateApproval(octokit, context, pullNumber);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/blunderbuss.js
-
 
 
 
@@ -45255,24 +45298,24 @@ function sample(items, count, rng) {
  * @param context - the github context of the current action event
  * @param rng - a source of numbers in [0, 1), injectable for tests
  */
-async function blunderbuss(context = github_context, rng = Math.random) {
+async function blunderbuss(context = platform_platform().context(), rng = Math.random) {
     const action = context.payload.action;
     if (action !== 'opened' && action !== 'ready_for_review') {
-        core_debug(`blunderbuss: skipping ${action} action`);
+        platform_platform().log.debug(`blunderbuss: skipping ${action} action`);
         return;
     }
     const pullNumber = context.payload.pull_request?.number;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     const settings = blunderbussSettings(await loadProwConfig(octokit, context));
     if (action === 'ready_for_review' && !settings.ignore_drafts) {
-        core_debug(`blunderbuss: skipping ${action} action`);
+        platform_platform().log.debug(`blunderbuss: skipping ${action} action`);
         return;
     }
     if (settings.delay > 0) {
-        info(`blunderbuss: #${pullNumber} ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`);
+        platform_platform().log.info(`blunderbuss: #${pullNumber} ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`);
         return;
     }
     await requestOwnersReviewers(octokit, context, pullNumber, settings, { explicit: false, rng });
@@ -45284,13 +45327,13 @@ async function blunderbuss(context = github_context, rng = Math.random) {
  * @param context - the github context of the current action event
  * @param rng - a source of numbers in [0, 1), injectable for tests
  */
-async function autoCc(context = github_context, rng = Math.random) {
+async function autoCc(context = platform_platform().context(), rng = Math.random) {
     const issue = context.payload.issue;
     if (issue?.pull_request === undefined) {
-        core_debug('blunderbuss: /auto-cc only applies to pull requests');
+        platform_platform().log.debug('blunderbuss: /auto-cc only applies to pull requests');
         return;
     }
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+    const octokit = newOctokitFromInputs();
     const settings = blunderbussSettings(await loadProwConfig(octokit, context));
     await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng });
 }
@@ -45309,11 +45352,11 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
     const pull = await loadPullRequestOwners(octokit, context, pullNumber);
     if (!explicit) {
         if (settings.ignore_drafts && pull.draft) {
-            core_debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
+            platform_platform().log.debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`);
             return;
         }
         if (settings.ignore_authors.includes(pull.author)) {
-            core_debug(`blunderbuss: ignoring pull request by ${pull.author}`);
+            platform_platform().log.debug(`blunderbuss: ignoring pull request by ${pull.author}`);
             return;
         }
     }
@@ -45331,14 +45374,14 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
         }
     }
     if (coverage.size === 0) {
-        core_debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
+        platform_platform().log.debug(`blunderbuss: no reviewer candidates for #${pullNumber}`);
         return;
     }
     let count = settings.request_count;
     if (settings.max_request_count !== undefined) {
         count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
         if (count <= 0) {
-            core_debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
+            platform_platform().log.debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
             return;
         }
     }
@@ -45349,11 +45392,10 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
     catch (e) {
         throw new Error(`could not request reviewers: ${e}`);
     }
-    info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+    platform_platform().log.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
-
 
 
 
@@ -45367,18 +45409,17 @@ const triggerActions = new Set(['opened', 'reopened', 'synchronize']);
  *
  * @param context - the github context of the current action event
  */
-async function ownersLabel(context = github_context) {
+async function ownersLabel(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !triggerActions.has(action)) {
-        core_debug(`owners-label: skipping ${action} action`);
+        platform_platform().log.debug(`owners-label: skipping ${action} action`);
         return;
     }
     const pullNumber = context.payload.pull_request?.number;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     await applyOwnersLabels(octokit, context, pullNumber);
 }
 /**
@@ -45396,13 +45437,13 @@ async function applyOwnersLabels(octokit, context, pullNumber) {
         owners?.labels.forEach(label => declared.add(label));
     }
     if (declared.size === 0) {
-        core_debug('owners-label: no OWNERS file covering the changed files declares labels');
+        platform_platform().log.debug('owners-label: no OWNERS file covering the changed files declares labels');
         return;
     }
     const current = new Set((await getCurrentLabels(octokit, context, pullNumber)).map(lower));
     const missing = [...declared].filter(label => !current.has(lower(label)));
     if (missing.length === 0) {
-        core_debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
+        platform_platform().log.debug(`owners-label: #${pullNumber} already carries ${[...declared].join(', ')}`);
         return;
     }
     let known;
@@ -45416,7 +45457,7 @@ async function applyOwnersLabels(octokit, context, pullNumber) {
         if (known.has(lower(label))) {
             return true;
         }
-        info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
+        platform_platform().log.info(`owners-label: skipping label ${label} declared in OWNERS: repository doesn't have it (run label-sync)`);
         return false;
     });
     if (toAdd.length === 0) {
@@ -45429,7 +45470,6 @@ function lower(label) {
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/requireMatchingLabel.js
-
 
 
 
@@ -45488,10 +45528,10 @@ function requireMatchingLabel_evaluate(rule, labels) {
  *
  * @param context - the github context of the current action event
  */
-async function requireMatchingLabel(context = github_context) {
+async function requireMatchingLabel(context = platform_platform().context()) {
     const action = context.payload.action;
     if (action === undefined || !requireMatchingLabel_triggerActions.has(action)) {
-        core_debug(`require-matching-label: skipping ${action} action`);
+        platform_platform().log.debug(`require-matching-label: skipping ${action} action`);
         return;
     }
     const changedLabel = action === 'labeled' || action === 'unlabeled'
@@ -45505,16 +45545,15 @@ async function requireMatchingLabel(context = github_context) {
  *
  * @param context - the github context of the current action event
  */
-async function checkRequiredLabels(context = github_context) {
+async function checkRequiredLabels(context = platform_platform().context()) {
     if (context.payload.issue?.state !== 'open') {
-        core_debug('require-matching-label: the issue is not open, nothing to check');
+        platform_platform().log.debug('require-matching-label: the issue is not open, nothing to check');
         return;
     }
     await enforce(context, undefined, false);
 }
 async function enforce(context, changedLabel, withGracePeriod) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod });
 }
 /**
@@ -45530,18 +45569,18 @@ async function enforceRequiredLabels(octokit, context, target, options = {}) {
     const { changedLabel, withGracePeriod = false } = options;
     const config = await loadProwConfig(octokit, context);
     if (config.require_matching_label.length === 0) {
-        core_debug('require-matching-label: no rules configured');
+        platform_platform().log.debug('require-matching-label: no rules configured');
         return;
     }
     const { issueNumber, isPullRequest } = target;
     const rules = applicableRules(config, isPullRequest, changedLabel);
     if (rules.length === 0) {
-        core_debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
+        platform_platform().log.debug(`require-matching-label: no rule applies to ${isPullRequest ? 'pull request' : 'issue'} #${issueNumber}${changedLabel === undefined ? '' : ` for label ${changedLabel}`}`);
         return;
     }
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
-        core_debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
+        platform_platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
         await sleep(graceMs);
     }
     const labels = await getCurrentLabels(octokit, context, issueNumber);
@@ -45588,7 +45627,7 @@ async function apply(octokit, context, issueNumber, rule, labels) {
             return;
         }
         default:
-            core_debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
+            platform_platform().log.debug(`require-matching-label: ${rule.missing_label} is already correct on #${issueNumber}`);
     }
 }
 // the marker is an invisible HTML comment that lets a later run find and delete the bot's own comment
@@ -45598,7 +45637,7 @@ function markerFor(rule) {
 async function postMissingComment(octokit, context, issueNumber, rule) {
     const existing = await botCommentsWithMarker(octokit, context, issueNumber, rule);
     if (existing.length > 0) {
-        core_debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
+        platform_platform().log.debug(`require-matching-label: ${rule.missing_label} comment already present on #${issueNumber}`);
         return;
     }
     await createComment(octokit, context, issueNumber, `${rule.missing_comment}\n\n${markerFor(rule)}`);
@@ -45643,7 +45682,6 @@ function requireMatchingLabel_sameLabel(a, b) {
 
 
 
-
 /** pull requests evaluated at once; keeps a busy repository within the api's secondary rate limits */
 const sweepConcurrency = 3;
 const pageSize = 100;
@@ -45666,8 +45704,8 @@ const pageSize = 100;
  * @param context - the github actions event context
  * @param now - the current time, injectable for tests
  */
-async function sweep(context = github_context, now = new Date()) {
-    const octokit = newOctokit(getInput('github-token', { required: true }));
+async function sweep(context = platform_platform().context(), now = new Date()) {
+    const octokit = newOctokitFromInputs();
     const config = await loadProwConfig(octokit, context);
     const lookbackMs = resolveSweepLookback(config.sweep);
     const since = new Date(now.getTime() - lookbackMs);
@@ -45676,9 +45714,9 @@ async function sweep(context = github_context, now = new Date()) {
     const listed = await recentlyUpdatedPulls(octokit, context, due.from);
     const candidates = listed.filter(pr => new Date(pr.updated_at) >= since);
     const delayedOnly = listed.filter(pr => new Date(pr.updated_at) < since);
-    info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`);
+    platform_platform().log.info(`sweep: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'} updated since ${since.toISOString()}`);
     if (reviewers.delay > 0) {
-        info(`sweep: ${delayedOnly.length} more checked for delayed reviewers, updated since ${due.from.toISOString()}`);
+        platform_platform().log.info(`sweep: ${delayedOnly.length} more checked for delayed reviewers, updated since ${due.from.toISOString()}`);
     }
     const result = { candidates: candidates.map(pr => pr.number), merged: [], enqueued: [], failures: [] };
     const plugins = { lgtm: lgtmSettings(config), config, reviewers, since, due };
@@ -45744,28 +45782,28 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
             outcome.errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
         }
     }
-    info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
+    platform_platform().log.info(`sweep: #${pr.number} ${outcome.result}${outcome.errors.length === 0 ? '' : ` with ${outcome.errors.length} error(s)`}`);
     return outcome;
 }
 async function approveIfTrusted(octokit, context, pr) {
     if (!(pr.labels ?? []).some(label => label.name.toLowerCase() === okToTestLabel)) {
-        core_debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`);
+        platform_platform().log.debug(`sweep: #${pr.number} does not carry ${okToTestLabel}`);
         return;
     }
     await approvePendingRuns(octokit, context, pr.number, pr.head.sha);
 }
 async function requestReviewersIfFresh(octokit, context, pr, plugins) {
     if (new Date(pr.created_at) < plugins.since) {
-        core_debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`);
+        platform_platform().log.debug(`sweep: #${pr.number} was opened before the window; no reviewers requested`);
         return;
     }
     if (pr.draft === true || (pr.requested_reviewers ?? []).length > 0) {
-        core_debug(`sweep: #${pr.number} is a draft or already has requested reviewers`);
+        platform_platform().log.debug(`sweep: #${pr.number} is a draft or already has requested reviewers`);
         return;
     }
     const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 });
     if (reviews.length > 0) {
-        core_debug(`sweep: #${pr.number} already has reviews`);
+        platform_platform().log.debug(`sweep: #${pr.number} already has reviews`);
         return;
     }
     await requestOwnersReviewers(octokit, context, pr.number, plugins.reviewers, { explicit: false, rng: Math.random });
@@ -45779,16 +45817,16 @@ async function requestReviewersIfFresh(octokit, context, pr, plugins) {
 async function requestReviewersIfDue(octokit, context, pr, plugins) {
     const { reviewers: settings, due } = plugins;
     if (settings.ignore_drafts && pr.draft === true) {
-        core_debug(`sweep: #${pr.number} is a draft`);
+        platform_platform().log.debug(`sweep: #${pr.number} is a draft`);
         return;
     }
     if ((pr.requested_reviewers ?? []).length > 0 || (pr.requested_teams ?? []).length > 0) {
-        core_debug(`sweep: #${pr.number} already has requested reviewers`);
+        platform_platform().log.debug(`sweep: #${pr.number} already has requested reviewers`);
         return;
     }
     let start = new Date(pr.created_at);
     if (start > due.to) {
-        core_debug(`sweep: #${pr.number} is not due for reviewers before ${new Date(start.getTime() + settings.delay).toISOString()}`);
+        platform_platform().log.debug(`sweep: #${pr.number} is not due for reviewers before ${new Date(start.getTime() + settings.delay).toISOString()}`);
         return;
     }
     if (settings.ignore_drafts) {
@@ -45798,12 +45836,12 @@ async function requestReviewersIfDue(octokit, context, pr, plugins) {
         }
     }
     if (start < due.from || start > due.to) {
-        core_debug(`sweep: #${pr.number} became ready at ${start.toISOString()}, outside the due window`);
+        platform_platform().log.debug(`sweep: #${pr.number} became ready at ${start.toISOString()}, outside the due window`);
         return;
     }
     const { data: reviews } = await octokit.pulls.listReviews({ ...context.repo, pull_number: pr.number, per_page: 1 });
     if (reviews.length > 0) {
-        core_debug(`sweep: #${pr.number} already has reviews`);
+        platform_platform().log.debug(`sweep: #${pr.number} already has reviews`);
         return;
     }
     await requestOwnersReviewers(octokit, context, pr.number, settings, { explicit: false, rng: Math.random });
@@ -45853,35 +45891,31 @@ async function forEachLimited(items, limit, fn) {
 
 
 
-
 /**
  * This Method handles any cron job events.
  * A user should define which of the jobs they want to run in their workflow yaml
  *
  * @param context - the github context of the current action event
  */
-async function handleCronJobs(context = github_context) {
-    const runConfig = getInput('jobs', { required: false })
-        .split(/\s+/)
-        .filter(command => command !== '')
-        .map(command => command.toLowerCase());
+async function handleCronJobs(context = platform_platform().context()) {
+    const runConfig = platform_platform().inputs.get('jobs', { required: false }).split(/\s+/).filter(command => command !== '').map(command => command.toLowerCase());
     if (runConfig.length === 0) {
         runConfig.push('');
     }
     await Promise.all(runConfig.map(async (command) => {
         switch (command) {
             case 'lgtm':
-                core_debug('running cronLgtm job');
+                platform_platform().log.debug('running cronLgtm job');
                 return await cronLgtm(1, context).catch(async (e) => {
                     return e;
                 });
             case 'label-sync':
-                core_debug('running label-sync job');
+                platform_platform().log.debug('running label-sync job');
                 return await labelSync(context).catch(async (e) => {
                     return e;
                 });
             case 'sweep':
-                core_debug('running sweep job');
+                platform_platform().log.debug('running sweep job');
                 return await sweep(context).catch(async (e) => {
                     return e;
                 });
@@ -45900,7 +45934,7 @@ async function handleCronJobs(context = github_context) {
         }
     })
         .catch((e) => {
-        setFailed(`${e}`);
+        platform_platform().fail(`${e}`);
     });
 }
 
@@ -45923,8 +45957,7 @@ const fixedLabelCommands = [
  * @param cmd - the command definition
  */
 async function addFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const issueNumber = fixed_requireIssueNumber(context);
     await assertLabelsPolicy(octokit, context, cmd.command);
     await labelIssue(octokit, context, issueNumber, cmd.add);
@@ -45936,21 +45969,20 @@ async function addFixedLabels(context, cmd) {
  * @param cmd - the command definition
  */
 async function removeFixedLabels(context, cmd) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const issueNumber = fixed_requireIssueNumber(context);
     await assertLabelsPolicy(octokit, context, removeCommandFor(cmd.command));
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
+        platform_platform().log.debug(`${cmd.command.slice(1)}: found labels for issue ${currentLabels}`);
     }
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
     }
     const present = currentLabels.filter(label => cmd.remove.some(requested => sameLabel(requested, label)));
     if (present.length === 0) {
-        core_debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
+        platform_platform().log.debug(`${cmd.command.slice(1)}: none of ${cmd.remove} are on the issue`);
         return;
     }
     await removeLabels(octokit, context, issueNumber, present);
@@ -45978,7 +46010,6 @@ function fixed_requireIssueNumber(context) {
 
 
 
-
 /**
  * /lgtm will add the lgtm label. On a pull request the label is first bound
  * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
@@ -45991,9 +46022,8 @@ function fixed_requireIssueNumber(context) {
  *
  * @param context - the github actions event context
  */
-async function lgtm(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function lgtm(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -46039,7 +46069,7 @@ async function cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequ
         throw new Error(`could not remove latest review: could not get labels from issue: ${e}`);
     }
     if (!currentLabels.includes(lgtmLabel)) {
-        core_debug(`could not find ${lgtmLabel} to remove`);
+        platform_platform().log.debug(`could not find ${lgtmLabel} to remove`);
         return;
     }
     try {
@@ -46063,12 +46093,12 @@ async function assertReviewer(octokit, context, issueNumber, commenterId) {
 }
 // refuse logs and replies with msg, then fails the run with cause (or msg)
 async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    core_error(msg);
+    platform_platform().log.error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        core_error(`Could not comment with an auth error: ${commentE}`);
+        platform_platform().log.error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -46079,15 +46109,13 @@ async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error
 
 
 
-
 /**
  * /remove will remove a label based on the command argument
  *
  * @param context - the github actions event context
  */
-async function remove(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function remove(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -46104,7 +46132,7 @@ async function remove(context = github_context) {
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, issueNumber);
-        core_debug(`remove: found labels for issue ${currentLabels}`);
+        platform_platform().log.debug(`remove: found labels for issue ${currentLabels}`);
     }
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
@@ -46128,7 +46156,6 @@ async function remove(context = github_context) {
 
 
 
-
 /**
  * /approve on a pull request whose base branch has OWNERS files records the
  * commenter's approval for the files they own and re-evaluates the approve
@@ -46144,10 +46171,9 @@ async function remove(context = github_context) {
  *
  * @param context - the github actions event context
  */
-async function approve(context = github_context) {
-    core_debug(`starting approve job`);
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function approve(context = platform_platform().context()) {
+    platform_platform().log.debug(`starting approve job`);
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterLogin = context.payload.comment?.user.login;
@@ -46174,7 +46200,7 @@ async function approve(context = github_context) {
         return;
     }
     try {
-        core_debug(`creating a review`);
+        platform_platform().log.debug(`creating a review`);
         await octokit.pulls.createReview({
             ...context.repo,
             pull_number: issueNumber,
@@ -46205,12 +46231,12 @@ async function authorize(octokit, context, issueNumber, commenterLogin) {
 }
 // refuse logs and replies with msg, then fails the run with cause (or msg)
 async function approve_refuse(octokit, context, issueNumber, msg, cause = new Error(msg)) {
-    core_error(msg);
+    platform_platform().log.error(msg);
     try {
         await createComment(octokit, context, issueNumber, msg);
     }
     catch (commentE) {
-        core_error(`Could not comment with an auth error: ${commentE}`);
+        platform_platform().log.error(`Could not comment with an auth error: ${commentE}`);
     }
     throw cause;
 }
@@ -46223,7 +46249,7 @@ async function approve_refuse(octokit, context, issueNumber, msg, cause = new Er
  * @param commenterLogin - the login name of the user who made comment
  */
 async function cancel(octokit, context, issueNumber, commenterLogin) {
-    core_debug(`canceling latest review`);
+    platform_platform().log.debug(`canceling latest review`);
     let reviews;
     try {
         reviews = await octokit.pulls.listReviews({
@@ -46236,7 +46262,7 @@ async function cancel(octokit, context, issueNumber, commenterLogin) {
     }
     let latestReview;
     for (const e of reviews.data) {
-        core_debug(`checking review: ${e.user?.login}`);
+        platform_platform().log.debug(`checking review: ${e.user?.login}`);
         if (e.user?.login === 'github-actions[bot]' && e.state === 'APPROVED') {
             latestReview = e;
         }
@@ -46262,17 +46288,15 @@ async function cancel(octokit, context, issueNumber, commenterLogin) {
 
 
 
-
 /**
  * /assign will self assign with no argument
  * or assign the users in the argument list
  *
  * @param context - the github actions event context
  */
-async function assign_assign(context = github_context) {
-    core_debug(`starting assign job`);
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function assign_assign(context = platform_platform().context()) {
+    platform_platform().log.debug(`starting assign job`);
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46336,16 +46360,14 @@ async function selfAssign(octokit, context, issueNum, user) {
 
 
 
-
 /**
  * /cc will request a review from self with no arguments or the users specified
  * or assign the users in the argument list
  *
  * @param context - the github actions event context
  */
-async function cc(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function cc(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const pullNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46409,16 +46431,14 @@ async function selfReview(octokit, context, pullNum, user) {
 
 
 
-
 /**
  * /close will close the issue / PR.
  * /close not-planned closes it with the not_planned state reason
  *
  * @param context - the github actions event context
  */
-async function close_close(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function close_close(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -46463,7 +46483,6 @@ async function close_close(context = github_context) {
 
 
 
-
 const lockReasons = {
     'resolved': 'resolved',
     'off-topic': 'off-topic',
@@ -46476,9 +46495,8 @@ const lockReasons = {
  *
  * @param context - the github actions event context
  */
-async function lock(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function lock(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46519,7 +46537,6 @@ async function lock(context = github_context) {
 
 
 
-
 const catApi = 'https://api.thecatapi.com/v1/images/search?limit=1&size=med';
 // a line of exactly /meow, not /meowvie or a mention; case-insensitive like every other command
 const meowCommand = /^[\t ]*\/meow[\t ]*$/i;
@@ -46534,11 +46551,10 @@ const meowConfig = {
  *
  * @param context - the github actions event context
  */
-async function meow(context = github_context) {
+async function meow(context = platform_platform().context()) {
     if (!hasMeowCommand(context.payload.comment?.body))
         return;
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     if (issueNumber === undefined) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
@@ -46550,7 +46566,7 @@ async function meow(context = github_context) {
         body = `![cat](<${image.href}>)`;
     }
     catch (error) {
-        warning(`Could not fetch a cat image: ${error}`);
+        platform_platform().log.warning(`Could not fetch a cat image: ${error}`);
         body = 'The cat API is unavailable right now.';
     }
     await createComment(octokit, context, issueNumber, body);
@@ -46561,9 +46577,9 @@ function hasMeowCommand(body) {
 }
 async function fetchCatImage() {
     const headers = { accept: 'application/json' };
-    const key = getInput('cat-api-key', { required: false });
+    const key = platform_platform().inputs.get('cat-api-key', { required: false });
     if (key !== '') {
-        core_setSecret(key);
+        platform_platform().log.setSecret(key);
         headers['x-api-key'] = key;
     }
     let lastError = new Error('cat api was not reached');
@@ -46603,7 +46619,7 @@ async function cancelResponseBody(response) {
         await response.body?.cancel();
     }
     catch (error) {
-        core_debug(`could not cancel cat api response body: ${error}`);
+        platform_platform().log.debug(`could not cancel cat api response body: ${error}`);
     }
 }
 // parseCatImage validates the response and returns a usable https url
@@ -46651,7 +46667,6 @@ function delay(ms) {
 
 
 
-
 /**
  * /milestone will add the issue to an existing milestone.
  * Note that the command should have an argument with the milestone to add.
@@ -46659,9 +46674,8 @@ function delay(ms) {
  *
  * @param context - the github actions event context
  */
-async function milestone(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function milestone(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commentBody = context.payload.comment?.body;
     const commenterId = context.payload.comment?.user?.login;
@@ -46706,15 +46720,13 @@ async function milestone(context = github_context) {
 
 
 
-
 /**
  * /reopen will reopen the issue / PR. May be called after /close
  *
  * @param context - the github actions event context
  */
-async function reopen(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function reopen(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     if (issueNumber === undefined) {
@@ -46747,16 +46759,14 @@ async function reopen(context = github_context) {
 
 
 
-
 /**
  * /retitle will "rename" the issue / PR.
  * Note - it is expected that the command has an argument with the new title
  *
  * @param context - the github actions event context
  */
-async function retitle(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function retitle(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46790,15 +46800,13 @@ async function retitle(context = github_context) {
 
 
 
-
 /**
  * /unassign will remove the assignment for argument users (or self)
  *
  * @param context - the github actions event context
  */
-async function unassign(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function unassign(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const issueNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46840,15 +46848,13 @@ async function unassign(context = github_context) {
 
 
 
-
 /**
  * /uncc will remove the review request for argument users (or self)
  *
  * @param context - the github actions event context
  */
-async function uncc(context = github_context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+async function uncc(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
     const pullNumber = context.payload.issue?.number;
     const commenterId = context.payload.comment?.user?.login;
     const commentBody = context.payload.comment?.body;
@@ -46899,7 +46905,6 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 }
 
 ;// CONCATENATED MODULE: ./lib/issueComment/handleIssueComment.js
-
 
 
 
@@ -46990,15 +46995,12 @@ function commandForms(command) {
  *
  * @param context - the github context of the current action event
  */
-async function handleIssueComment(context = github_context) {
-    const commandConfig = [...new Set(getInput('prow-commands', { required: false })
-            .split(/\s+/)
-            .filter(command => command !== '')
-            .map(command => canonicalCommand(command.toLowerCase())))];
+async function handleIssueComment(context = platform_platform().context()) {
+    const commandConfig = [...new Set(platform_platform().inputs.get('prow-commands', { required: false }).split(/\s+/).filter(command => command !== '').map(command => canonicalCommand(command.toLowerCase())))];
     // GitHub allows an empty comment, whose body arrives as null
     const commentBody = context.payload.comment?.body ?? '';
     if (commandConfig.length === 0) {
-        setFailed(`please provide a list of space delimited commands / jobs to run. None found`);
+        platform_platform().fail(`please provide a list of space delimited commands / jobs to run. None found`);
         return;
     }
     const results = await Promise.all(commandConfig.map(async (command) => {
@@ -47032,7 +47034,7 @@ async function handleIssueComment(context = github_context) {
         failures.push(...await handleIssueComment_sweep(context, alreadyChecked));
     }
     if (failures.length > 0) {
-        setFailed(failures.join('; '));
+        platform_platform().fail(failures.join('; '));
     }
 }
 // The bot's own label writes fire no `labeled`/`unlabeled` event, so what those events would
@@ -47096,7 +47098,7 @@ function skipReadOnlyForkRun(context) {
     if (typeof head !== 'string' || typeof base !== 'string' || head.toLowerCase() === base.toLowerCase()) {
         return false;
     }
-    notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`);
+    platform_platform().log.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`);
     return true;
 }
 /**
@@ -47120,7 +47122,7 @@ async function runEventHandlers(event, handlers, context) {
         }
     }
     if (errors.length > 0) {
-        setFailed(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`);
+        platform_platform().fail(`error handling ${event} event: ${errors.map(e => e.message).join('; ')}`);
     }
 }
 
@@ -47135,7 +47137,7 @@ const issueEventHandlers = [requireMatchingLabel];
  *
  * @param context - the github context of the current action event
  */
-async function handleIssues(context = github_context) {
+async function handleIssues(context = platform_platform().context()) {
     await runEventHandlers('issues', issueEventHandlers, context);
 }
 
@@ -47151,7 +47153,7 @@ const checkSuiteHandlers = [tideOnCheckSuite];
  *
  * @param context - the github context of the current action event
  */
-async function handleCheckSuite(context = github_context) {
+async function handleCheckSuite(context = platform_platform().context()) {
     await runEventHandlers(context.eventName, checkSuiteHandlers, context);
 }
 
@@ -47165,8 +47167,7 @@ async function handleCheckSuite(context = github_context) {
  * @param context - The github actions event context
  */
 async function onPrLgtm(context) {
-    const token = getInput('github-token', { required: true });
-    const octokit = newOctokit(token);
+    const octokit = newOctokitFromInputs();
     const prNumber = context.payload.pull_request?.number;
     if (prNumber === undefined) {
         throw new Error(`github context payload missing pr number: ${JSON.stringify(context.payload)}`);
@@ -47174,7 +47175,7 @@ async function onPrLgtm(context) {
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, prNumber);
-        core_debug(`remove-lgtm: found labels for issue ${currentLabels}`);
+        platform_platform().log.debug(`remove-lgtm: found labels for issue ${currentLabels}`);
     }
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
@@ -47185,7 +47186,6 @@ async function onPrLgtm(context) {
 }
 
 ;// CONCATENATED MODULE: ./lib/pullReq/handlePullReq.js
-
 
 
 
@@ -47208,28 +47208,25 @@ const pullRequestHandlers = [requireMatchingLabel, ownersLabel, blunderbuss, lgt
  *
  * @param context - the github context of the current action event
  */
-async function handlePullReq(context = github_context) {
+async function handlePullReq(context = platform_platform().context()) {
     if (skipReadOnlyForkRun(context)) {
         return;
     }
     const action = context.payload.action;
-    const runConfig = getInput('jobs', { required: false })
-        .split(/\s+/)
-        .filter(command => command !== '')
-        .map(command => command.toLowerCase());
+    const runConfig = platform_platform().inputs.get('jobs', { required: false }).split(/\s+/).filter(command => command !== '').map(command => command.toLowerCase());
     await runEventHandlers('pull_request', pullRequestHandlers, context);
     if (runConfig.length === 0) {
         return;
     }
     await Promise.all(runConfig.map(async (command) => {
-        core_debug(`${context}`);
+        platform_platform().log.debug(`${context}`);
         switch (command) {
             case 'lgtm':
                 if (action !== 'synchronize') {
-                    core_debug(`skipping pr lgtm job: ${action} pushes no new commits`);
+                    platform_platform().log.debug(`skipping pr lgtm job: ${action} pushes no new commits`);
                     return;
                 }
-                core_debug('running pr lgtm new commit job');
+                platform_platform().log.debug('running pr lgtm new commit job');
                 return await onPrLgtm(context).catch(async (e) => {
                     return e;
                 });
@@ -47245,7 +47242,7 @@ async function handlePullReq(context = github_context) {
         }
     })
         .catch((e) => {
-        setFailed(`${e}`);
+        platform_platform().fail(`${e}`);
     });
 }
 
@@ -47263,7 +47260,7 @@ const pullRequestReviewHandlers = [approveOnReview, tideOnReview];
  *
  * @param context - the github context of the current action event
  */
-async function handlePullReqReview(context = github_context) {
+async function handlePullReqReview(context = platform_platform().context()) {
     if (skipReadOnlyForkRun(context)) {
         return;
     }
@@ -47271,7 +47268,6 @@ async function handlePullReqReview(context = github_context) {
 }
 
 ;// CONCATENATED MODULE: ./lib/run.js
-
 
 
 
@@ -47293,12 +47289,11 @@ const eventHandlers = {
     workflow_dispatch: handleCronJobs,
     push: handleCronJobs,
 };
-async function run() {
+async function run(context = platform_platform().context()) {
     try {
-        const context = github_context;
         const handler = Object.hasOwn(eventHandlers, context.eventName) ? eventHandlers[context.eventName] : undefined;
         if (!handler) {
-            core_error(`${context.eventName} not yet supported`);
+            platform_platform().log.error(`${context.eventName} not yet supported`);
             return;
         }
         await handler(context);
@@ -47306,12 +47301,15 @@ async function run() {
     catch (error) {
         // every handler folds its rejections into an Error (runEventHandlers, normalizeError, the jobs .catch),
         // and the only throw that reaches this catch from the bundle is a built-in TypeError
-        setFailed(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error));
+        platform_platform().fail(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error));
     }
 }
 
 ;// CONCATENATED MODULE: ./lib/main.js
 
+
+
+setPlatform(actionsPlatform());
 void run();
 
 })();

@@ -1,7 +1,6 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
-
-import * as core from '@actions/core'
+import { platform } from '../platform'
 
 export interface QueueEntry {
   state: string
@@ -88,7 +87,7 @@ export async function queueState(octokit: Octokit, context: Context, number: num
   catch (e) {
     if (!warnedUnavailable) {
       warnedUnavailable = true
-      core.warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`)
+      platform().log.warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`)
     }
     return undefined
   }
@@ -145,7 +144,7 @@ export async function dequeue(octokit: Octokit, context: Context, state: QueueSt
     return true
   }
   catch (e) {
-    core.warning(`could not dequeue pr #${number}: ${errorMessage(e)}`)
+    platform().log.warning(`could not dequeue pr #${number}: ${errorMessage(e)}`)
     return false
   }
 }

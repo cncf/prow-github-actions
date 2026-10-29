@@ -1,9 +1,9 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
-import { Buffer } from 'node:buffer'
-
-import * as core from '@actions/core'
 import * as yaml from 'js-yaml'
+
+import { platform } from '../platform'
+import { decodeContent } from './base64'
 
 export type OwnersRole = 'approvers' | 'reviewers'
 
@@ -43,7 +43,7 @@ export function parseOwners(path: string, contents: string): OwnersFile {
       : {}
 
   if ('filters' in doc) {
-    core.debug(`OWNERS at ${path}: filters are not supported; ignoring`)
+    platform().log.debug(`OWNERS at ${path}: filters are not supported; ignoring`)
   }
 
   const options = doc.options
@@ -107,7 +107,7 @@ const warnedEntries = new Set<string>()
 function warnOnce(entry: string, message: string): void {
   if (!warnedEntries.has(entry)) {
     warnedEntries.add(entry)
-    core.warning(message)
+    platform().log.warning(message)
   }
 }
 
@@ -158,7 +158,7 @@ export async function expandGroups(
         return listed.map(member => member.login.toLowerCase())
       }
       catch (e) {
-        core.warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`)
+        platform().log.warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`)
         return []
       }
     })))
@@ -278,7 +278,7 @@ function decode(data: unknown, path: string): string {
   if (file.content === undefined || !file.encoding) {
     throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`)
   }
-  return Buffer.from(file.content, file.encoding as BufferEncoding).toString()
+  return decodeContent(file.content, file.encoding)
 }
 
 type TreeListing = Awaited<ReturnType<Octokit['git']['getTree']>>['data']
@@ -314,7 +314,7 @@ export async function loadOwnersTree(
 
   if (tree.truncated) {
     // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
-    core.debug(`tree at ${ref} is truncated; probing for OWNERS files`)
+    platform().log.debug(`tree at ${ref} is truncated; probing for OWNERS files`)
     return probeOwners(octokit, context, ref, dirs)
   }
 
@@ -438,7 +438,7 @@ async function probeBranchOwners(octokit: Octokit, context: Context, branch: str
   }
   catch (e) {
     if (isNotFound(e)) {
-      core.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`)
+      platform().log.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`)
       return false
     }
     throw new Error(`error listing the tree of ${branch}: ${e}`)

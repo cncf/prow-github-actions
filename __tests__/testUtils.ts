@@ -1,6 +1,5 @@
 import type { SetupServerApi } from 'msw/node'
 import type { Context } from '../src/utils/context'
-import * as github from '@actions/github'
 import { http } from 'msw'
 import { afterEach, beforeEach, expect } from 'vitest'
 
@@ -153,14 +152,25 @@ export function lgtmStatus(sha = ':sha', bound = true, observeReq?: ObserveReque
   return http.get(`${api}/repos/Codertocat/Hello-World/commits/${sha}/status`, mockResponse(200, { state: bound ? 'success' : 'pending', statuses }, observeReq))
 }
 
-// @actions/github exports only the context instance; extend its class via the prototype
-const ContextClass = github.context.constructor as new () => Context
-
-export class MockContext extends ContextClass {
+export class MockContext implements Context {
+  eventName = ''
+  payload: WebhookPayload
   constructor(payload: WebhookPayload) {
-    super()
     // clone so tests never mutate the shared imported fixture
     this.payload = structuredClone(payload)
+  }
+
+  get repo(): { owner: string, repo: string } {
+    const repository = this.payload.repository
+    if (repository) {
+      return { owner: repository.owner.login, repo: repository.name }
+    }
+    // schedule and workflow_dispatch payloads carry no repository; the runner's env names it, as @actions/github does
+    const [owner, repo] = (process.env.GITHUB_REPOSITORY ?? '').split('/')
+    if (!owner || !repo) {
+      throw new Error('context.repo requires a repository in the payload or GITHUB_REPOSITORY')
+    }
+    return { owner, repo }
   }
 }
 

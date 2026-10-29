@@ -2,8 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { LabelSection } from './config'
 import type { Context } from './context'
 
-import * as core from '@actions/core'
-
+import { platform } from '../platform'
 import { loadProwConfig, orgConfigPath, orgConfigRepos, repoConfigPaths } from './config'
 
 export type { LabelSection } from './config'
@@ -180,7 +179,7 @@ export async function removeLabels(
     catch (e) {
       // a gone label is a benign race; anything else is a real failure
       if (isNotFound(e))
-        core.debug(`label ${label} was already absent: ${e}`)
+        platform().log.debug(`label ${label} was already absent: ${e}`)
       else
         throw new Error(`could not remove label ${label}: ${e}`)
     }

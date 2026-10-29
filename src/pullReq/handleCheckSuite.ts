@@ -1,7 +1,7 @@
 import type { Context } from '../utils/context'
 import type { EventHandler } from '../utils/events'
 
-import * as github from '@actions/github'
+import { platform } from '../platform'
 import { tideOnCheckSuite } from '../plugins/tide'
 import { runEventHandlers } from '../utils/events'
 
@@ -15,6 +15,6 @@ export const checkSuiteHandlers: EventHandler[] = [tideOnCheckSuite]
  *
  * @param context - the github context of the current action event
  */
-export async function handleCheckSuite(context: Context = github.context): Promise<void> {
+export async function handleCheckSuite(context: Context = platform().context()): Promise<void> {
   await runEventHandlers(context.eventName, checkSuiteHandlers, context)
 }

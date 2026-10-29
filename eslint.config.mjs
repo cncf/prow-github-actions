@@ -21,4 +21,16 @@ export default antfu({
       assertFunctionNames: ['expect', 'expect*', '*.called', '*.notCalled'],
     }],
   },
+}, {
+  // the handlers reach the runtime only through src/platform; see docs/overview.md
+  files: ['src/**/*.ts'],
+  ignores: ['src/adapters/**', 'src/main.ts'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [
+        { group: ['@actions/*'], message: 'import from the platform instead; only src/adapters may use @actions/*' },
+        { group: ['node:*'], message: 'the core must not depend on Node; only src/adapters may import node:*' },
+      ],
+    }],
+  },
 })
