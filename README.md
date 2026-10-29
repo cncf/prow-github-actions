@@ -99,7 +99,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v3.0.1
         with:
-          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /meow
+          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /label-sync /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 

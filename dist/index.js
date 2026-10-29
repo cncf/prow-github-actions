@@ -46484,6 +46484,42 @@ async function close_close(context = platform_platform().context()) {
     }
 }
 
+;// CONCATENATED MODULE: ./lib/issueComment/labelSync.js
+
+
+
+
+
+/**
+ * /label-sync creates and updates the repository's labels from the prow
+ * configuration, as the label-sync job does, on request from a collaborator.
+ * It stands in for the action's "Run workflow" button where there is none.
+ *
+ * @param context - the github actions event context
+ */
+async function labelSyncCommand(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
+    }
+    if (!(await checkCollaborator(octokit, context, commenterId))) {
+        await createComment(octokit, context, issueNumber, `@${commenterId}: only collaborators may run \`/label-sync\`.`);
+        return;
+    }
+    // labelSync throws when a write was refused; the comment reports a clean run
+    const result = await labelSync(context);
+    const lines = [`label-sync: created ${result.created.length}, updated ${result.updated.length}, unchanged ${result.unchanged}.`];
+    if (result.created.length > 0) {
+        lines.push(`Created: ${result.created.map(name => `\`${name}\``).join(', ')}`);
+    }
+    if (result.updated.length > 0) {
+        lines.push(`Updated: ${result.updated.map(name => `\`${name}\``).join(', ')}`);
+    }
+    await createComment(octokit, context, issueNumber, lines.join('\n'));
+}
+
 ;// CONCATENATED MODULE: ./lib/issueComment/lock.js
 
 
@@ -46933,6 +46969,7 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
 // hand-written commands; looked up lazily so the module bindings stay spy-able
 const handlers = {
     '/assign': context => assign_assign(context),
@@ -46949,6 +46986,7 @@ const handlers = {
     '/reopen': context => reopen(context),
     '/milestone': context => milestone(context),
     '/meow': context => meow(context),
+    '/label-sync': context => labelSyncCommand(context),
     '/check-required-labels': context => checkRequiredLabels(context),
     '/auto-cc': context => autoCc(context),
     '/retest': context => retest(context),

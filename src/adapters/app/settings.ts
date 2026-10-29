@@ -31,7 +31,8 @@ function required(env: Record<string, string | undefined>, name: string): string
 }
 
 export function settingsFromEnv(env: Record<string, string | undefined>): AppSettings {
-  const inputs: AppSettings['inputs'] = {}
+  // the scheduler runs the merger unless told otherwise, as the reusable workflow does
+  const inputs: AppSettings['inputs'] = { jobs: 'lgtm' }
   for (const [input, variable] of Object.entries(inputEnv) as [Exclude<InputName, 'github-token'>, string][]) {
     const value = env[variable]
     if (value !== undefined) {

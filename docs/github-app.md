@@ -15,9 +15,12 @@ and automatic-merging code. Differences that matter:
   action needs for them is unnecessary.
 - **Events the App creates trigger your workflows.** Actions taken with
   `GITHUB_TOKEN` do not; an App's do, so a label the App applies can start CI.
-- **No scheduled jobs yet.** The `lgtm` merger and `label-sync` on a schedule
-  need the scheduler (a follow-up); `label-sync` still runs on a `push` that
-  changes `prow.yaml`.
+- **Scheduled jobs run for every installation at once.** `node dist-server/index.js cron`
+  runs the `PROW_JOBS` jobs once for each repository the App is installed on and
+  exits; or set `PROW_CRON_INTERVAL` to run them inside the server. See
+  [Scheduled jobs](#scheduled-jobs).
+- **`/label-sync` replaces the *Run workflow* button.** A collaborator comments
+  it on any issue or pull request; list it in `PROW_COMMANDS` to enable it.
 - **No run log.** Each event logs JSON lines to stdout; there is no Actions UI.
 
 ## Register the App
@@ -45,7 +48,8 @@ the organization (all repositories, or the ones Prow should manage).
 | `GITHUB_API_URL` | no | the REST root for GitHub Enterprise Server, e.g. `https://ghes.example/api/v3` |
 | `PORT` | no | listening port, default `8080` |
 | `PROW_COMMANDS` | no | same as the action's `prow-commands` input |
-| `PROW_JOBS` | no | same as `jobs` (only `push`-triggered `label-sync` applies today) |
+| `PROW_JOBS` | no | same as `jobs`; what the scheduler runs. Default `lgtm` |
+| `PROW_CRON_INTERVAL` | no | minutes between scheduled runs inside the server; unset means none (use the `cron` command) |
 | `PROW_MERGE_METHOD` | no | same as `merge-method` |
 | `PROW_CONFIG` | no | same as `config` |
 | `PROW_DRY_RUN` | no | same as `dry-run` |
@@ -74,6 +78,31 @@ relay deliveries with [smee.io](https://smee.io) or `gh webhook forward`.
 
 A minimal Kubernetes Deployment is one container with the variables above from a
 Secret and a Service in front of port 8080; put your usual Ingress/TLS in front.
+
+## Scheduled jobs
+
+The action's `schedule:` trigger has no webhook equivalent, so the App runs the
+jobs itself:
+
+```sh
+# once, for every installation and repository, then exit 0 (1 if any repository failed)
+node dist-server/index.js cron
+```
+
+On Kubernetes that is a `CronJob` running the same image with `args: ["dist-server/index.js", "cron"]`
+and the same environment as the Deployment; hourly matches the templates. For a
+single container with no scheduler, `PROW_CRON_INTERVAL=60` runs the jobs inside
+the server every hour instead.
+
+Each repository runs under its own installation token and state, four at a time;
+a repository that fails is logged and reported, and never stops the others.
+Suspended installations and archived repositories are skipped.
+
+`PROW_JOBS` defaults to `lgtm`, the merger. The action also offers `sweep`, which
+exists because `GITHUB_TOKEN` cannot write on a fork's `pull_request` events; the
+App's token can, so the App handles those events directly and does not need
+`sweep`. `label-sync` on a schedule works but is usually better run on a `push`
+to `prow.yaml` (automatic) or with the `/label-sync` command.
 
 ## How it fits the code
 

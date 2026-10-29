@@ -93,11 +93,11 @@ describe('settingsFromEnv', () => {
     })
   })
 
-  it('honours GITHUB_API_URL and leaves unset inputs out', () => {
+  it('honours GITHUB_API_URL, defaults jobs to lgtm and leaves the other unset inputs out', () => {
     const s = settingsFromEnv({ ...env, GITHUB_API_URL: 'https://ghes.example/api/v3' })
 
     expect(s.apiBaseUrl).toBe('https://ghes.example/api/v3')
-    expect(s.inputs).toEqual({})
+    expect(s.inputs).toEqual({ jobs: 'lgtm' })
   })
 
   it.each(['GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_WEBHOOK_SECRET'])('requires %s', (name) => {
