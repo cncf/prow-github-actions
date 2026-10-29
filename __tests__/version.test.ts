@@ -56,4 +56,12 @@ describe(`every pinned reference agrees with package.json (${version})`, () => {
   it(`ships curated release notes in docs/releases/v${version}.md`, () => {
     expect(existsSync(path.join(root, 'docs', 'releases', `v${version}.md`))).toBe(true)
   })
+
+  // release.yml pastes the notes into the GitHub release, where a relative link resolves
+  // against github.com/<owner>/<repo>/releases/ and breaks (v3.2.0 shipped three such links)
+  it.each(readdirSync(path.join(root, 'docs', 'releases')).filter(file => file.endsWith('.md')))('%s links with absolute urls only', (file) => {
+    const notes = readFileSync(path.join(root, 'docs', 'releases', file), 'utf8')
+    const relative = [...notes.matchAll(/\]\(((?!https?:\/\/|#)[^)]+)\)/g)].map(match => match[1])
+    expect(relative).toEqual([])
+  })
 })
