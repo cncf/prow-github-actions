@@ -13,7 +13,8 @@ import { root } from './utils/workflowYaml'
 // removed. This file pins the part of that promise that can be checked
 // statically: every hint states a reason, every arm-level hint names the unit
 // test that drives it (or is listed below), that test exists and imports the
-// hinted module, and every ignored test-only hook is still called by a test.
+// hinted module, and every export inside an ignored block is still exercised
+// by a test.
 
 const srcDir = path.join(root, 'src')
 const testsDir = path.join(root, '__tests__')
@@ -58,7 +59,7 @@ const armHints = hints.filter(hint => hint.kind === 'next')
  */
 const driversOutsideTheHint: Record<string, string> = {
   // "a binding refused with a non-Error value fails the command with its string form"
-  'src/labels/lgtm.ts:68': '__tests__/label/lgtm.test.ts',
+  'src/labels/lgtm.ts:65': '__tests__/label/lgtm.test.ts',
 }
 
 /** `__tests__/**\/<name>.test.ts` for the `<name>.test.ts drives it` clause of a hint */
@@ -80,10 +81,10 @@ function importsModule(testFile: string, sourceFile: string): boolean {
   return new RegExp(`from '(?:\\.\\./)+${specifier}'`).test(text)
 }
 
-/** the exported function names between a `start` hint and its `stop` */
-function hookNames(file: string, start: number, stop: number): string[] {
+/** the names exported between a `start` hint and its `stop` */
+function exportedNames(file: string, start: number, stop: number): string[] {
   const lines = readFileSync(path.join(root, file), 'utf8').split('\n').slice(start, stop - 1)
-  return lines.flatMap(line => /^export (?:async )?function (\w+)\s*\(/.exec(line)?.[1] ?? [])
+  return lines.flatMap(line => /^export (?:async function|function|const|let) (\w+)\b/.exec(line)?.[1] ?? [])
 }
 
 describe('v8 ignore hints in src/', () => {
@@ -145,13 +146,15 @@ describe('v8 ignore hints in src/', () => {
       }
     })
 
-    it.each(blocks.map(block => [`${block.start.file}:${block.start.line}`, block] as const))('%s is a test-only hook, exported and called from a test', (_at, { start, stop }) => {
-      expect(start.reason).toMatch(/test-only hook/)
-      const names = hookNames(start.file, start.line, stop?.line ?? start.line)
-      expect(names.length, 'no exported function between start and stop').toBeGreaterThan(0)
+    // a block is ignored because dist/index.js never reaches it (a test-only hook, an adapter the
+    // action does not ship); the unit suite is then the only thing that runs it, so each export
+    // in the block must be named by some test
+    it.each(blocks.map(block => [`${block.start.file}:${block.start.line}`, block] as const))('%s exports only names that some test exercises', (_at, { start, stop }) => {
+      const names = exportedNames(start.file, start.line, stop?.line ?? start.line)
+      expect(names.length, 'no export between start and stop').toBeGreaterThan(0)
       for (const name of names) {
-        const callers = testFiles.filter(file => new RegExp(`\\b${name}\\s*\\(`).test(testTexts.get(file) ?? ''))
-        expect(callers, `${name}() is ignored as test-only but no test calls it`).not.toEqual([])
+        const users = testFiles.filter(file => new RegExp(`\\b${name}\\b`).test(testTexts.get(file) ?? ''))
+        expect(users, `${name} is ignored as unreachable from the bundle but no test exercises it`).not.toEqual([])
       }
     })
   })
