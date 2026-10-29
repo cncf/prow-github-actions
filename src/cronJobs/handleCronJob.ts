@@ -1,9 +1,6 @@
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { labelSync } from './labelSync'
 import { cronLgtm } from './lgtm'
 import { sweep } from './sweep'
@@ -14,12 +11,8 @@ import { sweep } from './sweep'
  *
  * @param context - the github context of the current action event
  */
-export async function handleCronJobs(context: Context = github.context): Promise<void> {
-  const runConfig = core
-    .getInput('jobs', { required: false })
-    .split(/\s+/)
-    .filter(command => command !== '')
-    .map(command => command.toLowerCase())
+export async function handleCronJobs(context: Context = platform().context()): Promise<void> {
+  const runConfig = platform().inputs.get('jobs', { required: false }).split(/\s+/).filter(command => command !== '').map(command => command.toLowerCase())
 
   if (runConfig.length === 0) {
     runConfig.push('')
@@ -29,19 +22,19 @@ export async function handleCronJobs(context: Context = github.context): Promise
     runConfig.map(async (command) => {
       switch (command) {
         case 'lgtm':
-          core.debug('running cronLgtm job')
+          platform().log.debug('running cronLgtm job')
           return await cronLgtm(1, context).catch(async (e) => {
             return e
           })
 
         case 'label-sync':
-          core.debug('running label-sync job')
+          platform().log.debug('running label-sync job')
           return await labelSync(context).catch(async (e) => {
             return e
           })
 
         case 'sweep':
-          core.debug('running sweep job')
+          platform().log.debug('running sweep job')
           return await sweep(context).catch(async (e) => {
             return e
           })
@@ -67,6 +60,6 @@ export async function handleCronJobs(context: Context = github.context): Promise
       }
     })
     .catch((e) => {
-      core.setFailed(`${e}`)
+      platform().fail(`${e}`)
     })
 }

@@ -5,8 +5,6 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { assertAuthorizedByOwnersOrMembership } from '../../src/utils/auth'
-import { resetOwnersCaches } from '../../src/utils/owners'
-import { resetPullRequestOwnersCache } from '../../src/utils/pullRequestOwners'
 import * as utils from '../testUtils'
 import { prCommentEvent, prHandlers } from './ownersFixtures'
 
@@ -29,8 +27,7 @@ const members = `${utils.api}/orgs/Codertocat/teams/maintainers/members`
 const groupOwners = 'approvers:\n- "@codertocat/maintainers"\n'
 
 function authorize(username: string) {
-  resetPullRequestOwnersCache()
-  resetOwnersCaches()
+  utils.newRun()
   return assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', username)
 }
 

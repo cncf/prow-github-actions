@@ -2,12 +2,10 @@ import type { Octokit } from '@octokit/rest'
 import type { ProwConfig } from '../utils/config'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { loadProwConfig } from '../utils/config'
 import { parseDuration } from '../utils/duration'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 
 export interface BlunderbussSettings {
@@ -87,10 +85,10 @@ function sample(items: string[], count: number, rng: Rng): string[] {
  * @param context - the github context of the current action event
  * @param rng - a source of numbers in [0, 1), injectable for tests
  */
-export async function blunderbuss(context: Context = github.context, rng: Rng = Math.random): Promise<void> {
+export async function blunderbuss(context: Context = platform().context(), rng: Rng = Math.random): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action !== 'opened' && action !== 'ready_for_review') {
-    core.debug(`blunderbuss: skipping ${action} action`)
+    platform().log.debug(`blunderbuss: skipping ${action} action`)
     return
   }
 
@@ -99,16 +97,16 @@ export async function blunderbuss(context: Context = github.context, rng: Rng = 
     throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`)
   }
 
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   const settings = blunderbussSettings(await loadProwConfig(octokit, context))
 
   if (action === 'ready_for_review' && !settings.ignore_drafts) {
-    core.debug(`blunderbuss: skipping ${action} action`)
+    platform().log.debug(`blunderbuss: skipping ${action} action`)
     return
   }
 
   if (settings.delay > 0) {
-    core.info(`blunderbuss: #${pullNumber} ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`)
+    platform().log.info(`blunderbuss: #${pullNumber} ${action}; blunderbuss.delay is set, so the sweep job requests reviewers once it is due and nobody has been asked`)
     return
   }
 
@@ -122,14 +120,14 @@ export async function blunderbuss(context: Context = github.context, rng: Rng = 
  * @param context - the github context of the current action event
  * @param rng - a source of numbers in [0, 1), injectable for tests
  */
-export async function autoCc(context: Context = github.context, rng: Rng = Math.random): Promise<void> {
+export async function autoCc(context: Context = platform().context(), rng: Rng = Math.random): Promise<void> {
   const issue = context.payload.issue
   if (issue?.pull_request === undefined) {
-    core.debug('blunderbuss: /auto-cc only applies to pull requests')
+    platform().log.debug('blunderbuss: /auto-cc only applies to pull requests')
     return
   }
 
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   const settings = blunderbussSettings(await loadProwConfig(octokit, context))
 
   await requestOwnersReviewers(octokit, context, issue.number, settings, { explicit: true, rng })
@@ -163,11 +161,11 @@ export async function requestOwnersReviewers(
 
   if (!explicit) {
     if (settings.ignore_drafts && pull.draft) {
-      core.debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`)
+      platform().log.debug(`blunderbuss: #${pullNumber} is a draft, waiting for ready_for_review`)
       return
     }
     if (settings.ignore_authors.includes(pull.author)) {
-      core.debug(`blunderbuss: ignoring pull request by ${pull.author}`)
+      platform().log.debug(`blunderbuss: ignoring pull request by ${pull.author}`)
       return
     }
   }
@@ -187,7 +185,7 @@ export async function requestOwnersReviewers(
   }
 
   if (coverage.size === 0) {
-    core.debug(`blunderbuss: no reviewer candidates for #${pullNumber}`)
+    platform().log.debug(`blunderbuss: no reviewer candidates for #${pullNumber}`)
     return
   }
 
@@ -195,7 +193,7 @@ export async function requestOwnersReviewers(
   if (settings.max_request_count !== undefined) {
     count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length)
     if (count <= 0) {
-      core.debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`)
+      platform().log.debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`)
       return
     }
   }
@@ -207,5 +205,5 @@ export async function requestOwnersReviewers(
   catch (e) {
     throw new Error(`could not request reviewers: ${e}`)
   }
-  core.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`)
+  platform().log.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`)
 }

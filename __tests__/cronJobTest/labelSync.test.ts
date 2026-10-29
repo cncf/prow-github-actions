@@ -314,8 +314,8 @@ describe('label-sync job', () => {
   it('records a write refused with a non-Error value by its string form', async () => {
     serveConfig()
     const writes = recordWrites([])
-    vi.mocked(octokitFactory.newOctokit).mockImplementationOnce((token) => {
-      const real = new Octokit({ auth: token, baseUrl: utils.api })
+    vi.mocked(octokitFactory.newOctokitFromInputs).mockImplementationOnce(() => {
+      const real = new Octokit({ auth: 'some-token', baseUrl: utils.api })
       const refused = vi.fn().mockRejectedValue('offline')
       const issues = Object.create(real.issues, {
         createLabel: { value: (params: { name: string }) => (params.name === 'kind/bug' ? refused() : real.issues.createLabel(params)) },

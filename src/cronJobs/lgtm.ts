@@ -3,13 +3,12 @@ import type { LgtmSettings } from '../plugins/lgtmBinding'
 import type { ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
+import { platform } from '../platform'
 import { lgtmSettings } from '../plugins/lgtmBinding'
 import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 type PullsListResponseDataType
   = RestEndpointMethodTypes['pulls']['list']['response']['data']
@@ -54,10 +53,9 @@ export async function cronLgtm(
   context: Context,
   progress: LgtmProgress = { jobsDone: 0, failures: [] },
 ): Promise<number> {
-  core.info(`starting lgtm merger page: ${currentPage}`)
+  platform().log.info(`starting lgtm merger page: ${currentPage}`)
 
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const policy: MergePolicy = {
     tide: base => loadTide(octokit, context, base),
@@ -84,7 +82,7 @@ export async function cronLgtm(
 
   await Promise.all(
     prs.map(async (pr) => {
-      core.info(`processing pr: ${pr.number}`)
+      platform().log.info(`processing pr: ${pr.number}`)
       if (pr.state === 'closed') {
         return
       }
@@ -100,7 +98,7 @@ export async function cronLgtm(
       }
       catch (error) {
         // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
-        core.error(`could not evaluate pr #${pr.number}: ${error}`)
+        platform().log.error(`could not evaluate pr #${pr.number}: ${error}`)
         progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` })
       }
     }),
@@ -119,10 +117,10 @@ export async function cronLgtm(
  */
 async function getOpenPrs(
   octokit: Octokit,
-  context: Context = github.context,
+  context: Context = platform().context(),
   page: number,
 ): Promise<PullsListResponseDataType> {
-  core.debug(`getting prs page ${page}...`)
+  platform().log.debug(`getting prs page ${page}...`)
 
   const prResults = await octokit.pulls.list({
     ...context.repo,
@@ -130,7 +128,7 @@ async function getOpenPrs(
     page,
   })
 
-  core.debug(`got: ${prResults.data}`)
+  platform().log.debug(`got: ${prResults.data}`)
 
   return prResults.data
 }
@@ -152,14 +150,14 @@ async function getOpenPrs(
 async function tryMergePr(
   pr: PullsListResponseItem,
   octokit: Octokit,
-  context: Context = github.context,
+  context: Context = platform().context(),
   policy: MergePolicy,
   failures: MergeFailure[],
 ): Promise<boolean> {
   const tide = await policy.tide(pr.base.ref)
   const gate = meetsMergeGate(pr.labels.map(e => e.name), tide)
   if (!gate.ok) {
-    core.info(`skipping pr #${pr.number}: ${gate.reason}`)
+    platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`)
     return false
   }
 

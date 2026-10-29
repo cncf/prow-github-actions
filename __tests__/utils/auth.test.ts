@@ -17,7 +17,7 @@ import {
   getOrgCollabCommentUsers,
   policyAllows,
 } from '../../src/utils/auth'
-import { defaultAuthorization, resetProwConfigCache } from '../../src/utils/config'
+import { defaultAuthorization } from '../../src/utils/config'
 import issueListComments from '../fixtures/issues/assign/issueListComments.json'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
@@ -376,7 +376,7 @@ describe('authorization policies', () => {
   }
 
   beforeEach(() => {
-    resetProwConfigCache()
+    utils.newRun()
     calls = []
     server.events.on('request:start', recordCall)
     server.events.on('request:end', endCall)

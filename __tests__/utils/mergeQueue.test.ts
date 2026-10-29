@@ -2,7 +2,7 @@ import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   dequeue,
@@ -12,7 +12,6 @@ import {
   enqueueMutation,
   queueState,
   queueStateQuery,
-  resetMergeQueueWarnings,
 } from '../../src/utils/mergeQueue'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 
@@ -24,7 +23,6 @@ beforeAll(() => {
   utils.setupActionsEnv()
   server.listen(utils.failOnUnhandledRequest)
 })
-beforeEach(() => resetMergeQueueWarnings())
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -128,7 +126,7 @@ describe('queueState', () => {
     graphql(null, 'boom')
 
     await queueState(octokit, context, 7)
-    resetMergeQueueWarnings()
+    utils.newRun()
     await queueState(octokit, context, 7)
 
     expect(core.warning).toHaveBeenCalledTimes(2)

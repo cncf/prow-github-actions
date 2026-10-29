@@ -3,8 +3,7 @@ import type { Context } from '../utils/context'
 import type { PullRequestOwners } from '../utils/pullRequestOwners'
 import type { ApprovalEvent, ApprovalState, ApproveSettings, Review } from './approve'
 
-import * as core from '@actions/core'
-
+import { platform } from '../platform'
 import { isBotUser } from '../utils/comments'
 
 /** identifies the APPROVE review that mirrors the `approved` label (`approve.github_review`) */
@@ -36,7 +35,7 @@ export function tokenIdentity(octokit: Octokit): Promise<TokenIdentity> {
       (e: unknown) => {
         const status = errorStatus(e)
         if (status === 403 || status === 404) {
-          core.debug(`approve: GET /user answered ${status}; the token is an installation token`)
+          platform().log.debug(`approve: GET /user answered ${status}; the token is an installation token`)
           return {}
         }
         throw new Error(`could not identify the token for approve.github_review: ${e}`)
@@ -153,7 +152,7 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
   const { owners, state, reviews, identity } = input
   const number = owners.number
   if (!owners.open) {
-    core.debug(`approve: #${number} is not open; its approval review is left alone`)
+    platform().log.debug(`approve: #${number} is not open; its approval review is left alone`)
     return
   }
 
@@ -161,7 +160,7 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
 
   if (!state.approved) {
     if (own.length === 0) {
-      core.debug(`approve: #${number} carries no approval review to dismiss`)
+      platform().log.debug(`approve: #${number} carries no approval review to dismiss`)
       return
     }
     const message = `approved removed: ${input.reason()}`
@@ -172,21 +171,21 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
       catch (e) {
         throw new Error(`could not dismiss the approval review ${review.id}: ${e}`)
       }
-      core.info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`)
+      platform().log.info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`)
     }
     return
   }
 
   if (own.some(review => review.commit_id === owners.headSha)) {
-    core.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`)
+    platform().log.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`)
     return
   }
   if (owners.draft) {
-    core.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`)
+    platform().log.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`)
     return
   }
   if (identity.login !== undefined && identity.login === owners.author) {
-    core.warning(selfApprovalWarning(number, identity.login))
+    platform().log.warning(selfApprovalWarning(number, identity.login))
     return
   }
 
@@ -202,20 +201,20 @@ export async function syncApprovalReview(octokit: Octokit, context: Context, inp
   catch (e) {
     const message = errorMessage(e)
     if (/approve your own pull request/i.test(message)) {
-      core.warning(selfApprovalWarning(number, owners.author))
+      platform().log.warning(selfApprovalWarning(number, owners.author))
       return
     }
     if (/not permitted to approve pull requests/i.test(message)) {
-      core.warning(`${notPermittedWarning}: ${message}`)
+      platform().log.warning(`${notPermittedWarning}: ${message}`)
       return
     }
     if (errorStatus(e) === 403) {
-      core.warning(`${forbiddenWarning}: ${message}`)
+      platform().log.warning(`${forbiddenWarning}: ${message}`)
       return
     }
     throw new Error(`could not submit the approval review: ${e}`)
   }
-  core.info(`approve: submitted the approval review on #${number} at ${owners.headSha}`)
+  platform().log.info(`approve: submitted the approval review on #${number} at ${owners.headSha}`)
 }
 
 function selfApprovalWarning(number: number, login: string): string {

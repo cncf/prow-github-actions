@@ -1,10 +1,9 @@
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
-import * as github from '@actions/github'
 
+import { platform } from '../platform'
 import { checkCollaborator } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 type LockReason = 'off-topic' | 'too heated' | 'resolved' | 'spam'
 
@@ -21,9 +20,8 @@ const lockReasons: Record<string, LockReason> = {
  *
  * @param context - the github actions event context
  */
-export async function lock(context: Context = github.context): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+export async function lock(context: Context = platform().context()): Promise<void> {
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commenterId: string = context.payload.comment?.user?.login

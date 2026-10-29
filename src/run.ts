@@ -1,12 +1,10 @@
 import type { Context } from './utils/context'
 import type { EventHandler } from './utils/events'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
 import { handleCronJobs } from './cronJobs/handleCronJob'
 import { handleIssueComment } from './issueComment/handleIssueComment'
 import { handleIssues } from './issues/handleIssues'
+import { platform } from './platform'
 import { handleCheckSuite } from './pullReq/handleCheckSuite'
 import { handlePullReq } from './pullReq/handlePullReq'
 import { handlePullReqReview } from './pullReq/handlePullReqReview'
@@ -26,12 +24,11 @@ const eventHandlers: Record<string, EventHandler> = {
   push: handleCronJobs,
 }
 
-export async function run(): Promise<void> {
+export async function run(context: Context = platform().context()): Promise<void> {
   try {
-    const context: Context = github.context
     const handler = Object.hasOwn(eventHandlers, context.eventName) ? eventHandlers[context.eventName] : undefined
     if (!handler) {
-      core.error(`${context.eventName} not yet supported`)
+      platform().log.error(`${context.eventName} not yet supported`)
       return
     }
     await handler(context)
@@ -39,6 +36,6 @@ export async function run(): Promise<void> {
   catch (error) {
     // every handler folds its rejections into an Error (runEventHandlers, normalizeError, the jobs .catch),
     // and the only throw that reaches this catch from the bundle is a built-in TypeError
-    core.setFailed(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error))
+    platform().fail(error instanceof Error ? error.message : /* v8 ignore next -- non-Error arm unreachable from dist/index.js; run.test.ts drives it */ String(error))
   }
 }
