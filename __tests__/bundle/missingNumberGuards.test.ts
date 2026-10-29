@@ -47,6 +47,7 @@ describe('dist/index.js missing issue and pull request number guards', () => {
     ['/retest', '/retest', issueGuard],
     ['/help', '/help', issueGuard],
     ['/kind', '/kind bug', issueGuard],
+    ['/label-sync', '/label-sync', issueGuard],
   ])('%s on a comment without an issue number fails naming the guard', async (command, body, guard) => {
     const result = await runBundle({
       eventName: 'issue_comment',
