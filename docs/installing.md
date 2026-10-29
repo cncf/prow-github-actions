@@ -208,7 +208,7 @@ With the caller alone and no `prow.yaml` in any tier:
 
 Feature | Docs
 --- | ---
-Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, retest, test, ok-to-test, and the label commands once their labels exist | [commands](./commands.md)
+Every built-in `/command` on issues and pull requests: assign, cc, approve, lgtm, hold, close, reopen, lock, retitle, milestone, help, good-first-issue, lifecycle, stage, status, check-required-labels, auto-cc, retest, test, ok-to-test, label-sync, and the label commands once their labels exist | [commands](./commands.md)
 Reviewers requested and labels applied from OWNERS files | [labeling](./labeling.md#labels-from-owners-files), [blunderbuss](./configuration.md#blunderbuss)
 Automatic merging once a PR carries `lgtm` and no `do-not-merge/*`, `needs-rebase` or `hold`, on events and hourly; `lgtm` counts only for the commit it reviewed | [automatic merging](./automatic-merging.md)
 `lgtm` removed when new commits are pushed | [PR jobs](./pr-jobs.md)

@@ -37480,7 +37480,21 @@ function platform_platform() {
     return found;
 }
 
+;// CONCATENATED MODULE: ./lib/utils/sleep.js
+/**
+ * sleep resolves after the given delay. It lives in its own module so callers
+ * bind to it through an import and tests can replace it with a spy.
+ *
+ * @param ms - milliseconds to wait
+ */
+function sleep(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
 ;// CONCATENATED MODULE: ./lib/adapters/actions.js
+
 
 
 
@@ -37508,6 +37522,11 @@ function actionsPlatform() {
         currentWorkflowName: () => (external_node_process_default()).env.GITHUB_WORKFLOW,
         fail: message => setFailed(message),
         state: () => state,
+        capabilities: () => ({ readOnlyForkToken: true }),
+        defer: async (delayMs) => {
+            await sleep(delayMs);
+            return 'continue';
+        },
     };
 }
 
@@ -44068,19 +44087,6 @@ async function pullRequestsForSha(octokit, context, sha) {
     }
 }
 
-;// CONCATENATED MODULE: ./lib/utils/sleep.js
-/**
- * sleep resolves after the given delay. It lives in its own module so callers
- * bind to it through an import and tests can replace it with a spy.
- *
- * @param ms - milliseconds to wait
- */
-function sleep(ms) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
 ;// CONCATENATED MODULE: ./lib/plugins/tide.js
 
 
@@ -45482,7 +45488,6 @@ function lower(label) {
 
 
 
-
 const requireMatchingLabel_triggerActions = new Set(['opened', 'reopened', 'labeled', 'unlabeled']);
 const graceActions = new Set(['opened', 'reopened']);
 /** github actions minutes are billed, so a rule may not park the runner for longer */
@@ -45557,6 +45562,15 @@ async function checkRequiredLabels(context = platform_platform().context()) {
     }
     await enforce(context, undefined, false);
 }
+/**
+ * resumeRequiredLabels finishes a check a platform deferred past the grace
+ * period: the same evaluation, without waiting again.
+ *
+ * @param context - the github context of the deferred event
+ */
+async function resumeRequiredLabels(context) {
+    await enforce(context, undefined, false);
+}
 async function enforce(context, changedLabel, withGracePeriod) {
     const octokit = newOctokitFromInputs();
     await enforceRequiredLabels(octokit, context, subject(context), { changedLabel, withGracePeriod });
@@ -45586,7 +45600,10 @@ async function enforceRequiredLabels(octokit, context, target, options = {}) {
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
         platform_platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
-        await sleep(graceMs);
+        if (await platform_platform().defer(graceMs, { kind: 'require-matching-label', context }) === 'deferred') {
+            platform_platform().log.debug('require-matching-label: the check resumes after the grace period');
+            return;
+        }
     }
     const labels = await getCurrentLabels(octokit, context, issueNumber);
     const errors = [];
@@ -46483,6 +46500,42 @@ async function close_close(context = platform_platform().context()) {
     }
 }
 
+;// CONCATENATED MODULE: ./lib/issueComment/labelSync.js
+
+
+
+
+
+/**
+ * /label-sync creates and updates the repository's labels from the prow
+ * configuration, as the label-sync job does, on request from a collaborator.
+ * It stands in for the action's "Run workflow" button where there is none.
+ *
+ * @param context - the github actions event context
+ */
+async function labelSyncCommand(context = platform_platform().context()) {
+    const octokit = newOctokitFromInputs();
+    const issueNumber = context.payload.issue?.number;
+    const commenterId = context.payload.comment?.user?.login;
+    if (issueNumber === undefined) {
+        throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
+    }
+    if (!(await checkCollaborator(octokit, context, commenterId))) {
+        await createComment(octokit, context, issueNumber, `@${commenterId}: only collaborators may run \`/label-sync\`.`);
+        return;
+    }
+    // labelSync throws when a write was refused; the comment reports a clean run
+    const result = await labelSync(context);
+    const lines = [`label-sync: created ${result.created.length}, updated ${result.updated.length}, unchanged ${result.unchanged}.`];
+    if (result.created.length > 0) {
+        lines.push(`Created: ${result.created.map(name => `\`${name}\``).join(', ')}`);
+    }
+    if (result.updated.length > 0) {
+        lines.push(`Updated: ${result.updated.map(name => `\`${name}\``).join(', ')}`);
+    }
+    await createComment(octokit, context, issueNumber, lines.join('\n'));
+}
+
 ;// CONCATENATED MODULE: ./lib/issueComment/lock.js
 
 
@@ -46932,6 +46985,7 @@ async function removeSelfReviewReq(octokit, context, pullNum, user) {
 
 
 
+
 // hand-written commands; looked up lazily so the module bindings stay spy-able
 const handlers = {
     '/assign': context => assign_assign(context),
@@ -46948,6 +47002,7 @@ const handlers = {
     '/reopen': context => reopen(context),
     '/milestone': context => milestone(context),
     '/meow': context => meow(context),
+    '/label-sync': context => labelSyncCommand(context),
     '/check-required-labels': context => checkRequiredLabels(context),
     '/auto-cc': context => autoCc(context),
     '/retest': context => retest(context),
@@ -47090,12 +47145,13 @@ const readOnlyForkEvents = new Set(['pull_request', 'pull_request_review']);
  * GitHub gives `pull_request` and `pull_request_review` runs for a pull
  * request from a fork a read-only GITHUB_TOKEN (`pull_request_target` and
  * same-repository pull requests get a write token). The `sweep` job covers
- * those pull requests instead.
+ * those pull requests instead. A platform whose token can write on fork pull
+ * requests, such as a GitHub App, never skips.
  *
  * @param context - the github context of the current action event
  */
 function skipReadOnlyForkRun(context) {
-    if (!readOnlyForkEvents.has(context.eventName)) {
+    if (!platform_platform().capabilities().readOnlyForkToken || !readOnlyForkEvents.has(context.eventName)) {
         return false;
     }
     const head = context.payload.pull_request?.head?.repo?.full_name;
