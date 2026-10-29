@@ -5,5 +5,5 @@
     "sourceMap": true
   },
   "include": ["main.ts", "../../../src/**/*.ts"],
-  "exclude": []
+  "exclude": ["../../../src/server/worker.ts", "../../../src/server/worker-env.d.ts"]
 }

@@ -99,7 +99,7 @@ jobs:
     steps:
       - uses: cncf/prow-github-actions@v3.0.1
         with:
-          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /meow
+          prow-commands: /assign /unassign /cc /uncc /approve /lgtm /hold /close /reopen /lock /retitle /milestone /remove /area /kind /priority /label /lifecycle /stage /status /help /good-first-issue /retest /test /ok-to-test /label-sync /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'
 ```
 
@@ -108,6 +108,7 @@ This is the full list of available commands. Prow-style aliases (`/unhold`, `/re
 ## Documentation
 - [Prow for your organization](./docs/prow-for-your-org.md)
 - [Installing](./docs/installing.md)
+- [Running as a GitHub App](./docs/github-app.md) (beta)
 - [Overview](./docs/overview.md)
 - [Events](./docs/events.md)
 - [Commands](./docs/commands.md)

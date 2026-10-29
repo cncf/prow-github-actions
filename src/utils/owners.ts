@@ -1,9 +1,9 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
-import { Buffer } from 'node:buffer'
-
-import * as core from '@actions/core'
 import * as yaml from 'js-yaml'
+
+import { platform } from '../platform'
+import { decodeContent } from './base64'
 
 export type OwnersRole = 'approvers' | 'reviewers'
 
@@ -43,7 +43,7 @@ export function parseOwners(path: string, contents: string): OwnersFile {
       : {}
 
   if ('filters' in doc) {
-    core.debug(`OWNERS at ${path}: filters are not supported; ignoring`)
+    platform().log.debug(`OWNERS at ${path}: filters are not supported; ignoring`)
   }
 
   const options = doc.options
@@ -100,14 +100,12 @@ export function parseGroup(entry: string): { org: string, slug: string } | undef
   return match === null ? undefined : { org: match[1]!, slug: match[2]! }
 }
 
-const groupCache = new Map<string, Promise<string[]>>()
-// entries already warned about: the same OWNERS entry is expanded once per changed file per role
-const warnedEntries = new Set<string>()
-
+// the same OWNERS entry is expanded once per changed file per role; warn about it once per run
 function warnOnce(entry: string, message: string): void {
+  const warnedEntries = platform().state().ownerWarnings
   if (!warnedEntries.has(entry)) {
     warnedEntries.add(entry)
-    core.warning(message)
+    platform().log.warning(message)
   }
 }
 
@@ -148,7 +146,7 @@ export async function expandGroups(
   }
 
   const members = await Promise.all([...groups].map(slug =>
-    memoized(groupCache, `${owner}/${slug}`, async () => {
+    memoized(platform().state().ownerGroups, `${owner}/${slug}`, async () => {
       try {
         const listed = await octokit.paginate(octokit.teams.listMembersInOrg, {
           org: context.repo.owner,
@@ -158,7 +156,7 @@ export async function expandGroups(
         return listed.map(member => member.login.toLowerCase())
       }
       catch (e) {
-        core.warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`)
+        platform().log.warning(`OWNERS: could not read the members of @${owner}/${slug}: ${e}`)
         return []
       }
     })))
@@ -278,17 +276,15 @@ function decode(data: unknown, path: string): string {
   if (file.content === undefined || !file.encoding) {
     throw new Error(`invalid OWNERS file returned from GitHub API for ${path}`)
   }
-  return Buffer.from(file.content, file.encoding as BufferEncoding).toString()
+  return decodeContent(file.content, file.encoding)
 }
 
 type TreeListing = Awaited<ReturnType<Octokit['git']['getTree']>>['data']
 
-const treeCache = new Map<string, Promise<TreeListing>>()
-
 /**
  * Load the OWNERS files at ref that can apply to the given paths. The
  * recursive listing of a commit never changes, so it is memoized per ref for
- * the lifetime of the process: pull requests sharing a base tip share it.
+ * the duration of the run: pull requests sharing a base tip share it.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -305,7 +301,7 @@ export async function loadOwnersTree(
 
   let tree
   try {
-    tree = await memoized(treeCache, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () =>
+    tree = await memoized(platform().state().trees as Map<string, Promise<TreeListing>>, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () =>
       (await octokit.git.getTree({ ...context.repo, tree_sha: ref, recursive: 'true' })).data)
   }
   catch (e) {
@@ -314,7 +310,7 @@ export async function loadOwnersTree(
 
   if (tree.truncated) {
     // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
-    core.debug(`tree at ${ref} is truncated; probing for OWNERS files`)
+    platform().log.debug(`tree at ${ref} is truncated; probing for OWNERS files`)
     return probeOwners(octokit, context, ref, dirs)
   }
 
@@ -382,8 +378,6 @@ async function probeOwners(
   return { owners, hasOwners: owners.size > 0 }
 }
 
-const hasOwnersCache = new Map<string, Promise<boolean>>()
-
 /**
  * repoHasOwners reports whether the default branch carries any OWNERS file.
  * It is `branchHasOwners` for the default branch, which the payload's
@@ -395,32 +389,23 @@ const hasOwnersCache = new Map<string, Promise<boolean>>()
  * @param context - the github actions event context
  */
 export function repoHasOwners(octokit: Octokit, context: Context): Promise<boolean> {
-  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}`, async () =>
+  return memoized(platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}`, async () =>
     branchHasOwners(octokit, context, await defaultBranch(octokit, context)))
 }
 
 /**
  * branchHasOwners reports whether a branch carries any OWNERS file, which is
  * what switches `/approve` and the tide gate to their OWNERS behaviour. One
- * recursive tree listing per branch, memoized for the lifetime of the process.
+ * recursive tree listing per branch, memoized for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param branch - the branch name, ex: the pull request's `base.ref`
  */
 export function branchHasOwners(octokit: Octokit, context: Context, branch: string): Promise<boolean> {
-  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}@${branch}`, () =>
+  return memoized(platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}@${branch}`, () =>
     probeBranchOwners(octokit, context, branch))
 }
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetOwnersCaches(): void {
-  hasOwnersCache.clear()
-  treeCache.clear()
-  groupCache.clear()
-  warnedEntries.clear()
-}
-/* v8 ignore stop */
 
 function memoized<T>(cache: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
   let pending = cache.get(key)
@@ -438,7 +423,7 @@ async function probeBranchOwners(octokit: Octokit, context: Context, branch: str
   }
   catch (e) {
     if (isNotFound(e)) {
-      core.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`)
+      platform().log.debug(`no tree at ${branch}: treating the repository as having no OWNERS files`)
       return false
     }
     throw new Error(`error listing the tree of ${branch}: ${e}`)

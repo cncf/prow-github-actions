@@ -2125,6 +2125,48 @@ describe('dist/index.js', () => {
       )
     })
 
+    it('/label-sync by a collaborator runs the job and reports the result in a comment', async () => {
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+      gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
+      gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, ...builtins.map(name => ({ name, color: '000000' }))] })
+      gh.route('POST', `${repo}/labels`, { status: 201, body: {} })
+      gh.route('PATCH', new RegExp(`^${repo}/labels/`), { status: 200, body: {} })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: comment('/label-sync', 'some-author'),
+        inputs: { ...token, 'prow-commands': '/label-sync' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      const comments = gh.requestsMatching('POST', /\/issues\/1\/comments$/)
+      expect(comments).toHaveLength(1)
+      const body = (comments[0].body as { body: string }).body
+      expect(body).toMatch(/^label-sync: created 1, updated \d+, unchanged \d+\.\n/)
+      expect(body).toContain('Created: `kind/cleanup`')
+      expect(body).toContain('`kind/bug`')
+    })
+
+    it('/label-sync by a non-collaborator is refused with a comment and reads no labels', async () => {
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
+      gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+      const result = await runBundle({
+        eventName: 'issue_comment',
+        payload: comment('/label-sync', 'some-author'),
+        inputs: { ...token, 'prow-commands': '/label-sync' },
+        apiUrl: gh.url,
+      })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect((gh.requestsMatching('POST', /\/issues\/1\/comments$/)[0].body as { body: string }).body).toBe('@Codertocat: only collaborators may run `/label-sync`.')
+      expect(gh.requestsMatching('GET', /\/labels$/)).toEqual([])
+    })
+
     it('dry-run: true reads the labels, logs the plan and writes nothing', async () => {
       gh.route('GET', '/repos/Codertocat/.project/contents/prow.yaml', { status: 200, body: orgConfig })
       gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'kind/bug', color: '000000', description: 'Something is not working' }, { name: 'unrelated', color: 'ffffff' }] })

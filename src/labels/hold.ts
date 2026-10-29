@@ -1,14 +1,12 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
 
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { assertPolicy } from '../utils/auth'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { commenter } from './prefixed'
 
 // the label /hold applied before it adopted Prow's do-not-merge/hold; cancel keeps releasing it
@@ -22,9 +20,8 @@ export const legacyHoldLabel = 'hold'
  *
  * @param context - the github actions event context
  */
-export async function hold(context: Context = github.context): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+export async function hold(context: Context = platform().context()): Promise<void> {
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body
@@ -71,7 +68,7 @@ async function cancelHold(
   const present = currentLabels.filter(label => wanted.has(label.toLowerCase()))
 
   if (present.length === 0) {
-    core.debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`)
+    platform().log.debug(`could not find ${holdLabel} or ${legacyHoldLabel} to remove`)
     return
   }
 

@@ -1,10 +1,8 @@
 import type { Context } from '../utils/context'
 import type { EventHandler } from '../utils/events'
 
-import * as core from '@actions/core'
-
-import * as github from '@actions/github'
 import { okToTestOnPullRequest } from '../issueComment/trigger'
+import { platform } from '../platform'
 import { approveOnPullRequest } from '../plugins/approve'
 import { blunderbuss } from '../plugins/blunderbuss'
 import { lgtmOnPullRequest } from '../plugins/lgtmBinding'
@@ -27,17 +25,13 @@ export const pullRequestHandlers: EventHandler[] = [requireMatchingLabel, owners
  *
  * @param context - the github context of the current action event
  */
-export async function handlePullReq(context: Context = github.context): Promise<void> {
+export async function handlePullReq(context: Context = platform().context()): Promise<void> {
   if (skipReadOnlyForkRun(context)) {
     return
   }
 
   const action: string | undefined = context.payload.action
-  const runConfig = core
-    .getInput('jobs', { required: false })
-    .split(/\s+/)
-    .filter(command => command !== '')
-    .map(command => command.toLowerCase())
+  const runConfig = platform().inputs.get('jobs', { required: false }).split(/\s+/).filter(command => command !== '').map(command => command.toLowerCase())
 
   await runEventHandlers('pull_request', pullRequestHandlers, context)
 
@@ -47,14 +41,14 @@ export async function handlePullReq(context: Context = github.context): Promise<
 
   await Promise.all(
     runConfig.map(async (command) => {
-      core.debug(`${context}`)
+      platform().log.debug(`${context}`)
       switch (command) {
         case 'lgtm':
           if (action !== 'synchronize') {
-            core.debug(`skipping pr lgtm job: ${action} pushes no new commits`)
+            platform().log.debug(`skipping pr lgtm job: ${action} pushes no new commits`)
             return
           }
-          core.debug('running pr lgtm new commit job')
+          platform().log.debug('running pr lgtm new commit job')
           return await onPrLgtm(context).catch(async (e) => {
             return e
           })
@@ -74,6 +68,6 @@ export async function handlePullReq(context: Context = github.context): Promise<
       }
     })
     .catch((e) => {
-      core.setFailed(`${e}`)
+      platform().fail(`${e}`)
     })
 }
