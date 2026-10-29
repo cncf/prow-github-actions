@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   effectiveOwners,
@@ -9,7 +9,6 @@ import {
   ownersInclude,
   parseGroup,
   parseOwners,
-  resetOwnersCaches,
 } from '../../src/utils/owners'
 
 describe('parseOwners', () => {
@@ -231,8 +230,6 @@ describe('expandGroups', () => {
     expect([...result].sort()).toEqual(['alice', 'bob', 'carol'])
   })
 
-  beforeEach(() => resetOwnersCaches())
-
   it('ignores groups of another org and groups it cannot read', async () => {
     const result = await expandGroups(client({}), context, ['alice', '@other/team', '@myorg/missing'])
 
@@ -310,8 +307,6 @@ describe('ownersInclude', () => {
       teams: { listMembersInOrg: vi.fn() },
     }
   }
-
-  beforeEach(() => resetOwnersCaches())
 
   it('answers a direct listing without reading any team', async () => {
     const octokit = client(['bob'])

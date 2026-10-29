@@ -1,11 +1,9 @@
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
 
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { checkCollaborator } from '../utils/auth'
 import { getLineArgs } from '../utils/command'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 /**
  * /milestone will add the issue to an existing milestone.
@@ -15,10 +13,9 @@ import { newOctokit } from '../utils/octokit'
  * @param context - the github actions event context
  */
 export async function milestone(
-  context: Context = github.context,
+  context: Context = platform().context(),
 ): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commentBody: string = context.payload.comment?.body

@@ -1,6 +1,5 @@
 import type { MockedFunction } from 'vitest'
 import * as core from '@actions/core'
-import * as github from '@actions/github'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleCronJobs } from '../src/cronJobs/handleCronJob'
@@ -10,6 +9,7 @@ import { handleCheckSuite } from '../src/pullReq/handleCheckSuite'
 import { handlePullReq } from '../src/pullReq/handlePullReq'
 import { handlePullReqReview } from '../src/pullReq/handlePullReqReview'
 import { run } from '../src/run'
+import { MockContext } from './testUtils'
 
 vi.mock('../src/issueComment/handleIssueComment', () => ({
   handleIssueComment: vi.fn(),
@@ -60,9 +60,11 @@ const dispatchTable: [string, HandlerName][] = [
 ]
 
 describe('run', () => {
+  const context = new MockContext({})
+
   beforeEach(() => {
     vi.resetAllMocks()
-    github.context.eventName = 'issue_comment'
+    context.eventName = 'issue_comment'
   })
 
   it('does not resolve until the dispatched handler settles', async () => {
@@ -73,7 +75,7 @@ describe('run', () => {
     mockedHandle.mockReturnValue(handlerGate)
 
     let resolved = false
-    const running = run().then(() => {
+    const running = run(context).then(() => {
       resolved = true
     })
 
@@ -88,13 +90,13 @@ describe('run', () => {
   })
 
   it.each(dispatchTable)('dispatches %s to %s with the github context', async (eventName, handlerName) => {
-    github.context.eventName = eventName
+    context.eventName = eventName
     handlers[handlerName].mockResolvedValue()
 
-    await run()
+    await run(context)
 
     expect(handlers[handlerName]).toHaveBeenCalledTimes(1)
-    expect(handlers[handlerName]).toHaveBeenCalledWith(github.context)
+    expect(handlers[handlerName]).toHaveBeenCalledWith(context)
     for (const [name, handler] of Object.entries(handlers)) {
       if (name !== handlerName) {
         expect(handler, name).not.toHaveBeenCalled()
@@ -103,11 +105,11 @@ describe('run', () => {
   })
 
   it.each(['release', 'toString', 'constructor'])('logs an error for the unsupported event %s without failing', async (eventName) => {
-    github.context.eventName = eventName
+    context.eventName = eventName
     const logError = vi.spyOn(core, 'error').mockImplementation(() => {})
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
-    await expect(run()).resolves.toBeUndefined()
+    await expect(run(context)).resolves.toBeUndefined()
 
     expect(logError).toHaveBeenCalledWith(`${eventName} not yet supported`)
     expect(setFailed).not.toHaveBeenCalled()
@@ -120,7 +122,7 @@ describe('run', () => {
     mockedHandle.mockRejectedValue('plain string failure')
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
-    await run()
+    await run(context)
 
     expect(setFailed).toHaveBeenCalledWith('plain string failure')
   })
@@ -129,7 +131,7 @@ describe('run', () => {
     mockedHandle.mockRejectedValue(new Error('handler blew up'))
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
-    await run()
+    await run(context)
 
     expect(setFailed).toHaveBeenCalledWith('handler blew up')
   })
