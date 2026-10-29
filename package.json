@@ -17,7 +17,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.core.json",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "pack": "ncc build",

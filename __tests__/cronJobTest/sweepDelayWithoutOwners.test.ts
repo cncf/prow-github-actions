@@ -4,7 +4,6 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { sweep } from '../../src/cronJobs/sweep'
-import { resetOwnersCaches } from '../../src/utils/owners'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -38,7 +37,7 @@ describe('sweep with blunderbuss.delay on a base branch without OWNERS files', (
   beforeEach(() => {
     utils.setupJobsEnv('sweep')
     vi.useFakeTimers({ now, toFake: ['Date'] })
-    resetOwnersCaches()
+    utils.newRun()
     context = new utils.MockContext(pullReqOpenedEvent)
   })
 

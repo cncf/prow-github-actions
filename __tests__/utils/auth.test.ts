@@ -17,7 +17,7 @@ import {
   getOrgCollabCommentUsers,
   policyAllows,
 } from '../../src/utils/auth'
-import { defaultAuthorization, resetProwConfigCache } from '../../src/utils/config'
+import { defaultAuthorization } from '../../src/utils/config'
 import issueListComments from '../fixtures/issues/assign/issueListComments.json'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
@@ -29,8 +29,6 @@ beforeAll(() => {
   utils.setupActionsEnv()
   server.listen(utils.failOnUnhandledRequest)
 })
-// the configuration is memoized per repository: a test that loaded one must not hand it to the next
-beforeEach(() => resetProwConfigCache())
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
@@ -378,6 +376,7 @@ describe('authorization policies', () => {
   }
 
   beforeEach(() => {
+    utils.newRun()
     calls = []
     server.events.on('request:start', recordCall)
     server.events.on('request:end', endCall)

@@ -1,16 +1,11 @@
 import type { SetupServerApi } from 'msw/node'
 import type { Context } from '../src/utils/context'
 import { Buffer } from 'node:buffer'
-import * as github from '@actions/github'
 import { http } from 'msw'
-import { afterEach, beforeEach, expect } from 'vitest'
 
-import { resetTideWarnings } from '../src/plugins/tide'
-import { resetProwConfigCache } from '../src/utils/config'
-import { resetLabelCache } from '../src/utils/labeling'
-import { resetMergeQueueWarnings } from '../src/utils/mergeQueue'
-import { resetOwnersCaches } from '../src/utils/owners'
-import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
+import { afterEach, beforeEach, expect } from 'vitest'
+import { actionsPlatform } from '../src/adapters/actions'
+import { setPlatform } from '../src/platform'
 
 type WebhookPayload = Context['payload']
 
@@ -174,28 +169,39 @@ export function lgtmStatus(sha = ':sha', bound = true, observeReq?: ObserveReque
   return http.get(`${api}/repos/Codertocat/Hello-World/commits/${sha}/status`, mockResponse(200, { state: bound ? 'success' : 'pending', statuses }, observeReq))
 }
 
-// @actions/github exports only the context instance; extend its class via the prototype
-const ContextClass = github.context.constructor as new () => Context
-
-export class MockContext extends ContextClass {
+export class MockContext implements Context {
+  eventName = ''
+  payload: WebhookPayload
   constructor(payload: WebhookPayload) {
-    super()
     // clone so tests never mutate the shared imported fixture
     this.payload = structuredClone(payload)
   }
+
+  get repo(): { owner: string, repo: string } {
+    const repository = this.payload.repository
+    if (repository) {
+      return { owner: repository.owner.login, repo: repository.name }
+    }
+    // schedule and workflow_dispatch payloads carry no repository; the runner's env names it, as @actions/github does
+    const [owner, repo] = (process.env.GITHUB_REPOSITORY ?? '').split('/')
+    if (!owner || !repo) {
+      throw new Error('context.repo requires a repository in the payload or GITHUB_REPOSITORY')
+    }
+    return { owner, repo }
+  }
+}
+
+/** newRun installs a fresh Actions platform, and with it an empty RunState: what a new action run sees */
+export function newRun(): void {
+  setPlatform(actionsPlatform())
 }
 
 // Drop action inputs and the runner-provided GITHUB_* variables so that tests
 // are hermetic when they run inside GitHub Actions (github.context reads
 // GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
-// The configuration, repository label, pull request OWNERS and OWNERS-presence caches live for one action run, so they are reset here too.
+// The memoized state lives for one action run, so a new run starts here too.
 function clearActionEnv() {
-  resetProwConfigCache()
-  resetLabelCache()
-  resetPullRequestOwnersCache()
-  resetOwnersCaches()
-  resetMergeQueueWarnings()
-  resetTideWarnings()
+  newRun()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]

@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   effectiveOwners,
@@ -9,11 +9,7 @@ import {
   ownersInclude,
   parseGroup,
   parseOwners,
-  resetOwnersCaches,
 } from '../../src/utils/owners'
-
-// the group, tree and OWNERS-presence memos live on the module: no describe may inherit another's
-beforeEach(() => resetOwnersCaches())
 
 describe('parseOwners', () => {
   it('reads approvers and reviewers', () => {

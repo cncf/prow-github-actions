@@ -121,14 +121,15 @@ leaked into its neighbour here, and how each file now avoids them:
   because the chain is idle between two of its probes. `utils.configFoundAt`
   serves an empty configuration at the other tier's first probe, so the only
   sibling request is already in flight when the rejection lands.
-- **A memo on a module instance.** `loadProwConfig` is memoized per
-  repository and `queueState` warns once per process; a test that does not
-  reset them inherits what the previous test loaded. `setupActionsEnv` /
-  `setupJobsEnv` reset every cache; a file that calls neither (or only in
-  `beforeAll`) needs `resetProwConfigCache()` in a `beforeEach`, and a file
-  that uses `vi.resetModules()` must import `@actions/core` and the module under
-  test fresh together, or the assertion spies on a different `core` instance
-  than the one the module warns through.
+- **A memo that outlives the test.** Everything a handler memoizes for an
+  event — configuration, repository labels, OWNERS trees, warnings already
+  shown — lives in the platform's `RunState`, and `__tests__/setup.ts`
+  installs a fresh platform before every test, so a test inherits nothing the
+  previous one loaded. A test that swaps in its own platform mid-test (or a
+  `describe` that needs an empty run between its own tests) calls
+  `utils.newRun()`. A file that uses `vi.resetModules()` must import
+  `@actions/core` and the module under test fresh together, or the assertion
+  spies on a different `core` instance than the one the module warns through.
 
 ### Mutation checks
 

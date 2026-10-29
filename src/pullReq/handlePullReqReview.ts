@@ -1,7 +1,7 @@
 import type { Context } from '../utils/context'
 import type { EventHandler } from '../utils/events'
 
-import * as github from '@actions/github'
+import { platform } from '../platform'
 import { approveOnReview } from '../plugins/approve'
 import { tideOnReview } from '../plugins/tide'
 import { runEventHandlers, skipReadOnlyForkRun } from '../utils/events'
@@ -16,7 +16,7 @@ export const pullRequestReviewHandlers: EventHandler[] = [approveOnReview, tideO
  *
  * @param context - the github context of the current action event
  */
-export async function handlePullReqReview(context: Context = github.context): Promise<void> {
+export async function handlePullReqReview(context: Context = platform().context()): Promise<void> {
   if (skipReadOnlyForkRun(context)) {
     return
   }

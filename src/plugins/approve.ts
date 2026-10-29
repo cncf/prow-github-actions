@@ -3,14 +3,12 @@ import type { ProwConfig } from '../utils/config'
 import type { Context } from '../utils/context'
 import type { PullRequestOwners } from '../utils/pullRequestOwners'
 
-import * as core from '@actions/core'
-import * as github from '@actions/github'
-
+import { platform } from '../platform'
 import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { labelIssue, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
 import { reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from './approveReview'
@@ -200,7 +198,7 @@ export function computeApproval(owners: PullRequestOwners, events: ApprovalEvent
 
   for (const login of approving) {
     if (!covering.has(login)) {
-      core.debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`)
+      platform().log.debug(`approve: ${login} approves none of the changed files of #${owners.number}; ignored`)
     }
   }
 
@@ -369,7 +367,7 @@ function ownersEntries(state: ApprovalState, owners: PullRequestOwners): OwnersE
 export async function evaluateApproval(octokit: Octokit, context: Context, pullNumber: number): Promise<void> {
   const owners = await loadPullRequestOwners(octokit, context, pullNumber)
   if (!owners.tree.hasOwners) {
-    core.debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`)
+    platform().log.debug(`approve: the base of #${pullNumber} has no OWNERS files, nothing to evaluate`)
     return
   }
 
@@ -381,7 +379,7 @@ export async function evaluateApproval(octokit: Octokit, context: Context, pullN
   const events = approvalEvents(comments, settings.ignore_review_state ? [] : reviews, identity?.login)
   const state = computeApproval(owners, events, settings)
 
-  core.info(state.approved
+  platform().log.info(state.approved
     ? `approve: #${pullNumber} is approved by ${[...state.approvers].join(', ')}`
     : `approve: #${pullNumber} is not approved; nobody approves ${state.uncoveredFiles.join(', ') || 'anything'}`)
 
@@ -401,7 +399,7 @@ async function syncLabel(octokit: Octokit, context: Context, owners: PullRequest
     await removeLabels(octokit, context, owners.number, present)
   }
   else {
-    core.debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`)
+    platform().log.debug(`approve: the ${approvedLabel} label on #${owners.number} is already correct`)
   }
 }
 
@@ -414,7 +412,7 @@ async function upsertNotifier(octokit: Octokit, context: Context, pullNumber: nu
   }
 
   if (existing.body.trim() === body.trim()) {
-    core.debug(`approve: the notifier on #${pullNumber} is up to date`)
+    platform().log.debug(`approve: the notifier on #${pullNumber} is up to date`)
     return
   }
 
@@ -457,14 +455,14 @@ async function listReviews(octokit: Octokit, context: Context, pullNumber: numbe
  *
  * @param context - the github context of the current action event
  */
-export async function approveOnPullRequest(context: Context = github.context): Promise<void> {
+export async function approveOnPullRequest(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !pullRequestActions.has(action)) {
-    core.debug(`approve: skipping ${action} action`)
+    platform().log.debug(`approve: skipping ${action} action`)
     return
   }
   if ((action === 'labeled' || action === 'unlabeled') && String(context.payload.label?.name ?? '').toLowerCase() !== approvedLabel) {
-    core.debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`)
+    platform().log.debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`)
     return
   }
 
@@ -479,14 +477,14 @@ export async function approveOnPullRequest(context: Context = github.context): P
  *
  * @param context - the github context of the current action event
  */
-export async function approveOnReview(context: Context = github.context): Promise<void> {
+export async function approveOnReview(context: Context = platform().context()): Promise<void> {
   const action: string | undefined = context.payload.action
   if (action === undefined || !reviewActions.has(action)) {
-    core.debug(`approve: skipping ${action} review action`)
+    platform().log.debug(`approve: skipping ${action} review action`)
     return
   }
   if (String(context.payload.review?.body ?? '').includes(reviewMarker)) {
-    core.debug(`approve: review ${context.payload.review?.id} is the approval review this action mirrors; nothing to evaluate`)
+    platform().log.debug(`approve: review ${context.payload.review?.id} is the approval review this action mirrors; nothing to evaluate`)
     return
   }
 
@@ -498,11 +496,11 @@ async function evaluateOnOwnersRepo(context: Context, pullNumber: number | undef
     throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`)
   }
 
-  const octokit = newOctokit(core.getInput('github-token', { required: true }))
+  const octokit = newOctokitFromInputs()
   const base: unknown = context.payload.pull_request?.base?.ref
   const hasOwners = typeof base === 'string' ? await branchHasOwners(octokit, context, base) : await repoHasOwners(octokit, context)
   if (!hasOwners) {
-    core.debug('approve: the base branch has no OWNERS files')
+    platform().log.debug('approve: the base branch has no OWNERS files')
     return
   }
 

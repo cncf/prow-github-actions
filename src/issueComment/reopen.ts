@@ -1,18 +1,16 @@
 import type { Context } from '../utils/context'
-import * as core from '@actions/core'
-import * as github from '@actions/github'
 
+import { platform } from '../platform'
 import { checkCollaborator, closePolicyAllows } from '../utils/auth'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 /**
  * /reopen will reopen the issue / PR. May be called after /close
  *
  * @param context - the github actions event context
  */
-export async function reopen(context: Context = github.context): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+export async function reopen(context: Context = platform().context()): Promise<void> {
+  const octokit = newOctokitFromInputs()
 
   const issueNumber: number | undefined = context.payload.issue?.number
   const commenterId: string = context.payload.comment?.user?.login

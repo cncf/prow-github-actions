@@ -4,7 +4,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { loadPullRequestOwners, resetPullRequestOwnersCache } from '../../src/utils/pullRequestOwners'
+import { loadPullRequestOwners } from '../../src/utils/pullRequestOwners'
 import * as utils from '../testUtils'
 import {
   baseBranch,
@@ -135,7 +135,7 @@ describe('loadPullRequestOwners', () => {
     const draft = await loadPullRequestOwners(octokit, context, 1)
     expect(draft).toMatchObject({ draft: true, open: true })
 
-    resetPullRequestOwnersCache()
+    utils.newRun()
     server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt'], { draft: false, state: 'closed' }))
     const closed = await loadPullRequestOwners(octokit, context, 1)
     expect(closed).toMatchObject({ draft: false, open: false })
@@ -220,11 +220,11 @@ describe('loadPullRequestOwners', () => {
     expect(first.tree.hasOwners).toBe(true)
   })
 
-  it('resetPullRequestOwnersCache forces a fresh fetch', async () => {
+  it('a new run fetches afresh', async () => {
     server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
     const first = await loadPullRequestOwners(octokit, context, 1)
 
-    resetPullRequestOwnersCache()
+    utils.newRun()
     const observePull = new utils.ObserveRequest()
     server.use(pullHandler(observePull), filesHandler(changedFiles('src/file1.txt')), ...treeHandlers({ OWNERS: rootOwners }))
 
@@ -343,11 +343,11 @@ describe('loadPullRequestOwners', () => {
       expect(other.baseSha).toBe('other-tip')
     })
 
-    it('resetPullRequestOwnersCache forgets the tip too', async () => {
+    it('a new run forgets the tip too', async () => {
       server.use(...prHandlers({ OWNERS: rootOwners }, ['src/file1.txt']))
       await loadPullRequestOwners(octokit, context, 1)
 
-      resetPullRequestOwnersCache()
+      utils.newRun()
       const observeBranch = new utils.ObserveRequest()
       server.use(pullHandler(), filesHandler(changedFiles('src/file1.txt')), branchHandler(baseSha, baseBranch, observeBranch), ...treeHandlers({ OWNERS: rootOwners }).slice(1))
 

@@ -1,8 +1,8 @@
 import type { Context } from '../utils/context'
 
-import * as core from '@actions/core'
+import { platform } from '../platform'
 import { getCurrentLabels, removeLabels } from '../utils/labeling'
-import { newOctokit } from '../utils/octokit'
+import { newOctokitFromInputs } from '../utils/octokit'
 
 /**
  * Removes the 'lgtm' label after a pull request event
@@ -10,8 +10,7 @@ import { newOctokit } from '../utils/octokit'
  * @param context - The github actions event context
  */
 export async function onPrLgtm(context: Context): Promise<void> {
-  const token = core.getInput('github-token', { required: true })
-  const octokit = newOctokit(token)
+  const octokit = newOctokitFromInputs()
 
   const prNumber: number | undefined = context.payload.pull_request?.number
 
@@ -24,7 +23,7 @@ export async function onPrLgtm(context: Context): Promise<void> {
   let currentLabels: string[] = []
   try {
     currentLabels = await getCurrentLabels(octokit, context, prNumber)
-    core.debug(`remove-lgtm: found labels for issue ${currentLabels}`)
+    platform().log.debug(`remove-lgtm: found labels for issue ${currentLabels}`)
   }
   catch (e) {
     throw new Error(`could not get labels from issue: ${e}`)
