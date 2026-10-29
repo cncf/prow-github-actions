@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      },
+      "required": ["repository"]
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "appId": { "type": "string" },
+        "privateKey": { "type": "string" },
+        "webhookSecret": { "type": "string" },
+        "existingSecret": { "type": "string" },
+        "apiUrl": { "type": "string", "pattern": "^$|^https?://" }
+      },
+      "anyOf": [
+        { "properties": { "existingSecret": { "minLength": 1 } }, "required": ["existingSecret"] },
+        {
+          "properties": {
+            "appId": { "minLength": 1 },
+            "privateKey": { "minLength": 1 },
+            "webhookSecret": { "minLength": 1 }
+          },
+          "required": ["appId", "privateKey", "webhookSecret"]
+        }
+      ]
+    },
+    "prow": {
+      "type": "object",
+      "properties": {
+        "commands": { "type": "string" },
+        "jobs": { "type": "string" },
+        "mergeMethod": { "enum": ["", "merge", "squash", "rebase"] },
+        "config": { "type": "string" },
+        "dryRun": { "type": "boolean" }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string", "pattern": "^$|^rediss?://" },
+        "existingSecret": { "type": "string" },
+        "existingSecretKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cronjob": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "schedule": { "type": "string", "minLength": 9 }
+      }
+    },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 }
+  },
+  "if": { "properties": { "replicaCount": { "minimum": 2 } } },
+  "then": {
+    "anyOf": [
+      { "properties": { "redis": { "properties": { "url": { "minLength": 1 } }, "required": ["url"] } } },
+      { "properties": { "redis": { "properties": { "existingSecret": { "minLength": 1 } }, "required": ["existingSecret"] } } }
+    ]
+  }
+}

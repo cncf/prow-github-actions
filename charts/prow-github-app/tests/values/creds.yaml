@@ -1,0 +1,4 @@
+github:
+  appId: '42'
+  privateKey: "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----"
+  webhookSecret: s

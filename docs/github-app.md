@@ -62,24 +62,80 @@ the organization (all repositories, or the ones Prow should manage).
 
 ## Run
 
-A container image is built from the repository's `Dockerfile`:
+### Kubernetes
+
+The chart and the image are published with every release, signed with cosign and
+carrying SLSA provenance:
 
 ```sh
-docker build -t prow-app .
+kubectl create secret generic prow-github \
+  --from-literal=appId=123456 \
+  --from-literal=webhookSecret="$(openssl rand -hex 32)" \
+  --from-file=privateKey=prow.private-key.pem
+
+helm install prow oci://ghcr.io/cncf/prow-github-actions/charts/prow-github-app \
+  --version 3.4.0 \
+  --set github.existingSecret=prow-github \
+  --set ingress.enabled=true --set ingress.className=nginx \
+  --set 'ingress.hosts[0].host=prow.example.com' \
+  --set 'ingress.hosts[0].paths[0].path=/webhook' --set 'ingress.hosts[0].paths[0].pathType=Exact'
+```
+
+The webhook URL for the App is `https://prow.example.com/webhook`. The chart
+creates a Deployment (liveness `/healthz`, readiness `/readyz`), a Service, the
+Ingress above, a ServiceAccount, and a CronJob that runs the scheduled jobs
+hourly (`cronjob.schedule`, `prow.jobs`). The `prow.*` values are the action's
+inputs under other names; `github.apiUrl` points at a GitHub Enterprise Server.
+`helm show values oci://ghcr.io/cncf/prow-github-actions/charts/prow-github-app --version 3.4.0`
+lists everything.
+
+Two topologies:
+
+```yaml
+# one replica: nothing shared, Recreate strategy; the default
+replicaCount: 1
+```
+
+```yaml
+# several replicas: a Redis every replica shares; the chart refuses replicaCount > 1 without one
+replicaCount: 3
+redis:
+  url: rediss://my-redis:6380 # or existingSecret / existingSecretKey
+```
+
+The chart ships no Redis: any Redis 6+ or Valkey will do, and for development
+`kubectl create deployment redis --image=redis:7-alpine --port=6379 && kubectl expose deployment redis`
+gives one at `redis://redis:6379`. Upgrade with `helm upgrade prow … --version X.Y.Z`;
+the pods roll when configuration or inline credentials change.
+
+Verify what you install:
+
+```sh
+cosign verify ghcr.io/cncf/prow-github-actions:3.4.0 \
+  --certificate-identity-regexp="https://github.com/cncf/prow-github-actions" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+gh attestation verify oci://ghcr.io/cncf/prow-github-actions:3.4.0 --repo cncf/prow-github-actions
+gh attestation verify oci://ghcr.io/cncf/prow-github-actions/charts/prow-github-app:3.4.0 --repo cncf/prow-github-actions
+```
+
+### A container anywhere else
+
+```sh
 docker run -p 8080:8080 \
   -e GITHUB_APP_ID=... -e GITHUB_WEBHOOK_SECRET=... \
   -e GITHUB_APP_PRIVATE_KEY="$(cat prow.private-key.pem)" \
-  prow-app
+  ghcr.io/cncf/prow-github-actions:3.4.0
 ```
 
-`GET /healthz` answers `ok` (liveness); `GET /readyz` answers `ok` once the
-stores below are reachable (readiness). `POST /webhook` verifies
-`X-Hub-Signature-256`, answers `202` at once and handles the event afterwards.
-A pull request's events run one at a time, in order, as the action's
-`concurrency:` group arranges; a redelivered `X-GitHub-Delivery` id is handled
-once. On `SIGTERM` the server stops accepting, lets in-flight events finish
-(`PROW_SHUTDOWN_GRACE_MS`, default 25 000) and exits. For local testing, relay
-deliveries with [smee.io](https://smee.io) or `gh webhook forward`.
+(or `docker build -t prow-app .` from the repository.) `GET /healthz` answers
+`ok` (liveness); `GET /readyz` answers `ok` once the stores below are reachable
+(readiness). `POST /webhook` verifies `X-Hub-Signature-256`, answers `202` at
+once and handles the event afterwards. A pull request's events run one at a
+time, in order, as the action's `concurrency:` group arranges; a redelivered
+`X-GitHub-Delivery` id is handled once. On `SIGTERM` the server stops accepting,
+lets in-flight events finish (`PROW_SHUTDOWN_GRACE_MS`, default 25 000) and
+exits. For local testing, relay deliveries with [smee.io](https://smee.io) or
+`gh webhook forward`.
 
 ### One replica or several
 
@@ -94,10 +150,6 @@ on one pull request; the server warns at startup when `PROW_REPLICAS` is above
 keys per event (`prow:delivery:<id>`, a day; `prow:lock:<owner/repo#n>`, a
 minute at most) and nothing else.
 
-A minimal Kubernetes Deployment is one container with the variables above from a
-Secret and a Service in front of port 8080; put your usual Ingress/TLS in front.
-A Helm chart is on its way.
-
 ## Scheduled jobs
 
 The action's `schedule:` trigger has no webhook equivalent, so the App runs the
@@ -108,10 +160,9 @@ jobs itself:
 node dist-server/index.js cron
 ```
 
-On Kubernetes that is a `CronJob` running the same image with `args: ["dist-server/index.js", "cron"]`
-and the same environment as the Deployment; hourly matches the templates. For a
-single container with no scheduler, `PROW_CRON_INTERVAL=60` runs the jobs inside
-the server every hour instead.
+The chart's CronJob does exactly this (`cronjob.schedule`, hourly by default).
+For a single container with no scheduler, `PROW_CRON_INTERVAL=60` runs the jobs
+inside the server every hour instead.
 
 Each repository runs under its own installation token and state, four at a time;
 a repository that fails is logged and reported, and never stops the others.

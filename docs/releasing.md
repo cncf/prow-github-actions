@@ -23,7 +23,12 @@ Both workflows:
 3. **Sign the SBOM** with [cosign](https://github.com/sigstore/cosign)
    (keyless, via GitHub OIDC) and create a SLSA build provenance
    attestation covering both `dist/index.js` and the SBOM.
-4. **Create a GitHub Release** with auto-generated release notes and the
+4. **Publish the GitHub App** as a multi-arch container image
+   (`ghcr.io/cncf/prow-github-actions:X.Y.Z`, plus `X.Y`, `X` and `latest` for a
+   stable release) and a Helm chart
+   (`oci://ghcr.io/cncf/prow-github-actions/charts/prow-github-app:X.Y.Z`), each
+   signed with cosign and attested by digest.
+5. **Create a GitHub Release** with auto-generated release notes and the
    following attached artifacts:
    - `prow-github-actions-<version>.spdx.json` — the SBOM
    - `prow-github-actions-<version>.spdx.json.bundle` — cosign signature bundle
@@ -46,6 +51,10 @@ The [reusable workflow](../.github/workflows/prow.yml) is versioned with the
 action: it checks out `cncf/prow-github-actions` at `job.workflow_sha`, the
 commit of the workflow file itself, so a tag or sha names both the workflow and
 the action bundle that runs. Nothing in it needs updating at release time.
+
+The two ghcr.io packages were created by the first release that published them
+and made public by hand (package settings → *Change visibility*); `GITHUB_TOKEN`
+can publish to them but cannot change their visibility.
 
 ## Cutting a stable release
 

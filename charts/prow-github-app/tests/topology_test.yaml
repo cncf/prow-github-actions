@@ -1,0 +1,111 @@
+suite: topology
+templates:
+  - deployment.yaml
+  - pdb.yaml
+  - secret.yaml
+  - cronjob.yaml
+values:
+  - ./values/creds.yaml
+tests:
+  - it: one replica recreates and has no pdb
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 1}
+      - equal: {path: spec.strategy.type, value: Recreate}
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: REDIS_URL}
+          any: true
+  - it: one replica renders no pdb
+    template: pdb.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: several replicas roll, carry REDIS_URL and a pdb
+    set:
+      replicaCount: 3
+      redis.url: redis://r:6379
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.replicas, value: 3}
+      - isNull: {path: spec.strategy}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: REDIS_URL, value: redis://r:6379}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PROW_REPLICAS, value: '3'}
+  - it: several replicas render a pdb with minAvailable 1
+    set:
+      replicaCount: 3
+      redis.url: redis://r:6379
+    template: pdb.yaml
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: spec.minAvailable, value: 1}
+  - it: redis.existingSecret wins over redis.url
+    set:
+      replicaCount: 2
+      redis.url: redis://ignored
+      redis.existingSecret: my-redis
+      redis.existingSecretKey: uri
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: REDIS_URL
+            valueFrom: {secretKeyRef: {name: my-redis, key: uri}}
+  - it: inline credentials render a Secret the env reads
+    template: secret.yaml
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: stringData.appId, value: '42'}
+  - it: github.existingSecret suppresses the Secret and is what the env reads
+    set:
+      github.existingSecret: mine
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    template: secret.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: the env reads github.existingSecret
+    set:
+      github.existingSecret: mine
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+            valueFrom: {secretKeyRef: {name: mine, key: appId}}
+  - it: the cronjob runs the cron entry point on the schedule, never concurrently
+    template: cronjob.yaml
+    asserts:
+      - equal:
+          path: spec.schedule
+          value: '0 * * * *'
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].args
+          value: [dist-server/index.js, cron]
+  - it: cronjob.enabled false renders nothing
+    set:
+      cronjob.enabled: false
+    template: cronjob.yaml
+    asserts:
+      - hasDocuments: {count: 0}
+  - it: the shutdown grace is five seconds under the pod's
+    set:
+      terminationGracePeriodSeconds: 45
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.terminationGracePeriodSeconds, value: 45}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PROW_SHUTDOWN_GRACE_MS, value: '40000'}

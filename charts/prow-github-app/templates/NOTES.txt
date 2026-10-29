@@ -1,0 +1,17 @@
+Prow is running as a GitHub App.
+
+Point the App's webhook at this release:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}/webhook
+{{- end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "prow-github-app.fullname" . }} 8080:{{ .Values.service.port }}
+  then relay deliveries to http://localhost:8080/webhook (smee.io or `gh webhook forward`),
+  or enable ingress.* and use https://<host>/webhook.
+{{- end }}
+
+Replicas: {{ .Values.replicaCount }}{{ if include "prow-github-app.redisConfigured" . }} (shared state through Redis){{ end }}.
+Scheduled jobs ({{ .Values.prow.jobs }}): {{ if .Values.cronjob.enabled }}CronJob {{ include "prow-github-app.fullname" . }}-jobs, {{ .Values.cronjob.schedule | quote }}{{ else }}disabled{{ end }}.
+
+Docs: https://github.com/cncf/prow-github-actions/blob/main/docs/github-app.md

@@ -104,3 +104,48 @@ jobs:
           path: coverage-e2e/
           retention-days: 14
           if-no-files-found: ignore
+
+  # the Helm chart: lint on every run, and install the two topologies into a kind cluster against an
+  # image built from this very commit (loaded into kind, never pushed)
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - uses: helm/chart-testing-action@720270857a28afd41e2426521a7801db09e9b510 # v2.9.0
+      - name: Lint
+        run: ct lint --config ct.yaml --all
+      - name: Unit tests
+        run: |
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version 1.2.1
+          helm unittest charts/prow-github-app
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+      - name: Build the image from this commit and load it into kind
+        run: |
+          docker build -t prow-github-app:ci .
+          kind load docker-image prow-github-app:ci --name chart-testing
+      - name: Install (one replica)
+        run: |
+          helm install single charts/prow-github-app -f charts/prow-github-app/ci/single-values.yaml \
+            --set image.repository=prow-github-app --set image.tag=ci --wait --timeout 120s
+          kubectl rollout status deploy/single-prow-github-app --timeout=60s
+          kubectl run curl --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- -sf http://single-prow-github-app:8080/readyz
+      - name: Install (two replicas, external Redis)
+        run: |
+          kubectl apply -f charts/prow-github-app/ci/redis.yaml
+          kubectl rollout status deploy/ci-redis --timeout=60s
+          helm install ha charts/prow-github-app -f charts/prow-github-app/ci/ha-external-redis-values.yaml \
+            --set image.repository=prow-github-app --set image.tag=ci --wait --timeout 120s
+          kubectl rollout status deploy/ha-prow-github-app --timeout=60s
+          test "$(kubectl get deploy ha-prow-github-app -o jsonpath='{.status.readyReplicas}')" = 2
+          kubectl get pdb ha-prow-github-app
+          kubectl logs deploy/ha-prow-github-app --all-containers | grep -q '"redis: connected"'
+      - name: A signed ping reaches the HA service
+        run: |
+          body='{"zen":"x","hook_id":1}'
+          sig="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac ci-secret | sed 's/.* //')"
+          code=$(kubectl run curl --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- -s -o /dev/null -w '%{http_code}' \
+            -X POST http://ha-prow-github-app:8080/webhook -H 'x-github-delivery: ci-1' -H 'x-github-event: ping' -H "x-hub-signature-256: $sig" -d "$body" | head -c 3)
+          test "$code" = 200
