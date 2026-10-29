@@ -179,8 +179,10 @@ describe('cronLgtm', () => {
     // Instead, we use it to gain the repo owner and url
     const context = new utils.MockContext(pullReqOpenedEvent)
 
-    listPullReqs[0].labels[0].name = 'lgtm'
-    listPullReqs[0].labels.push({
+    // a copy: the shared fixture is what the default handlers above serve to every other test
+    const heldPrs = structuredClone(listPullReqs)
+    heldPrs[0].labels[0].name = 'lgtm'
+    heldPrs[0].labels.push({
       id: 1,
       node_id: '123',
       url: 'https://api.github.com/repos/octocat/Hello-World/labels/hold',
@@ -189,6 +191,7 @@ describe('cronLgtm', () => {
       color: 'f29513',
       default: true,
     })
+    routePulls(heldPrs)
 
     const observeReq = new utils.ObserveRequest()
     server.use(

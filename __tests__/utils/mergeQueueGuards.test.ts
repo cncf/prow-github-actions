@@ -2,7 +2,7 @@ import type { Octokit } from '@octokit/rest'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { enqueue, enqueuedByBot, queueState } from '../../src/utils/mergeQueue'
+import { enqueue, enqueuedByBot } from '../../src/utils/mergeQueue'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 
 import * as utils from '../testUtils'
@@ -23,9 +23,12 @@ afterEach(() => vi.resetModules())
 
 describe('errorMessage', () => {
   it('reports a null rejection of the state query as "null" instead of throwing', async () => {
-    const core = await import('@actions/core')
+    // all fresh: after a sibling's resetModules the static queueState would warn through another core
+    // instance, and the fresh module graph's platform slot is empty until this test fills it
+    const [core, fresh, freshPlatform, adapter] = await Promise.all([import('@actions/core'), import('../../src/utils/mergeQueue'), import('../../src/platform'), import('../../src/adapters/actions')])
+    freshPlatform.setPlatform(adapter.actionsPlatform())
 
-    await expect(queueState(rejectingWith(null), context, 7)).resolves.toBeUndefined()
+    await expect(fresh.queueState(rejectingWith(null), context, 7)).resolves.toBeUndefined()
 
     expect(core.warning).toHaveBeenCalledWith('could not read the merge queue state of pr #7; falling back to a direct merge: null')
   })

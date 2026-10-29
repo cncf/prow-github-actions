@@ -21,6 +21,8 @@ afterAll(() => server.close())
 describe('/unassign', () => {
   beforeEach(() => {
     utils.setupActionsEnv('/unassign')
+    // the tests below rewrite the shared fixture's comment; start each from the file's own body
+    issueCommentEventUnassign.comment.body = '/unassign'
   })
 
   it('handles self unassignment with comment /unassign', async () => {

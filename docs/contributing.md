@@ -50,6 +50,7 @@ stay in step with `action.yml` and the label catalogue.
 | `npm test` | The whole Vitest suite |
 | `npm run test:coverage` | The suite with v8 coverage; CI enforces the thresholds in `vitest.config.mjs` (lines 99, branches 99, functions 99, statements 99, a floor set just under what `main` reaches) |
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
+| `npm run test:shuffle` | The whole suite with the tests of every file in a random order (`--sequence.shuffle`; pass `--sequence.seed=<n>` to repeat an order); see "Test order" below |
 | `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`, written to `coverage-e2e/` so it never overwrites the unit run's `coverage/` (ncc's map is line-only, so the build also emits tsc's per-file maps into `.coverage-bundle/tsc/` and `coverageEntry/remap.mjs` composes their columns into it; without that, inner lines of a multi-line expression that tsc flattens onto one JS line report 0 hits). This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine. Fails below 99 % lines / 99 % branches / 99 % functions / 99 % statements (`vitest.e2e-coverage.config.mjs`), a floor set just under what `main` reaches so a scenario that stops driving a `src/` path is caught |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API
@@ -110,6 +111,38 @@ export async function gate(a: boolean, b: boolean): Promise<string> {
 
 In the same reproduction an explicit `else { … }` block, which owns a V8
 range of its own, is counted correctly.
+
+### Test order
+
+Vitest runs the tests of a file in source order, so a test that leaves state
+behind is only noticed by the tests that happen to follow it. `npm run
+test:shuffle` runs every file's tests in a random order (the seed is printed
+with the failure; `--sequence.seed=<n>` repeats it). The three ways a test has
+leaked into its neighbour here, and how each file now avoids them:
+
+- **A mutated fixture.** The JSON fixtures are imported once per file, so
+  `event.comment.body = '/assign @x'` is seen by every later test of the file;
+  the test that relied on the fixture's own body then dispatched a different
+  command. Either `structuredClone` the fixture before changing it (the cron
+  tests' `lgtmPr`) or reset the field in a `beforeEach`.
+- **A probe chain outliving its test.** `loadProwConfig` probes the
+  organization and repository tiers under `Promise.all`; when the tier a test
+  exercises rejects, the other tier's probes keep going after the test's
+  `await` has returned, and a probe that starts between two tests is reported —
+  by `failTestOnUnhandledRequests`, or by a `request:start` listener — against
+  the next one. Waiting for the in-flight count to reach zero does not help,
+  because the chain is idle between two of its probes. `utils.configFoundAt`
+  serves an empty configuration at the other tier's first probe, so the only
+  sibling request is already in flight when the rejection lands.
+- **A memo that outlives the test.** Everything a handler memoizes for an
+  event — configuration, repository labels, OWNERS trees, warnings already
+  shown — lives in the platform's `RunState`, and `__tests__/setup.ts`
+  installs a fresh platform before every test, so a test inherits nothing the
+  previous one loaded. A test that swaps in its own platform mid-test (or a
+  `describe` that needs an empty run between its own tests) calls
+  `utils.newRun()`. A file that uses `vi.resetModules()` must import
+  `@actions/core` and the module under test fresh together, or the assertion
+  spies on a different `core` instance than the one the module warns through.
 
 ### Mutation checks
 

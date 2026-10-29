@@ -289,7 +289,8 @@ describe('label-sync job', () => {
   it('fails the run when the configuration cannot be loaded', async () => {
     server.use(
       http.get(`${repo}/contents/.github%2Fprow.yaml`, utils.mockResponse(500, { message: 'boom' })),
-      ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml'),
+      // end the organization tier on its first probe: its chain would otherwise outlive this test (see configFoundAt)
+      ...utils.configFoundAt('Codertocat/.project:prow.yaml', '.github/prow.yaml'),
     )
     const writes = recordWrites([])
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
