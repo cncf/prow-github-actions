@@ -6,7 +6,10 @@ All commits must be signed off (`git commit -s`) to satisfy the DCO check.
 
 ## Development
 
-Node 24 or newer is required.
+Node 24 or newer is required. `package.json` names Node 24 in
+`devEngines.runtime` so that every `actions/setup-node` step in CI installs the
+same major that `action.yml` runs the bundle under (`runs.using: node24`);
+`npm ci` on a newer Node only warns.
 
 ```sh
 npm ci
@@ -56,7 +59,7 @@ stay in step with `action.yml` and the label catalogue.
 | `npm run test:coverage` | The suite with v8 coverage; CI enforces the thresholds in `vitest.config.mjs` (lines 99, branches 99, functions 99, statements 99, a floor set just under what `main` reaches) |
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
 | `npm run test:shuffle` | The whole suite with the tests of every file in a random order (`--sequence.shuffle`; pass `--sequence.seed=<n>` to repeat an order); see "Test order" below |
-| `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`, written to `coverage-e2e/` so it never overwrites the unit run's `coverage/` (ncc's map is line-only, so the build also emits tsc's per-file maps into `.coverage-bundle/tsc/` and `coverageEntry/remap.mjs` composes their columns into it; without that, inner lines of a multi-line expression that tsc flattens onto one JS line report 0 hits). This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine. Fails below 99 % lines / 98 % branches / 99 % functions / 99 % statements (`vitest.e2e-coverage.config.mjs`), a floor set just under what `main` reaches so a scenario that stops driving a `src/` path is caught |
+| `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`, written to `coverage-e2e/` so it never overwrites the unit run's `coverage/` (ncc's map is line-only, so the build also emits tsc's per-file maps into `.coverage-bundle/tsc/` and `coverageEntry/remap.mjs` composes their columns into it; without that, inner lines of a multi-line expression that tsc flattens onto one JS line report 0 hits). This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine. Fails below 99 % lines / 99 % branches / 99 % functions / 99 % statements (`vitest.e2e-coverage.config.mjs`), a floor set just under what `main` reaches so a scenario that stops driving a `src/` path is caught |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API
 with [msw](https://mswjs.io/). The acceptance harness in `__tests__/bundle/`
@@ -66,6 +69,16 @@ requests it makes, its exit code, and its `::error::` output. Because it tests
 the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
+
+`__tests__/setup.ts` tightens `toThrow`: out of the box, `toThrow(message)`
+passes when the thrown value is `undefined` or `null`, because chai compares
+the message only against a truthy error
+([vitest-dev/vitest#7260](https://github.com/vitest-dev/vitest/issues/7260)).
+A helper that should build an `Error` but returns nothing — what a Stryker
+block mutant makes of `malformedSection` in `src/utils/config.ts` — would
+otherwise satisfy every message assertion in the suite. With the setup hook,
+a nullish throw fails `toThrow` and `.rejects.toThrow` whatever the argument;
+`__tests__/setupToThrowGuard.test.ts` pins that.
 
 ### Phantom "uncovered" branches after an `await`
 

@@ -45,6 +45,17 @@ describe('dist/index.js prow configuration sources', () => {
     expect(gh.requestsMatching('GET', /\/prow-config\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/configs`])
   })
 
+  it('an explicit source served with a non-base64 encoding is refused by the decoder, not parsed as yaml', async () => {
+    // the contents API answers `encoding: "none"` with an empty body for a file over 1 MiB; decodeContent
+    // (src/utils/base64.ts) refuses anything but base64 before the text reaches the yaml parser
+    gh.route('GET', `${explicitRepo}/contents/configs%2Fprow.yaml`, { status: 200, body: { type: 'file', encoding: 'none', content: '' } })
+
+    const result = await kind('cncf/prow-config:configs/prow.yaml')
+
+    expectConfigFailure(result, 'could not load prow config from cncf/prow-config:configs/prow.yaml: Error: unsupported content encoding none')
+    expect(gh.requestsMatching('GET', /\/prow-config\//).map(r => r.path)).toEqual([`${explicitRepo}/contents/configs%2Fprow.yaml`])
+  })
+
   it('an explicit source whose file does not exist at the ref fails as not found, not as a read error', async () => {
     const result = await kind('cncf/prow-config:configs/prow.yaml@v2')
 
