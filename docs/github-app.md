@@ -47,6 +47,8 @@ the organization (all repositories, or the ones Prow should manage).
 | `GITHUB_WEBHOOK_SECRET` | yes | the webhook secret |
 | `GITHUB_API_URL` | no | the REST root for GitHub Enterprise Server, e.g. `https://ghes.example/api/v3` |
 | `PORT` | no | listening port, default `8080` |
+| `REDIS_URL` | for several replicas | shared dedupe and locks, see [One replica or several](#one-replica-or-several) |
+| `PROW_SHUTDOWN_GRACE_MS` | no | how long `SIGTERM` waits for in-flight events, default `25000` |
 | `PROW_COMMANDS` | no | same as the action's `prow-commands` input |
 | `PROW_JOBS` | no | same as `jobs`; what the scheduler runs. Default `lgtm` |
 | `PROW_CRON_INTERVAL` | no | minutes between scheduled runs inside the server; unset means none (use the `cron` command) |
@@ -70,14 +72,31 @@ docker run -p 8080:8080 \
   prow-app
 ```
 
-`GET /healthz` answers `ok`. `POST /webhook` verifies `X-Hub-Signature-256`,
-answers `202` at once and handles the event afterwards; a redelivered
-`X-GitHub-Delivery` id is handled once per process. Run one replica: the
-delivery memory and the per-event ordering are in-process. For local testing,
-relay deliveries with [smee.io](https://smee.io) or `gh webhook forward`.
+`GET /healthz` answers `ok` (liveness); `GET /readyz` answers `ok` once the
+stores below are reachable (readiness). `POST /webhook` verifies
+`X-Hub-Signature-256`, answers `202` at once and handles the event afterwards.
+A pull request's events run one at a time, in order, as the action's
+`concurrency:` group arranges; a redelivered `X-GitHub-Delivery` id is handled
+once. On `SIGTERM` the server stops accepting, lets in-flight events finish
+(`PROW_SHUTDOWN_GRACE_MS`, default 25 000) and exits. For local testing, relay
+deliveries with [smee.io](https://smee.io) or `gh webhook forward`.
+
+### One replica or several
+
+| | one replica | several replicas |
+|---|---|---|
+| delivery dedupe and the per-pull-request lock | in process | in a Redis every replica shares |
+| configuration | nothing | `REDIS_URL=redis://host:6379` (or `rediss://`) |
+
+Without `REDIS_URL`, two replicas would each handle a redelivery and could race
+on one pull request; the server warns at startup when `PROW_REPLICAS` is above
+1 and `REDIS_URL` is unset. Any Redis 6+ or Valkey works; the server uses two
+keys per event (`prow:delivery:<id>`, a day; `prow:lock:<owner/repo#n>`, a
+minute at most) and nothing else.
 
 A minimal Kubernetes Deployment is one container with the variables above from a
 Secret and a Service in front of port 8080; put your usual Ingress/TLS in front.
+A Helm chart is on its way.
 
 ## Scheduled jobs
 

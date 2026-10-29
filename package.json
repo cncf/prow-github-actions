@@ -50,7 +50,8 @@
     "@octokit/rest": "^22.0.1",
     "@octokit/webhooks-methods": "^6.0.0",
     "hono": "^4.13.14",
-    "js-yaml": "^5.5.0"
+    "js-yaml": "^5.5.0",
+    "redis": "^6.3.1"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",

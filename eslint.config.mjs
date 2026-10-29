@@ -8,6 +8,7 @@ export default antfu({
     '**/lib/**/',
     'node_modules/',
     '**/node_modules/**/',
+    '.sisyphus/',
   ],
 }, {
   files: ['__tests__/**/*.test.ts'],
