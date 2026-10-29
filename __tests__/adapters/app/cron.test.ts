@@ -104,6 +104,25 @@ describe('runScheduledJobs', () => {
     expect(lines.at(-1)).toMatchObject({ level: 'info', message: 'scheduled jobs ran for 4 repositories, 2 failed' })
   })
 
+  it('reports a repository whose handler throws a non-Error as its string form', async () => {
+    const { lines, sink } = recordingSink()
+    const report = await runScheduledJobs({
+      settings,
+      tokens: staticTokens(),
+      installations: listing(...targets),
+      sink,
+      dispatch: async (context) => {
+        if (context.repo.repo === 'docs') {
+          // eslint-disable-next-line no-throw-literal
+          throw { code: 'ECONNRESET' }
+        }
+      },
+    })
+
+    expect(report).toEqual({ repositories: 4, failed: ['globex/docs'] })
+    expect(lines).toContainEqual({ level: 'error', event: 'schedule', repo: 'globex/docs', message: '[object Object]' })
+  })
+
   it('reports a repository whose token cannot be minted', async () => {
     const report = await runScheduledJobs({
       settings,

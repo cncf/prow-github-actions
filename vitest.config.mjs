@@ -24,10 +24,14 @@ export default defineConfig({
       // Regression floor set just under what main reaches (100 / 99.7 / 100 / 100
       // at 1062ce7) so a drop of about one point fails build-test.
       thresholds: {
-        lines: 99,
-        branches: 99,
-        functions: 99,
-        statements: 99,
+        'lines': 99,
+        'branches': 99,
+        'functions': 99,
+        'statements': 99,
+        // vitest.e2e-coverage.config.mjs leaves the App adapter and its server out of
+        // the bundle run because the unit suite holds them at 100%; make that a gate.
+        'src/adapters/app/**': { lines: 100, branches: 100, functions: 100, statements: 100 },
+        'src/server/**': { lines: 100, branches: 100, functions: 100, statements: 100 },
       },
     },
   },

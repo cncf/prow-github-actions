@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { memoryDeliveryStore } from '../../../src/adapters/app/dedupe'
 import { appPlatform, contextFromDelivery } from '../../../src/adapters/app/platform'
@@ -69,6 +69,26 @@ describe('appPlatform', () => {
 
   it('refuses a payload without an installation', () => {
     expect(() => appPlatform(settings, staticTokens(), { ...delivery, payload: structuredClone(issueCommentEvent) }, () => {})).toThrow(/no installation/)
+  })
+
+  it('defers in place by default: waits the whole delay, then continues', async () => {
+    vi.useFakeTimers()
+    try {
+      const { platform } = appPlatform(settings, staticTokens(), delivery, () => {})
+      let outcome: 'continue' | 'deferred' | undefined
+      const waiting = platform.defer(5_000, { kind: 'require-matching-label', context: platform.context() }).then((result) => {
+        outcome = result
+      })
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(outcome).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(1)
+      await waiting
+      expect(outcome).toBe('continue')
+    }
+    finally {
+      vi.useRealTimers()
+    }
   })
 })
 
