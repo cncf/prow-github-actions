@@ -120,9 +120,9 @@ describe('settingsFromEnv input mapping', () => {
     expect(Object.keys(s.inputs)).toEqual(['jobs'])
   })
 
-  it('keeps an input that is set to the empty string', () => {
+  it('keeps an input that is set to the empty string, next to the jobs default', () => {
     const s = settingsFromEnv({ ...env, PROW_DRY_RUN: '' })
 
-    expect(s.inputs).toStrictEqual({ 'dry-run': '' })
+    expect(s.inputs).toStrictEqual({ 'jobs': 'lgtm', 'dry-run': '' })
   })
 })
