@@ -6,6 +6,7 @@ import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
 
 import { appInstallationLister, runScheduledJobs } from '../adapters/app/cron'
+import { pullRequestKey } from '../adapters/app/lock'
 import { appPlatform, appTokenSource } from '../adapters/app/platform'
 import { asyncLocalScope } from '../adapters/app/scope'
 import { settingsFromEnv } from '../adapters/app/settings'
@@ -59,15 +60,6 @@ export class PullRequestLock extends DurableObject<Env> {
   async handle(delivery: Delivery): Promise<void> {
     await handleDelivery(this.env, delivery)
   }
-}
-
-export function pullRequestKey(delivery: Delivery): string | undefined {
-  const number: unknown = delivery.payload.pull_request?.number ?? delivery.payload.issue?.number
-  const repository = delivery.payload.repository
-  if (typeof number !== 'number' || !repository?.full_name) {
-    return undefined
-  }
-  return `${repository.full_name}#${number}`
 }
 
 // Workers Logs capture every console method; `info` keeps the lines at their own level, apart from runtime errors
