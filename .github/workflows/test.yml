@@ -119,7 +119,7 @@ jobs:
         run: ct lint --config ct.yaml --all
       - name: Unit tests
         run: |
-          helm plugin install https://github.com/helm-unittest/helm-unittest --version 1.2.1
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version 1.2.1 --verify=false
           helm unittest charts/prow-github-app
       - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
       - name: Build the image from this commit and load it into kind
