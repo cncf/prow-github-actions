@@ -1,14 +1,10 @@
 import type { SetupServerApi } from 'msw/node'
 import type { Context } from '../src/utils/context'
 import { http } from 'msw'
-import { afterEach, beforeEach, expect } from 'vitest'
 
-import { resetTideWarnings } from '../src/plugins/tide'
-import { resetProwConfigCache } from '../src/utils/config'
-import { resetLabelCache } from '../src/utils/labeling'
-import { resetMergeQueueWarnings } from '../src/utils/mergeQueue'
-import { resetOwnersCaches } from '../src/utils/owners'
-import { resetPullRequestOwnersCache } from '../src/utils/pullRequestOwners'
+import { afterEach, beforeEach, expect } from 'vitest'
+import { actionsPlatform } from '../src/adapters/actions'
+import { setPlatform } from '../src/platform'
 
 type WebhookPayload = Context['payload']
 
@@ -174,17 +170,17 @@ export class MockContext implements Context {
   }
 }
 
+/** newRun installs a fresh Actions platform, and with it an empty RunState: what a new action run sees */
+export function newRun(): void {
+  setPlatform(actionsPlatform())
+}
+
 // Drop action inputs and the runner-provided GITHUB_* variables so that tests
 // are hermetic when they run inside GitHub Actions (github.context reads
 // GITHUB_REPOSITORY, GITHUB_EVENT_PATH, GITHUB_API_URL, ... from the env).
-// The configuration, repository label, pull request OWNERS and OWNERS-presence caches live for one action run, so they are reset here too.
+// The memoized state lives for one action run, so a new run starts here too.
 function clearActionEnv() {
-  resetProwConfigCache()
-  resetLabelCache()
-  resetPullRequestOwnersCache()
-  resetOwnersCaches()
-  resetMergeQueueWarnings()
-  resetTideWarnings()
+  newRun()
   for (const key of Object.keys(process.env)) {
     if (key.startsWith('INPUT_') || key.startsWith('GITHUB_')) {
       delete process.env[key]

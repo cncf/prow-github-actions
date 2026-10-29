@@ -2,6 +2,7 @@ import type { Context, Platform } from '../platform'
 import process from 'node:process'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { newRunState } from '../platform'
 
 export function actionsContext(): Context {
   const { eventName, payload, repo } = github.context
@@ -9,6 +10,7 @@ export function actionsContext(): Context {
 }
 
 export function actionsPlatform(): Platform {
+  const state = newRunState()
   return {
     inputs: {
       get: (name, options) => core.getInput(name, options),
@@ -25,5 +27,6 @@ export function actionsPlatform(): Platform {
     apiBaseUrl: () => process.env.GITHUB_API_URL || 'https://api.github.com',
     currentWorkflowName: () => process.env.GITHUB_WORKFLOW,
     fail: message => core.setFailed(message),
+    state: () => state,
   }
 }

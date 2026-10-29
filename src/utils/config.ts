@@ -197,20 +197,19 @@ interface Tier {
   config: Partial<ProwConfig>
 }
 
-const cache = new Map<string, Promise<ProwConfig>>()
-
 /**
  * loadProwConfig resolves the configuration that applies to the event
  * repository: an organization tier (`<owner>/.project` then `<owner>/.github`,
  * `prow.yaml`) or, when the `config` input is set, that explicit source
  * instead; then the repository's own file layered on top. The result is
- * memoized per repository for the lifetime of the process.
+ * memoized per repository for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 export function loadProwConfig(octokit: Octokit, context: Context): Promise<ProwConfig> {
   const key = `${context.repo.owner}/${context.repo.repo}`
+  const cache = platform().state().configs as Map<string, Promise<ProwConfig>>
   let pending = cache.get(key)
   if (pending === undefined) {
     pending = load(octokit, context)
@@ -218,12 +217,6 @@ export function loadProwConfig(octokit: Octokit, context: Context): Promise<Prow
   }
   return pending
 }
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetProwConfigCache(): void {
-  cache.clear()
-}
-/* v8 ignore stop */
 
 async function load(octokit: Octokit, context: Context): Promise<ProwConfig> {
   const explicit = platform().inputs.get('config', { required: false }).trim()

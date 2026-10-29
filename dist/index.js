@@ -37428,7 +37428,60 @@ function getOctokit(token, options, ...additionalPlugins) {
     return new GitHubWithPlugins(getOctokitOptions(token, options));
 }
 //# sourceMappingURL=github.js.map
+;// CONCATENATED MODULE: ./lib/platform/types.js
+function newRunState() {
+    return {
+        configs: new Map(),
+        repoLabels: new Map(),
+        ownerGroups: new Map(),
+        ownerWarnings: new Set(),
+        trees: new Map(),
+        hasOwners: new Map(),
+        pullRequestOwners: new Map(),
+        pullRequestTips: new Map(),
+        tideEvaluated: new Set(),
+        warned: new Set(),
+    };
+}
+
+;// CONCATENATED MODULE: ./lib/platform/index.js
+
+let current;
+/* v8 ignore start -- scoping is for adapters handling concurrent events; the action never reaches it from dist/index.js */
+const globalPlatformScope = {
+    get: () => current,
+    run: (value, fn) => {
+        const previous = current;
+        current = value;
+        try {
+            return fn();
+        }
+        finally {
+            current = previous;
+        }
+    },
+};
+let scope = globalPlatformScope;
+function installPlatformScope(next) {
+    scope = next;
+}
+function runWithPlatform(value, fn) {
+    return scope.run(value, fn);
+}
+/* v8 ignore stop */
+function setPlatform(next) {
+    current = next;
+}
+function platform_platform() {
+    const found = scope.get() ?? current;
+    if (!found) {
+        throw new Error('no platform installed: the entry point must call setPlatform() or runWithPlatform() before dispatching an event');
+    }
+    return found;
+}
+
 ;// CONCATENATED MODULE: ./lib/adapters/actions.js
+
 
 
 
@@ -37437,6 +37490,7 @@ function actionsContext() {
     return { eventName, payload, repo };
 }
 function actionsPlatform() {
+    const state = newRunState();
     return {
         inputs: {
             get: (name, options) => getInput(name, options),
@@ -37453,19 +37507,8 @@ function actionsPlatform() {
         apiBaseUrl: () => (external_node_process_default()).env.GITHUB_API_URL || 'https://api.github.com',
         currentWorkflowName: () => (external_node_process_default()).env.GITHUB_WORKFLOW,
         fail: message => setFailed(message),
+        state: () => state,
     };
-}
-
-;// CONCATENATED MODULE: ./lib/platform/index.js
-let current;
-function setPlatform(next) {
-    current = next;
-}
-function platform_platform() {
-    if (!current) {
-        throw new Error('no platform installed: the entry point must call setPlatform() before dispatching an event');
-    }
-    return current;
 }
 
 ;// CONCATENATED MODULE: ./node_modules/js-yaml/dist/js-yaml.mjs
@@ -41215,19 +41258,19 @@ const repoConfigPaths = [
     '.prowlabels.yml',
 ];
 const explicitSourcePattern = /^([^/\s:@]+)\/([^/\s:@]+):([^@\s]+)(?:@(\S+))?$/;
-const cache = new Map();
 /**
  * loadProwConfig resolves the configuration that applies to the event
  * repository: an organization tier (`<owner>/.project` then `<owner>/.github`,
  * `prow.yaml`) or, when the `config` input is set, that explicit source
  * instead; then the repository's own file layered on top. The result is
- * memoized per repository for the lifetime of the process.
+ * memoized per repository for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 function loadProwConfig(octokit, context) {
     const key = `${context.repo.owner}/${context.repo.repo}`;
+    const cache = platform_platform().state().configs;
     let pending = cache.get(key);
     if (pending === undefined) {
         pending = config_load(octokit, context);
@@ -41235,11 +41278,6 @@ function loadProwConfig(octokit, context) {
     }
     return pending;
 }
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetProwConfigCache() {
-    cache.clear();
-}
-/* v8 ignore stop */
 async function config_load(octokit, context) {
     const explicit = platform_platform().inputs.get('config', { required: false }).trim();
     // the org and repo tiers do not depend on each other, so probe both at once
@@ -41857,16 +41895,16 @@ async function labelIssue(octokit, context, issueNum, labels) {
         throw new Error(`could not add labels: ${e}`);
     }
 }
-const repoLabelCache = new Map();
 /**
  * repoLabelNames lists the names of every label of the event repository,
- * memoized per repository for the lifetime of the process.
+ * memoized per repository for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  */
 function repoLabelNames(octokit, context) {
     const key = `${context.repo.owner}/${context.repo.repo}`;
+    const repoLabelCache = platform_platform().state().repoLabels;
     let pending = repoLabelCache.get(key);
     if (pending === undefined) {
         pending = octokit
@@ -41876,11 +41914,6 @@ function repoLabelNames(octokit, context) {
     }
     return pending;
 }
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetLabelCache() {
-    repoLabelCache.clear();
-}
-/* v8 ignore stop */
 /**
  * assertLabelsExist throws, naming every offender, when one of the labels is
  * not defined in the repository. Names compare case-insensitively.
@@ -42249,10 +42282,9 @@ function parseGroup(entry) {
     const match = /^@([^/\s]+)\/([^/\s]+)$/.exec(entry);
     return match === null ? undefined : { org: match[1], slug: match[2] };
 }
-const groupCache = new Map();
-// entries already warned about: the same OWNERS entry is expanded once per changed file per role
-const warnedEntries = new Set();
+// the same OWNERS entry is expanded once per changed file per role; warn about it once per run
 function warnOnce(entry, message) {
+    const warnedEntries = platform_platform().state().ownerWarnings;
     if (!warnedEntries.has(entry)) {
         warnedEntries.add(entry);
         platform_platform().log.warning(message);
@@ -42289,7 +42321,7 @@ async function expandGroups(octokit, context, entries) {
             result.add(entry);
         }
     }
-    const members = await Promise.all([...groups].map(slug => memoized(groupCache, `${owner}/${slug}`, async () => {
+    const members = await Promise.all([...groups].map(slug => memoized(platform_platform().state().ownerGroups, `${owner}/${slug}`, async () => {
         try {
             const listed = await octokit.paginate(octokit.teams.listMembersInOrg, {
                 org: context.repo.owner,
@@ -42398,11 +42430,10 @@ function decode(data, path) {
     }
     return decodeContent(file.content, file.encoding);
 }
-const treeCache = new Map();
 /**
  * Load the OWNERS files at ref that can apply to the given paths. The
  * recursive listing of a commit never changes, so it is memoized per ref for
- * the lifetime of the process: pull requests sharing a base tip share it.
+ * the duration of the run: pull requests sharing a base tip share it.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -42413,7 +42444,7 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
     const dirs = ancestorDirs(pathsOfInterest);
     let tree;
     try {
-        tree = await memoized(treeCache, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () => (await octokit.git.getTree({ ...context.repo, tree_sha: ref, recursive: 'true' })).data);
+        tree = await memoized(platform_platform().state().trees, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () => (await octokit.git.getTree({ ...context.repo, tree_sha: ref, recursive: 'true' })).data);
     }
     catch (e) {
         throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
@@ -42469,7 +42500,6 @@ async function probeOwners(octokit, context, ref, dirs) {
     }
     return { owners, hasOwners: owners.size > 0 };
 }
-const hasOwnersCache = new Map();
 /**
  * repoHasOwners reports whether the default branch carries any OWNERS file.
  * It is `branchHasOwners` for the default branch, which the payload's
@@ -42481,28 +42511,20 @@ const hasOwnersCache = new Map();
  * @param context - the github actions event context
  */
 function repoHasOwners(octokit, context) {
-    return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}`, async () => branchHasOwners(octokit, context, await defaultBranch(octokit, context)));
+    return memoized(platform_platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}`, async () => branchHasOwners(octokit, context, await defaultBranch(octokit, context)));
 }
 /**
  * branchHasOwners reports whether a branch carries any OWNERS file, which is
  * what switches `/approve` and the tide gate to their OWNERS behaviour. One
- * recursive tree listing per branch, memoized for the lifetime of the process.
+ * recursive tree listing per branch, memoized for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param branch - the branch name, ex: the pull request's `base.ref`
  */
 function branchHasOwners(octokit, context, branch) {
-    return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}@${branch}`, () => probeBranchOwners(octokit, context, branch));
+    return memoized(platform_platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}@${branch}`, () => probeBranchOwners(octokit, context, branch));
 }
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetOwnersCaches() {
-    hasOwnersCache.clear();
-    treeCache.clear();
-    groupCache.clear();
-    warnedEntries.clear();
-}
-/* v8 ignore stop */
 function memoized(cache, key, compute) {
     let pending = cache.get(key);
     if (pending === undefined) {
@@ -42560,12 +42582,10 @@ function owners_isNotFound(error) {
 ;// CONCATENATED MODULE: ./lib/utils/pullRequestOwners.js
 
 
-const pullRequestOwners_cache = new Map();
-const tipCache = new Map();
 /**
  * loadPullRequestOwners reads the pull request, its changed files and the
  * OWNERS files of the base branch that cover them. The result is memoized per
- * pull request for the lifetime of the process, so every plugin acting on the
+ * pull request for the duration of the run, so every plugin acting on the
  * same event shares one fetch.
  *
  * @param octokit - a hydrated github client
@@ -42574,19 +42594,14 @@ const tipCache = new Map();
  */
 function loadPullRequestOwners(octokit, context, pullNumber) {
     const key = `${context.repo.owner}/${context.repo.repo}#${pullNumber}`;
-    let pending = pullRequestOwners_cache.get(key);
+    const cache = platform_platform().state().pullRequestOwners;
+    let pending = cache.get(key);
     if (pending === undefined) {
         pending = pullRequestOwners_load(octokit, context, pullNumber);
-        pullRequestOwners_cache.set(key, pending);
+        cache.set(key, pending);
     }
     return pending;
 }
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetPullRequestOwnersCache() {
-    pullRequestOwners_cache.clear();
-    tipCache.clear();
-}
-/* v8 ignore stop */
 async function pullRequestOwners_load(octokit, context, pullNumber) {
     const { data: pull } = await octokit.pulls.get({
         ...context.repo,
@@ -42627,6 +42642,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
 // `heads/` namespace that octokit percent-encodes into the path
 function baseBranchTip(octokit, context, branch) {
     const key = `${context.repo.owner}/${context.repo.repo}@${branch}`;
+    const tipCache = platform_platform().state().pullRequestTips;
     let pending = tipCache.get(key);
     if (pending === undefined) {
         pending = octokit.repos.getBranch({ ...context.repo, branch }).then(response => response.data.commit.sha);
@@ -43913,12 +43929,6 @@ const dequeueMutation = `mutation DequeuePullRequest($id: ID!) {
     mergeQueueEntry { state position }
   }
 }`;
-let warnedUnavailable = false;
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetMergeQueueWarnings() {
-    warnedUnavailable = false;
-}
-/* v8 ignore stop */
 /**
  * queueState reads, in one GraphQL query, whether the pull request's base
  * branch requires a merge queue and whether the pull request is in it. Any
@@ -43936,8 +43946,9 @@ async function queueState(octokit, context, number) {
         data = await octokit.graphql(queueStateQuery, { ...context.repo, number });
     }
     catch (e) {
-        if (!warnedUnavailable) {
-            warnedUnavailable = true;
+        const warned = platform_platform().state().warned;
+        if (!warned.has('merge-queue-unavailable')) {
+            warned.add('merge-queue-unavailable');
             platform_platform().log.warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`);
         }
         return undefined;
@@ -44095,8 +44106,6 @@ const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_f
 const reviewActions = new Set(['submitted', 'dismissed']);
 // a suite or status that ended this way cannot have made the pull request more mergeable
 const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending']);
-// the pull requests the scheduled jobs evaluated in this run: `sweep` and `lgtm` both reach the same ones
-const evaluatedThisRun = new Set();
 /**
  * fetchMergeability starts from `options.initial` and, while GitHub reports
  * the mergeability as `unknown`, re-reads the pull request after growing waits. A state that
@@ -44175,6 +44184,8 @@ async function mergeOnce(octokit, context, number, tide, sha) {
  */
 async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgtmSettings, options = {}) {
     if (options.once === true) {
+        // `sweep` and `lgtm` both reach the same pull requests in a scheduled run
+        const evaluatedThisRun = platform_platform().state().tideEvaluated;
         if (evaluatedThisRun.has(number)) {
             return skip(number, 'already evaluated in this run');
         }
@@ -44225,13 +44236,6 @@ async function evaluateMerge(octokit, context, number, source, lgtm = defaultLgt
     platform_platform().log.error(`could not merge pr #${number}: ${outcome.message}`);
     return outcome;
 }
-let warnedMergeMethodIgnored = false;
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-function resetTideWarnings() {
-    warnedMergeMethodIgnored = false;
-    evaluatedThisRun.clear();
-}
-/* v8 ignore stop */
 const workflowsDir = '.github/workflows/';
 /**
  * explainForkWorkflows diagnoses a 403 on a fork pull request: a GitHub App
@@ -44300,8 +44304,9 @@ async function evaluateInQueue(octokit, context, number, tide, first, queue) {
     if (!mergeableStates.has(pr.state)) {
         platform_platform().log.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`);
     }
-    if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || platform_platform().inputs.get('merge-method', { required: false }) !== '')) {
-        warnedMergeMethodIgnored = true;
+    const warned = platform_platform().state().warned;
+    if (!warned.has('merge-method-ignored') && (tide.merge_method !== 'merge' || platform_platform().inputs.get('merge-method', { required: false }) !== '')) {
+        warned.add('merge-method-ignored');
         platform_platform().log.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`);
     }
     // the gate is the ticket; the queue does the rest

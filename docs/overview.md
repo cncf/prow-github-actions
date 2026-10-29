@@ -26,6 +26,11 @@ a logger, the API base url and `fail()`. The entry point installs an implementat
 [`src/adapters/actions.ts`](../src/adapters/actions.ts), backed by `@actions/core`,
 `@actions/github` and the runner's `GITHUB_*` environment.
 
+Everything a handler memoizes for an event — configuration, repository labels, OWNERS
+trees, warnings already shown — lives in the platform's `RunState`, created once per
+event by the adapter, so nothing carries over between events or repositories in a
+long-lived process.
+
 Handlers therefore import from `../platform`, never from `@actions/*` or `node:*`;
 ESLint rejects such imports outside `src/adapters/` and `src/main.ts`, and
 `tsconfig.core.json` type-checks the handlers with no Node types at all. This keeps the

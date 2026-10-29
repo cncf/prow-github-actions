@@ -72,9 +72,6 @@ const pullRequestActions = new Set(['labeled', 'unlabeled', 'reopened', 'ready_f
 const reviewActions = new Set(['submitted', 'dismissed'])
 // a suite or status that ended this way cannot have made the pull request more mergeable
 const hopelessConclusions = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'error', 'pending'])
-// the pull requests the scheduled jobs evaluated in this run: `sweep` and `lgtm` both reach the same ones
-const evaluatedThisRun = new Set<number>()
-
 /**
  * fetchMergeability starts from `options.initial` and, while GitHub reports
  * the mergeability as `unknown`, re-reads the pull request after growing waits. A state that
@@ -169,6 +166,8 @@ export async function evaluateMerge(
   options: EvaluateOptions = {},
 ): Promise<MergeVerdict> {
   if (options.once === true) {
+    // `sweep` and `lgtm` both reach the same pull requests in a scheduled run
+    const evaluatedThisRun = platform().state().tideEvaluated
     if (evaluatedThisRun.has(number)) {
       return skip(number, 'already evaluated in this run')
     }
@@ -227,15 +226,6 @@ export async function evaluateMerge(
   platform().log.error(`could not merge pr #${number}: ${outcome.message}`)
   return outcome
 }
-
-let warnedMergeMethodIgnored = false
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetTideWarnings(): void {
-  warnedMergeMethodIgnored = false
-  evaluatedThisRun.clear()
-}
-/* v8 ignore stop */
 
 const workflowsDir = '.github/workflows/'
 
@@ -318,8 +308,9 @@ async function evaluateInQueue(
   if (!mergeableStates.has(pr.state)) {
     platform().log.debug(`pr #${number}: mergeable_state is ${pr.state}; left to the merge queue`)
   }
-  if (!warnedMergeMethodIgnored && (tide.merge_method !== 'merge' || platform().inputs.get('merge-method', { required: false }) !== '')) {
-    warnedMergeMethodIgnored = true
+  const warned = platform().state().warned
+  if (!warned.has('merge-method-ignored') && (tide.merge_method !== 'merge' || platform().inputs.get('merge-method', { required: false }) !== '')) {
+    warned.add('merge-method-ignored')
     platform().log.debug(`tide.merge_method ${tide.merge_method} is ignored on a merge queue branch: the queue's configured method wins`)
   }
 

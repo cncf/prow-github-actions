@@ -60,14 +60,6 @@ interface EnqueueResponse {
   enqueuePullRequest: { mergeQueueEntry: { state: string, position: number } | null } | null
 }
 
-let warnedUnavailable = false
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetMergeQueueWarnings(): void {
-  warnedUnavailable = false
-}
-/* v8 ignore stop */
-
 /**
  * queueState reads, in one GraphQL query, whether the pull request's base
  * branch requires a merge queue and whether the pull request is in it. Any
@@ -85,8 +77,9 @@ export async function queueState(octokit: Octokit, context: Context, number: num
     data = await octokit.graphql<QueueStateResponse>(queueStateQuery, { ...context.repo, number })
   }
   catch (e) {
-    if (!warnedUnavailable) {
-      warnedUnavailable = true
+    const warned = platform().state().warned
+    if (!warned.has('merge-queue-unavailable')) {
+      warned.add('merge-queue-unavailable')
       platform().log.warning(`could not read the merge queue state of pr #${number}; falling back to a direct merge: ${errorMessage(e)}`)
     }
     return undefined

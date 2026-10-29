@@ -81,6 +81,41 @@ export interface Logger {
 }
 
 /**
+ * RunState is everything a handler memoizes for the duration of one event:
+ * configuration, repository labels, OWNERS trees and the warnings already
+ * shown. An adapter creates one per event so that nothing leaks across events
+ * or repositories in a long-lived process. Values are `unknown`-typed promises
+ * on purpose: the owning module casts, and this file imports nothing from it.
+ */
+export interface RunState {
+  configs: Map<string, Promise<unknown>>
+  repoLabels: Map<string, Promise<string[]>>
+  ownerGroups: Map<string, Promise<string[]>>
+  ownerWarnings: Set<string>
+  trees: Map<string, Promise<unknown>>
+  hasOwners: Map<string, Promise<boolean>>
+  pullRequestOwners: Map<string, Promise<unknown>>
+  pullRequestTips: Map<string, Promise<string>>
+  tideEvaluated: Set<number>
+  warned: Set<'merge-queue-unavailable' | 'merge-method-ignored'>
+}
+
+export function newRunState(): RunState {
+  return {
+    configs: new Map(),
+    repoLabels: new Map(),
+    ownerGroups: new Map(),
+    ownerWarnings: new Set(),
+    trees: new Map(),
+    hasOwners: new Map(),
+    pullRequestOwners: new Map(),
+    pullRequestTips: new Map(),
+    tideEvaluated: new Set(),
+    warned: new Set(),
+  }
+}
+
+/**
  * Platform is everything a handler needs from the runtime it runs on. The
  * GitHub Actions adapter backs it with `@actions/core`, `@actions/github` and
  * the runner's `GITHUB_*` environment.
@@ -96,4 +131,6 @@ export interface Platform {
   currentWorkflowName: () => string | undefined
   /** marks the run as failed with the given message */
   fail: (message: string) => void
+  /** the memoized state of the event being handled */
+  state: () => RunState
 }

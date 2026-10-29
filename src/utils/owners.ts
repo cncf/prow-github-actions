@@ -100,11 +100,9 @@ export function parseGroup(entry: string): { org: string, slug: string } | undef
   return match === null ? undefined : { org: match[1]!, slug: match[2]! }
 }
 
-const groupCache = new Map<string, Promise<string[]>>()
-// entries already warned about: the same OWNERS entry is expanded once per changed file per role
-const warnedEntries = new Set<string>()
-
+// the same OWNERS entry is expanded once per changed file per role; warn about it once per run
 function warnOnce(entry: string, message: string): void {
+  const warnedEntries = platform().state().ownerWarnings
   if (!warnedEntries.has(entry)) {
     warnedEntries.add(entry)
     platform().log.warning(message)
@@ -148,7 +146,7 @@ export async function expandGroups(
   }
 
   const members = await Promise.all([...groups].map(slug =>
-    memoized(groupCache, `${owner}/${slug}`, async () => {
+    memoized(platform().state().ownerGroups, `${owner}/${slug}`, async () => {
       try {
         const listed = await octokit.paginate(octokit.teams.listMembersInOrg, {
           org: context.repo.owner,
@@ -283,12 +281,10 @@ function decode(data: unknown, path: string): string {
 
 type TreeListing = Awaited<ReturnType<Octokit['git']['getTree']>>['data']
 
-const treeCache = new Map<string, Promise<TreeListing>>()
-
 /**
  * Load the OWNERS files at ref that can apply to the given paths. The
  * recursive listing of a commit never changes, so it is memoized per ref for
- * the lifetime of the process: pull requests sharing a base tip share it.
+ * the duration of the run: pull requests sharing a base tip share it.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -305,7 +301,7 @@ export async function loadOwnersTree(
 
   let tree
   try {
-    tree = await memoized(treeCache, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () =>
+    tree = await memoized(platform().state().trees as Map<string, Promise<TreeListing>>, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () =>
       (await octokit.git.getTree({ ...context.repo, tree_sha: ref, recursive: 'true' })).data)
   }
   catch (e) {
@@ -382,8 +378,6 @@ async function probeOwners(
   return { owners, hasOwners: owners.size > 0 }
 }
 
-const hasOwnersCache = new Map<string, Promise<boolean>>()
-
 /**
  * repoHasOwners reports whether the default branch carries any OWNERS file.
  * It is `branchHasOwners` for the default branch, which the payload's
@@ -395,32 +389,23 @@ const hasOwnersCache = new Map<string, Promise<boolean>>()
  * @param context - the github actions event context
  */
 export function repoHasOwners(octokit: Octokit, context: Context): Promise<boolean> {
-  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}`, async () =>
+  return memoized(platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}`, async () =>
     branchHasOwners(octokit, context, await defaultBranch(octokit, context)))
 }
 
 /**
  * branchHasOwners reports whether a branch carries any OWNERS file, which is
  * what switches `/approve` and the tide gate to their OWNERS behaviour. One
- * recursive tree listing per branch, memoized for the lifetime of the process.
+ * recursive tree listing per branch, memoized for the duration of the run.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
  * @param branch - the branch name, ex: the pull request's `base.ref`
  */
 export function branchHasOwners(octokit: Octokit, context: Context, branch: string): Promise<boolean> {
-  return memoized(hasOwnersCache, `${context.repo.owner}/${context.repo.repo}@${branch}`, () =>
+  return memoized(platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}@${branch}`, () =>
     probeBranchOwners(octokit, context, branch))
 }
-
-/* v8 ignore start -- test-only hook, never reached from dist/index.js */
-export function resetOwnersCaches(): void {
-  hasOwnersCache.clear()
-  treeCache.clear()
-  groupCache.clear()
-  warnedEntries.clear()
-}
-/* v8 ignore stop */
 
 function memoized<T>(cache: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
   let pending = cache.get(key)

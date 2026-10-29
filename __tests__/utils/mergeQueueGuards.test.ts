@@ -9,8 +9,8 @@ import * as utils from '../testUtils'
 
 // Guards of src/utils/mergeQueue.ts that line coverage reaches but that no test
 // in mergeQueue.test.ts would notice changing. This file deliberately does not
-// call setupActionsEnv() or resetMergeQueueWarnings(): the once-per-run warning
-// is pinned on a module instance nothing has reset.
+// call setupActionsEnv() or newRun(): the once-per-run warning is pinned on
+// a platform instance nothing has replaced.
 
 const context = new utils.MockContext(pullReqOpenedEvent)
 const state = { pullRequestId: 'PR_kwDOtest', headOid: 'headsha', enabled: true, inQueue: false }
