@@ -31,6 +31,8 @@ function memoryPlatform(inputs: Partial<Record<InputName, string>>, context: Con
     currentWorkflowName: () => undefined,
     fail: message => failures.push(message),
     state: () => state,
+    capabilities: () => ({ readOnlyForkToken: false }),
+    defer: async () => 'continue',
   }
   return { fake, logs, failures }
 }

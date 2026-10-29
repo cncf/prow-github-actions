@@ -16,6 +16,7 @@ import { approve } from './approve'
 import { assign } from './assign'
 import { cc } from './cc'
 import { close } from './close'
+import { labelSyncCommand } from './labelSync'
 import { lock } from './lock'
 import { meow } from './meow'
 import { milestone } from './milestone'
@@ -41,6 +42,7 @@ const handlers: Record<string, (context: Context) => Promise<void>> = {
   '/reopen': context => reopen(context),
   '/milestone': context => milestone(context),
   '/meow': context => meow(context),
+  '/label-sync': context => labelSyncCommand(context),
   '/check-required-labels': context => checkRequiredLabels(context),
   '/auto-cc': context => autoCc(context),
   '/retest': context => retest(context),

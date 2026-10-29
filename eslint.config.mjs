@@ -24,7 +24,7 @@ export default antfu({
 }, {
   // the handlers reach the runtime only through src/platform; see docs/overview.md
   files: ['src/**/*.ts'],
-  ignores: ['src/adapters/**', 'src/main.ts'],
+  ignores: ['src/adapters/**', 'src/main.ts', 'src/server/**'],
   rules: {
     'no-restricted-imports': ['error', {
       patterns: [

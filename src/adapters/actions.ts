@@ -3,6 +3,7 @@ import process from 'node:process'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { newRunState } from '../platform'
+import { sleep } from '../utils/sleep'
 
 export function actionsContext(): Context {
   const { eventName, payload, repo } = github.context
@@ -28,5 +29,10 @@ export function actionsPlatform(): Platform {
     currentWorkflowName: () => process.env.GITHUB_WORKFLOW,
     fail: message => core.setFailed(message),
     state: () => state,
+    capabilities: () => ({ readOnlyForkToken: true }),
+    defer: async (delayMs) => {
+      await sleep(delayMs)
+      return 'continue'
+    },
   }
 }

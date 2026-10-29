@@ -2,6 +2,8 @@ import * as core from '@actions/core'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { actionsPlatform } from '../../src/adapters/actions'
+import { setPlatform } from '../../src/platform'
 import { handlePullReq, pullRequestHandlers } from '../../src/pullReq/handlePullReq'
 import { handlePullReqReview, pullRequestReviewHandlers } from '../../src/pullReq/handlePullReqReview'
 import { skipReadOnlyForkRun } from '../../src/utils/events'
@@ -133,6 +135,18 @@ describe('handlePullReqReview', () => {
     await expect(handlePullReqReview(reviewContext(same))).resolves.toBeUndefined()
 
     expect(handler).toHaveBeenCalledTimes(1)
+    expect(notice).not.toHaveBeenCalled()
+  })
+})
+
+describe('skipReadOnlyForkRun on a platform whose token can write on fork pull requests', () => {
+  beforeEach(() => {
+    const base = actionsPlatform()
+    setPlatform({ ...base, capabilities: () => ({ readOnlyForkToken: false }) })
+  })
+
+  it.each(['pull_request', 'pull_request_review'])('never skips %s and says nothing', (eventName) => {
+    expect(skipReadOnlyForkRun(pullRequestContext(eventName, fork))).toBe(false)
     expect(notice).not.toHaveBeenCalled()
   })
 })

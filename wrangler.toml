@@ -1,0 +1,42 @@
+# Prow as a GitHub App on Cloudflare Workers; see docs/github-app.md#cloudflare-workers
+name = "prow-github-app"
+main = "src/server/worker.ts"
+compatibility_date = "2026-08-04"
+# before 2026-08-04 nodejs_compat (for AsyncLocalStorage) had to be requested; harmless now
+compatibility_flags = [ "nodejs_compat" ]
+
+# wrangler secret put GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY (PKCS#8, see docs) / GITHUB_WEBHOOK_SECRET
+[vars]
+PROW_JOBS = "lgtm"
+# PROW_COMMANDS = "/lgtm /approve ..."
+# GITHUB_API_URL = "https://ghes.example/api/v3"
+
+# webhook delivery ids, 24 h, so a redelivery is handled once
+[[kv_namespaces]]
+binding = "DELIVERIES"
+id = "replace-with-your-namespace-id"
+
+# scheduled runs fan out one message per installation; deferred checks come back through it too
+[[queues.producers]]
+binding = "PROW_QUEUE"
+queue = "prow-jobs"
+
+[[queues.consumers]]
+queue = "prow-jobs"
+max_batch_size = 1
+max_retries = 3
+
+# one object per pull request runs its events in order
+[[durable_objects.bindings]]
+name = "PULL_REQUEST_LOCK"
+class_name = "PullRequestLock"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = [ "PullRequestLock" ]
+
+[triggers]
+crons = [ "0 * * * *" ]
+
+[observability]
+enabled = true

@@ -8,7 +8,6 @@ import { loadProwConfig } from '../utils/config'
 import { parseDuration } from '../utils/duration'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokitFromInputs } from '../utils/octokit'
-import { sleep } from '../utils/sleep'
 
 export { parseDuration } from '../utils/duration'
 
@@ -117,6 +116,16 @@ export async function checkRequiredLabels(context: Context = platform().context(
   await enforce(context, undefined, false)
 }
 
+/**
+ * resumeRequiredLabels finishes a check a platform deferred past the grace
+ * period: the same evaluation, without waiting again.
+ *
+ * @param context - the github context of the deferred event
+ */
+export async function resumeRequiredLabels(context: Context): Promise<void> {
+  await enforce(context, undefined, false)
+}
+
 async function enforce(context: Context, changedLabel: string | undefined, withGracePeriod: boolean): Promise<void> {
   const octokit = newOctokitFromInputs()
 
@@ -150,7 +159,10 @@ export async function enforceRequiredLabels(octokit: Octokit, context: Context, 
   const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))))
   if (withGracePeriod && graceMs > 0) {
     platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`)
-    await sleep(graceMs)
+    if (await platform().defer(graceMs, { kind: 'require-matching-label', context }) === 'deferred') {
+      platform().log.debug('require-matching-label: the check resumes after the grace period')
+      return
+    }
   }
 
   const labels = await getCurrentLabels(octokit, context, issueNumber)

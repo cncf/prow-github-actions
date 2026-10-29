@@ -17,36 +17,47 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.core.json",
+    "build": "tsc && tsc -p tsconfig.core.json && tsc -p tsconfig.worker.json",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
-    "pack": "ncc build",
+    "pack": "ncc build && npm run pack:server && npm run pack:worker",
     "test": "vitest run",
     "test-all": "npm run build && npm run pack && npm test",
     "test:coverage": "vitest run --coverage",
     "pack:coverage": "ncc build __tests__/bundle/coverageEntry/main.ts -o .coverage-bundle --source-map --no-source-map-register && tsc -p __tests__/bundle/coverageEntry/tsconfig.json --outDir .coverage-bundle/tsc && node __tests__/bundle/coverageEntry/remap.mjs",
     "test:coverage:e2e": "npm run pack:coverage && vitest run --coverage --config vitest.e2e-coverage.config.mjs __tests__/bundle",
+    "test:shuffle": "vitest run --sequence.shuffle",
     "test:mutation": "stryker run",
     "test:watch": "vitest",
-    "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test"
+    "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test",
+    "pack:server": "ncc build src/server/main.ts -o dist-server",
+    "pack:worker": "wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
+    "@hono/node-server": "^2.1.5",
+    "@octokit/auth-app": "^8.3.1",
+    "@octokit/request": "^10.0.16",
     "@octokit/rest": "^22.0.1",
+    "@octokit/webhooks-methods": "^6.0.0",
+    "hono": "^4.13.14",
     "js-yaml": "^5.5.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.5.1",
+    "@cloudflare/workers-types": "^5.20261029.1",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^10.13.0",
+    "miniflare": "^4.20260730.0",
     "msw": "^3.0.3",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "wrangler": "^4.155.0"
   }
 }

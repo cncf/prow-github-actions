@@ -32,6 +32,7 @@ Commands | Policy | Description
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
 `/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
+`/label-sync` | Collaborators | runs the [label-sync job](./cron-jobs.md) on the repository and replies with what it created and updated; the equivalent of *Run workflow* for the [GitHub App](./github-app.md), which has no button
 `/check-required-labels` | anyone | re-evaluates every [`require_matching_label`](./configuration.md#require_matching_label) rule on the open issue / PR at once: adds the missing `needs-*` labels, removes the satisfied ones. No `/remove-` form
 `/retest` | same as `/lgtm`, PRs only | re-runs the failed jobs of every GitHub Actions workflow run on the head commit that ended in `failure`, `cancelled` or `timed_out`; runs in progress are left alone. Reacts 🚀 on the comment; comments only when nothing failed. Needs `actions: write`. [trigger](#trigger)
 `/test all` | same as `/lgtm`, PRs only | re-runs every completed GitHub Actions workflow run on the head commit, whatever its conclusion. [trigger](#trigger)

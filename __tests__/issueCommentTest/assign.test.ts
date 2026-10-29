@@ -21,6 +21,8 @@ afterAll(() => server.close())
 describe('/assign', () => {
   beforeEach(() => {
     utils.setupActionsEnv('/assign')
+    // the tests below rewrite the shared fixture's comment; start each from the file's own body
+    issueCommentEventAssign.comment.body = '/assign'
   })
 
   it('handles self assigning with comment /assign', async () => {

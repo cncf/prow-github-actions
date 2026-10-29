@@ -513,16 +513,16 @@ describe('authorization policies', () => {
     })
 
     it.each([
-      ['a failed read', [http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'boom' })), ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml')]],
-      ['malformed yaml', prowYaml('authorization:\n  close: everyone\n')],
-    ])('refuses with a warning, and no further call, when the configuration cannot be loaded: %s', async (_, handlers) => {
+      ['a failed read', http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'boom' }))],
+      ['malformed yaml', prowYaml('authorization:\n  close: everyone\n')[0]],
+    ])('refuses with a warning, and no further call, when the configuration cannot be loaded: %s', async (_, repoFile) => {
       const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
-      server.use(...handlers)
+      // the organization tier is probed alongside the failing repository tier; end it on its first probe so
+      // the only sibling request is in flight, and drained by afterEach, when the rejection lands
+      server.use(repoFile, ...utils.configFoundAt('Codertocat/.project:prow.yaml', '.github/prow.yaml'))
 
       await expect(closePolicyAllows(octokit, context, 'Alice')).resolves.toBe(false)
       expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
-      // the organization tier keeps probing after the repository tier failed; let it finish inside this test
-      await vi.waitFor(() => expect(calls).toContain('GET /repos/Codertocat/.github/contents/prow.yaml'))
       expect(calls.filter(call => !call.includes('/contents/'))).toEqual([])
     })
 
@@ -583,7 +583,8 @@ describe('authorization policies', () => {
 
     it('falls back to the members message, with a warning, when the configuration cannot be loaded', async () => {
       const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
-      server.use(rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: anyone\n  users: [alice]\n'))
+      // end the organization tier on its first probe: its chain would otherwise outlive this test (see configFoundAt)
+      server.use(rootOwners(), ...membership(), prowYaml('authorization:\n  review: anyone\n  users: [alice]\n')[0], ...utils.configFoundAt('Codertocat/.project:prow.yaml', '.github/prow.yaml'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
         .rejects
