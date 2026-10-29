@@ -28,6 +28,10 @@ export default defineConfig({
         branches: 99,
         functions: 99,
         statements: 99,
+        // vitest.e2e-coverage.config.mjs leaves the App adapter and its server out of
+        // the bundle run because the unit suite holds them at 100%; make that a gate.
+        'src/adapters/app/**': { lines: 100, branches: 100, functions: 100, statements: 100 },
+        'src/server/**': { lines: 100, branches: 100, functions: 100, statements: 100 },
       },
     },
   },
