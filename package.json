@@ -16,6 +16,13 @@
   "engines": {
     "node": ">=24"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24",
+      "onFail": "warn"
+    }
+  },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.core.json && tsc -p tsconfig.worker.json",
     "lint": "eslint",
