@@ -407,7 +407,8 @@ it.each([
 ] as const)('listing only %s also enables %s', async (alias, base, mod, fn) => {
   utils.setupActionsEnv(alias)
 
-  const spy = vi.spyOn(mod, fn).mockImplementation(() => Promise.resolve())
+  // the three modules export differently named handlers of one shape; the table pairs each with its own name
+  const spy = vi.spyOn(mod as Record<typeof fn, () => Promise<void>>, fn).mockImplementation(() => Promise.resolve())
   const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
   issueCommentEvent.comment.body = base

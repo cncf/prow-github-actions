@@ -88,7 +88,7 @@ describe('the Worker', () => {
     return JSON.parse((await log.get('seen')) ?? '[]') as Seen[]
   }
 
-  async function deliver(eventName: string, payload: unknown, id = crypto.randomUUID(), useSecret = secret) {
+  async function deliver(eventName: string, payload: unknown, id: string = crypto.randomUUID(), useSecret = secret) {
     const body = JSON.stringify(payload)
     return mf.dispatchFetch('https://prow.test/webhook', {
       method: 'POST',

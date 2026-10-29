@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import { autoCc, blunderbuss, blunderbussSettings, pickReviewers } from '../../src/plugins/blunderbuss'
 import { handlePullReq, pullRequestHandlers } from '../../src/pullReq/handlePullReq'
+import { mergeProwConfig } from '../../src/utils/config'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -117,7 +118,7 @@ describe('pickReviewers', () => {
 
 describe('blunderbussSettings', () => {
   it('applies the defaults', () => {
-    expect(blunderbussSettings({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: {}, sources: [] })).toEqual({
+    expect(blunderbussSettings({ ...mergeProwConfig({}, {}), sources: [] })).toEqual({
       request_count: 2,
       max_request_count: undefined,
       exclude_approvers: false,
@@ -128,11 +129,11 @@ describe('blunderbussSettings', () => {
   })
 
   it('reads delay as milliseconds', () => {
-    expect(blunderbussSettings({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: { delay: '1h30m' }, sources: [] }).delay).toBe(90 * 60_000)
+    expect(blunderbussSettings({ ...mergeProwConfig({}, {}), blunderbuss: { delay: '1h30m' }, sources: [] }).delay).toBe(90 * 60_000)
   })
 
   it('lowercases ignore_authors', () => {
-    expect(blunderbussSettings({ labels: {}, require_matching_label: [], tide: {}, hold: {}, blunderbuss: { ignore_authors: ['Dependabot[bot]'] }, sources: [] }).ignore_authors).toEqual(['dependabot[bot]'])
+    expect(blunderbussSettings({ ...mergeProwConfig({}, {}), blunderbuss: { ignore_authors: ['Dependabot[bot]'] }, sources: [] }).ignore_authors).toEqual(['dependabot[bot]'])
   })
 })
 

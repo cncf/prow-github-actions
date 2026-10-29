@@ -18,6 +18,14 @@ npm run all   # build, lint, pack the dist/ bundle, and test
 
 Note that `npm run all` runs `lint:fix` first, which rewrites files in place.
 
+`npm run build` compiles `src/` only (`tsconfig.json` excludes `__tests__/`),
+and Vitest strips types without checking them, so a test whose fixture has
+drifted from the type it claims to be still runs. `npm run typecheck`
+(`tsc -p tsconfig.test.json`) type-checks `src/` and `__tests__/` together
+without emitting; CI runs it in `build-test`, so run it after changing an
+exported type or a test fixture. `src/server/worker.ts` is excluded there and
+checked by `npm run build` (`tsconfig.worker.json`) with the Cloudflare types.
+
 The action runs from the committed `dist/index.js` (an `ncc` bundle of `src/`).
 Any change to `src/` must be followed by `npm run pack`, and the resulting
 `dist/index.js` committed alongside it; CI fails if `dist/` is out of date.

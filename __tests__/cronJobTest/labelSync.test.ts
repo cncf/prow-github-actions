@@ -319,7 +319,7 @@ describe('label-sync job', () => {
       const real = new Octokit({ auth: 'some-token', baseUrl: utils.api })
       const refused = vi.fn().mockRejectedValue('offline')
       const issues = Object.create(real.issues, {
-        createLabel: { value: (params: { name: string }) => (params.name === 'kind/bug' ? refused() : real.issues.createLabel(params)) },
+        createLabel: { value: (params: NonNullable<Parameters<typeof real.issues.createLabel>[0]>) => (params.name === 'kind/bug' ? refused() : real.issues.createLabel(params)) },
       })
       return Object.create(real, { issues: { value: issues } })
     })

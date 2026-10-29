@@ -19,7 +19,7 @@ describe('parseProwConfig type guards', () => {
 
     expect(() => parseProwConfig('x', 'kind:\n  - { name: bug, color: 123456 }\n')).toThrow(malformed)
     expect(() => parseProwConfig('x', 'kind:\n  - { name: bug, color: 12 }\n')).toThrow(malformed)
-    expect(parseProwConfig('x', 'kind:\n  - { name: bug, color: "123456" }\n').labels.kind.definitions).toEqual([
+    expect(parseProwConfig('x', 'kind:\n  - { name: bug, color: "123456" }\n').labels?.kind?.definitions).toEqual([
       { name: 'bug', color: '123456' },
     ])
   })

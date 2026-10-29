@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import type { staticTokens } from './testApp'
 
+import { describe, expect, it } from 'vitest'
 import { receiveWebhook } from '../../../src/adapters/app/webhook'
 import issueCommentEvent from '../../fixtures/issues/issueCommentEvent.json'
 import { receiver, signedRequest, withInstallation } from './testApp'
@@ -18,7 +19,7 @@ describe('receiveWebhook', () => {
     expect(r.dispatched).toHaveLength(1)
     expect(r.dispatched[0]).toMatchObject({ eventName: 'issue_comment', repo: { owner: 'Codertocat', repo: 'Hello-World' } })
     expect(r.dispatched[0]!.payload.installation).toEqual({ id: 7 })
-    expect((r.tokens as { requested: number[] }).requested).toEqual([7])
+    expect((r.tokens as ReturnType<typeof staticTokens>).requested).toEqual([7])
   })
 
   it('rejects a bad signature with 401 and dispatches nothing', async () => {

@@ -1,3 +1,4 @@
+import type { MockInstance } from 'vitest'
 import * as core from '@actions/core'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
@@ -81,7 +82,7 @@ function serveGraphql(queue: utils.MergeQueueFixture = {}) {
   return calls
 }
 
-let sleep: ReturnType<typeof vi.spyOn>
+let sleep: MockInstance<typeof sleepModule.sleep>
 let octokit: ReturnType<typeof newOctokit>
 let context: utils.MockContext
 

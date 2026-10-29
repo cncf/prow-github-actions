@@ -20,7 +20,7 @@ afterAll(() => server.close())
 const repo = `${utils.api}/repos/Codertocat/Hello-World`
 const headSha = pullReqOpenedEvent.pull_request.head.sha
 
-function labeled(label: string, sender: Record<string, unknown> = { login: 'alice', type: 'User' }, action = 'labeled') {
+function labeled(label: string, sender: { login: string, type: string } = { login: 'alice', type: 'User' }, action = 'labeled') {
   return new utils.MockContext({ ...pullReqOpenedEvent, action, label: { name: label }, sender })
 }
 
@@ -114,7 +114,7 @@ describe('lgtmOnPullRequest', () => {
   })
 
   it('throws when the payload has no head', async () => {
-    await expect(lgtmOnPullRequest(new utils.MockContext({ action: 'labeled', label: { name: 'lgtm' }, sender: { login: 'alice' } }))).rejects.toThrow('missing pull request head')
+    await expect(lgtmOnPullRequest(new utils.MockContext({ action: 'labeled', label: { name: 'lgtm' }, sender: { login: 'alice', type: 'User' } }))).rejects.toThrow('missing pull request head')
   })
 })
 

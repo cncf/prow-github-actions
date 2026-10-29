@@ -25,6 +25,7 @@
   },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.core.json && tsc -p tsconfig.worker.json",
+    "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "pack": "ncc build && npm run pack:server && npm run pack:worker",

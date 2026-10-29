@@ -44,7 +44,7 @@ describe('a platform other than GitHub Actions', () => {
   const actions = platform()
 
   beforeAll(() => {
-    server.listen({ onUnhandledRequest: 'error' })
+    server.listen(utils.failOnUnhandledRequest)
   })
   afterEach(() => {
     server.resetHandlers()

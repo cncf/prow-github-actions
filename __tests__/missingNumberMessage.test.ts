@@ -1,4 +1,4 @@
-import type { Context } from '@actions/github/lib/context'
+import type { Context } from '../src/utils/context'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
