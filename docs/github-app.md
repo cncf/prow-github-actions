@@ -210,4 +210,7 @@ longer than the platform allows after the response is not a concern today
 [overview](./overview.md#runtime-adapters)); `src/server/node.ts` is the HTTP
 server and `src/server/worker.ts` the Worker. `npm run pack:server` builds
 `dist-server/index.js` and `npm run pack:worker` `dist-worker/worker.js`; neither
-is committed. `__tests__/worker/` runs the Worker bundle in miniflare.
+is committed. `__tests__/worker/` runs the Worker bundle in miniflare;
+`wranglerConfig.test.ts` there also runs it under the bindings `wrangler.toml`
+declares and keeps the file in step with what `src/server/worker.ts` reads and
+with the setup commands above.
