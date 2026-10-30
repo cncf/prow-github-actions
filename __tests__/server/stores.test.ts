@@ -221,7 +221,17 @@ describe('the server with stores', () => {
     const port = 21000 + Math.floor(Math.random() * 1000)
     const { passthrough } = await import('msw')
     server.use(http.all(`http://127.0.0.1:${port}/*`, () => passthrough()))
-    server.use(http.post(`${api}/app/installations/7/access_tokens`, () => new Promise(() => {})))
+    // @octokit/auth-app shares one pending-request map per installation across every
+    // createAppAuth in the process, so a token request this test never answered would
+    // hang the next test of this file that mints a token for installation 7
+    let abandonToken!: () => void
+    const tokenHeld = new Promise<void>((resolve) => {
+      abandonToken = resolve
+    })
+    server.use(http.post(`${api}/app/installations/7/access_tokens`, async () => {
+      await tokenHeld
+      return new Response('abandoned by the test', { status: 500 })
+    }))
     const listening = main({ ...env, PORT: String(port), PROW_SHUTDOWN_GRACE_MS: '30' }, signals)
     try {
       await listening.ready
@@ -234,6 +244,9 @@ describe('the server with stores', () => {
       await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0))
     }
     finally {
+      abandonToken()
+      await vi.waitFor(() => expect(write.mock.calls.map(call => JSON.parse(String(call[0])) as { level: string })).toContainEqual(expect.objectContaining({ level: 'error' })))
+      await listening.close(0)
       write.mockRestore()
     }
   })
