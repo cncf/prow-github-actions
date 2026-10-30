@@ -54,6 +54,7 @@ describe('storesFromEnv', () => {
     expect(lines).toContainEqual({ level: 'info', message: 'redis: connected' })
 
     const { createClient } = await import('redis')
+    expect(createClient).toHaveBeenLastCalledWith({ url: 'redis://x' })
     const client = vi.mocked(createClient).mock.results.at(-1)!.value as { emit: (e: string, v: unknown) => void, close: () => Promise<void> }
     client.emit('error', new Error('ECONNRESET'))
     client.emit('error', 'string error')
@@ -85,11 +86,14 @@ describe('the server with stores', () => {
       const stores = redisStores('redis://x', () => {})
       const app = buildApp(buildReceiver(env, stores, () => {}), stores)
 
-      expect((await app.fetch(new Request('https://prow.test/healthz'))).status).toBe(200)
-      expect((await app.fetch(new Request('https://prow.test/readyz'))).status).toBe(503)
+      const healthy = await app.fetch(new Request('https://prow.test/healthz'))
+      expect([healthy.status, await healthy.text()]).toEqual([200, 'ok'])
+      const notReady = await app.fetch(new Request('https://prow.test/readyz'))
+      expect([notReady.status, await notReady.text()]).toEqual([503, 'stores not ready'])
       connect()
       await stores.ready
-      expect((await app.fetch(new Request('https://prow.test/readyz'))).status).toBe(200)
+      const ready = await app.fetch(new Request('https://prow.test/readyz'))
+      expect([ready.status, await ready.text()]).toEqual([200, 'ok'])
     }
     finally {
       delete (globalThis as { __redisConnect?: Promise<void> }).__redisConnect
@@ -200,12 +204,41 @@ describe('the server with stores', () => {
       signals.emit('SIGTERM')
       await new Promise(resolve => setTimeout(resolve, 20))
       expect(exit).not.toHaveBeenCalled()
-      const logged = () => write.mock.calls.map(call => JSON.parse(String(call[0])) as { message: string })
-      expect(logged().some(line => /waiting up to 5000ms for 1 in-flight/.test(line.message))).toBe(true)
+      const logged = () => write.mock.calls.map(call => JSON.parse(String(call[0])) as { level: string, message: string })
+      expect(logged().filter(line => /in-flight/.test(line.message))).toEqual([{ level: 'info', message: 'shutting down: waiting up to 5000ms for 1 in-flight deliveries', time: expect.any(String) }])
 
       releaseHandler()
       await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0))
-      expect(logged().at(-1)).toMatchObject({ message: 'shut down' })
+      expect(logged().at(-1)).toEqual({ level: 'info', message: 'shut down', time: expect.any(String) })
+    }
+    finally {
+      await listening.close(0)
+      write.mockRestore()
+    }
+  })
+
+  it('main() with nothing in flight stops listening and closes without waiting on a grace period', async () => {
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const signals = new (await import('node:events')).EventEmitter() as unknown as NodeJS.Process
+    const exit = vi.fn()
+    ;(signals as unknown as { exit: typeof exit }).exit = exit
+    const port = 23000 + Math.floor(Math.random() * 1000)
+    const { passthrough } = await import('msw')
+    server.use(http.all(`http://127.0.0.1:${port}/*`, () => passthrough()))
+    const listening = main({ ...env, PORT: String(port), REDIS_URL: 'redis://x', PROW_SHUTDOWN_GRACE_MS: '60000' }, signals)
+    try {
+      await listening.ready
+      expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200)
+      const { createClient } = await import('redis')
+      const client = vi.mocked(createClient).mock.results.at(-1)!.value as { close: ReturnType<typeof vi.fn> }
+
+      signals.emit('SIGTERM')
+      await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0))
+
+      expect(client.close).toHaveBeenCalledOnce()
+      const logged = write.mock.calls.map(call => JSON.parse(String(call[0])) as { message: string })
+      expect(logged.map(line => line.message)).toEqual(['redis: connected', `listening on :${port}`, 'shut down'])
+      await expect(fetch(`http://127.0.0.1:${port}/healthz`)).rejects.toThrow()
     }
     finally {
       await listening.close(0)

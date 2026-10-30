@@ -64,6 +64,37 @@ describe('memoryLocks', () => {
     await expect(next).resolves.toBe('ran')
   })
 
+  it('queues a caller that arrives after the first holder is done behind the one still waiting', async () => {
+    const locks = memoryLocks()
+    const order: string[] = []
+    const first = gate()
+    const second = gate()
+
+    const a = locks.withLock('k', async () => {
+      order.push('a:start')
+      await first.opened
+    })
+    const b = locks.withLock('k', async () => {
+      order.push('b:start')
+      await second.opened
+    })
+    first.open()
+    await a
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(order).toEqual(['a:start', 'b:start'])
+
+    // a's cleanup must leave b's tail in place, or c would run alongside b
+    const c = locks.withLock('k', async () => {
+      order.push('c:start')
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(order).toEqual(['a:start', 'b:start'])
+
+    second.open()
+    await Promise.all([b, c])
+    expect(order).toEqual(['a:start', 'b:start', 'c:start'])
+  })
+
   it('forgets a key once its last holder is done', async () => {
     const locks = memoryLocks()
     await locks.withLock('k', async () => {})
