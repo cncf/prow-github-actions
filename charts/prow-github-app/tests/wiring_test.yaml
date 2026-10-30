@@ -124,9 +124,9 @@ tests:
     chart:
       appVersion: 3.4.0
     asserts:
-      - equal: {path: "spec.template.spec.containers[0].image", value: ghcr.io/cncf/prow-github-actions:3.4.0}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: ghcr.io/cncf/prow-github-actions:3.4.0}
         template: deployment.yaml
-      - equal: {path: "spec.jobTemplate.spec.template.spec.containers[0].image", value: ghcr.io/cncf/prow-github-actions:3.4.0}
+      - equal: {path: 'spec.jobTemplate.spec.template.spec.containers[0].image', value: ghcr.io/cncf/prow-github-actions:3.4.0}
         template: cronjob.yaml
   - it: image.tag and imagePullSecrets override the defaults in both pod specs
     set:
@@ -135,9 +135,9 @@ tests:
       image.pullPolicy: Never
       imagePullSecrets: [{name: ghcr}]
     asserts:
-      - equal: {path: "spec.template.spec.containers[0].image", value: prow-github-app:ci}
+      - equal: {path: 'spec.template.spec.containers[0].image', value: prow-github-app:ci}
         template: deployment.yaml
-      - equal: {path: "spec.template.spec.containers[0].imagePullPolicy", value: Never}
+      - equal: {path: 'spec.template.spec.containers[0].imagePullPolicy', value: Never}
         template: deployment.yaml
       - equal: {path: spec.template.spec.imagePullSecrets, value: [{name: ghcr}]}
         template: deployment.yaml

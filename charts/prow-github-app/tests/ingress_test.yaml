@@ -21,7 +21,7 @@ tests:
       - notExists: {path: spec.tls}
       - notExists: {path: metadata.annotations}
       - lengthEqual: {path: spec.rules, count: 1}
-      - equal: {path: "spec.rules[0].host", value: prow.example.com}
+      - equal: {path: 'spec.rules[0].host', value: prow.example.com}
       - equal:
           path: spec.rules[0].http.paths
           value:
@@ -38,7 +38,7 @@ tests:
         - host: prow.example.com
           paths: [{path: /}]
     asserts:
-      - equal: {path: "spec.rules[0].http.paths[0].pathType", value: Prefix}
+      - equal: {path: 'spec.rules[0].http.paths[0].pathType', value: Prefix}
       - notExists: {path: spec.ingressClassName}
   - it: tls and annotations pass through, one rule per host
     set:
@@ -56,4 +56,4 @@ tests:
           value: {cert-manager.io/cluster-issuer: letsencrypt}
       - equal: {path: spec.tls, value: [{secretName: prow-tls, hosts: [prow.example.com]}]}
       - lengthEqual: {path: spec.rules, count: 2}
-      - equal: {path: "spec.rules[1].host", value: prow-alt.example.com}
+      - equal: {path: 'spec.rules[1].host', value: prow-alt.example.com}
