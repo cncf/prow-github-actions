@@ -68,7 +68,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # v3.2.0 → 3.2.0, 3.2, 3 and latest; a pre-release (anything with a '-') gets only its own version
+      # v3.4.0 → 3.2.0, 3.2, 3 and latest; a pre-release (anything with a '-') gets only its own version
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
