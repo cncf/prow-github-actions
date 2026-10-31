@@ -32,7 +32,7 @@ describe('dist/index.js /assign failure arms', () => {
 
   // the three reads checkCommenterAuth / getOrgCollabCommentUsers make for one user, in order
   function membershipOrCommentReads(user: string) {
-    return [...membershipReads(user), `GET ${repo}/issues/1/comments`]
+    return [...membershipReads(user), `GET ${repo}/issues/1/comments?per_page=100`]
   }
 
   it('fails the action when the self-assign write is refused', async () => {

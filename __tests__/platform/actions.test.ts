@@ -1,11 +1,13 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { actionsPlatform } from '../../src/adapters/actions'
 
 describe('actionsPlatform', () => {
-  afterEach(() => {
+  // before, not after: the Actions runner itself sets GITHUB_API_URL and GITHUB_WORKFLOW, so a test that runs first
+  // under test:shuffle would otherwise see the runner's values
+  beforeEach(() => {
     delete process.env.GITHUB_API_URL
     delete process.env.GITHUB_WORKFLOW
     delete process.env['INPUT_MERGE-METHOD']

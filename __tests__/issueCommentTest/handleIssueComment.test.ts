@@ -51,6 +51,37 @@ it('ignores the comment if no command in comment', async () => {
   expect(assign.assign).toHaveBeenCalledTimes(0)
 })
 
+it.each(['edited', 'deleted'])('runs no command on an %s comment', async (action) => {
+  utils.setupActionsEnv('/assign')
+
+  vi.spyOn(assign, 'assign').mockResolvedValue()
+  const payload = structuredClone(issueCommentEvent)
+  payload.action = action
+  payload.comment.body = '/assign'
+  const infoSpy = vi.spyOn(core, 'info')
+  const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+  await handleIssueComment(new utils.MockContext(payload))
+  expect(assign.assign).not.toHaveBeenCalled()
+  expect(sweepStubs[0]).not.toHaveBeenCalled()
+  expect(sweepStubs[1]).not.toHaveBeenCalled()
+  expect(setFailed).not.toHaveBeenCalled()
+  expect(infoSpy).toHaveBeenCalledWith(`issue_comment: ignoring the ${action} action; commands run only on created comments`)
+})
+
+it('runs the command of a payload without an action', async () => {
+  utils.setupActionsEnv('/assign')
+
+  vi.spyOn(assign, 'assign').mockResolvedValue()
+  const payload: Record<string, unknown> = structuredClone(issueCommentEvent)
+  delete payload.action
+  const context = new utils.MockContext(payload)
+  context.payload.comment!.body = '/assign'
+
+  await handleIssueComment(context)
+  expect(assign.assign).toHaveBeenCalledTimes(1)
+})
+
 it('can handle multiple commands in prow-commands config', async () => {
   utils.setupActionsEnv('/assign /unassign')
 
