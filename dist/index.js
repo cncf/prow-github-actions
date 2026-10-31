@@ -42750,7 +42750,8 @@ async function checkCollaborator(octokit, context, user) {
 }
 /**
  * checkIssueComments will check to see if the given user
- * has commented on the given issue
+ * has commented on the given issue, reading every page of comments
+ * and comparing logins case-insensitively
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -42759,16 +42760,15 @@ async function checkCollaborator(octokit, context, user) {
  */
 async function checkIssueComments(octokit, context, issueNum, user) {
     try {
-        const comments = await octokit.issues.listComments({
+        // every page: on a busy issue the user's comment may be past the first 30
+        const comments = await octokit.paginate(octokit.issues.listComments, {
             ...context.repo,
             issue_number: issueNum,
+            per_page: 100,
         });
-        for (const e of comments.data) {
-            if (e.user?.login === user) {
-                return true;
-            }
-        }
-        return false;
+        // GitHub logins are case-insensitive
+        const wanted = user.toLowerCase();
+        return comments.some(e => e.user?.login.toLowerCase() === wanted);
     }
     catch (e) {
         const { status, message } = getErrorDetails(e);
@@ -46131,8 +46131,13 @@ async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error
 
 
 
+
+
 /**
- * /remove will remove a label based on the command argument
+ * /remove will remove a label based on the command argument.
+ * Labels owned by their own, separately authorized commands (lgtm, approved,
+ * the hold label and do-not-merge/*) are refused: those are released with
+ * /lgtm cancel, /approve cancel and /hold cancel.
  *
  * @param context - the github actions event context
  */
@@ -46150,7 +46155,16 @@ async function remove(context = platform_platform().context()) {
     if (!isAuthUser) {
         throw new Error(`commenter is not authorized to remove a label. Must be repo collaborator`);
     }
-    let toRemove = getCommandArgs('/remove', commentBody);
+    const requested = getCommandArgs('/remove', commentBody);
+    // no arguments after command provided
+    if (requested.length === 0) {
+        throw new Error(`remove: command args missing from body`);
+    }
+    const { hold } = await loadProwConfig(octokit, context);
+    const offender = requested.find(label => isProtectedLabel(label, [resolveHoldLabel(hold)]));
+    if (offender !== undefined) {
+        throw new Error(`remove: ${offender} is managed by its own command and cannot be removed with /remove; use /lgtm cancel, /approve cancel or /hold cancel`);
+    }
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, issueNumber);
@@ -46159,12 +46173,10 @@ async function remove(context = platform_platform().context()) {
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
     }
-    toRemove = toRemove.filter((e) => {
-        return currentLabels.includes(e);
-    });
-    // no arguments after command provided
+    // GitHub label names are case-insensitive: remove the issue's own spelling
+    const toRemove = currentLabels.filter(label => requested.some(name => sameLabel(name, label)));
     if (toRemove.length === 0) {
-        throw new Error(`remove: command args missing from body`);
+        throw new Error(`remove: none of ${requested.join(', ')} are on the issue`);
     }
     await removeLabels(octokit, context, issueNumber, toRemove);
 }
@@ -46886,18 +46898,23 @@ async function unassign(context = platform_platform().context()) {
         }
         return;
     }
-    const isAuthUser = await checkCommenterAuth(octokit, context, issueNumber, commenterId);
-    if (isAuthUser) {
-        try {
-            await octokit.issues.removeAssignees({
-                ...context.repo,
-                issue_number: issueNumber,
-                assignees: commentArgs,
-            });
-        }
-        catch (e) {
-            throw new Error(`could not remove assignee: ${e}`);
-        }
+    // Only a commenter who is an org member or a repo collaborator may unassign
+    // other users; having commented on the issue is not enough
+    const isOrgMember = await checkOrgMember(octokit, context, commenterId);
+    const isCollaborator = await checkCollaborator(octokit, context, commenterId);
+    if (!isOrgMember && !isCollaborator) {
+        platform_platform().log.info(`unassign: ${commenterId} is not an org member or repo collaborator; not unassigning ${commentArgs.join(', ')}`);
+        return;
+    }
+    try {
+        await octokit.issues.removeAssignees({
+            ...context.repo,
+            issue_number: issueNumber,
+            assignees: commentArgs,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not remove assignee: ${e}`);
     }
 }
 
@@ -46930,18 +46947,19 @@ async function uncc(context = platform_platform().context()) {
         }
         return;
     }
-    // Only target users who:
-    // - are members of the org
-    // - are collaborators
-    // - have previously commented on this issue
-    const authUser = await checkCommenterAuth(octokit, context, pullNumber, commenterId);
-    if (authUser) {
-        await octokit.pulls.removeRequestedReviewers({
-            ...context.repo,
-            pull_number: pullNumber,
-            reviewers: commentArgs,
-        });
+    // Only a commenter who is an org member or a repo collaborator may remove
+    // other users' review requests; having commented on the PR is not enough
+    const isOrgMember = await checkOrgMember(octokit, context, commenterId);
+    const isCollaborator = await checkCollaborator(octokit, context, commenterId);
+    if (!isOrgMember && !isCollaborator) {
+        platform_platform().log.info(`uncc: ${commenterId} is not an org member or repo collaborator; not removing ${commentArgs.join(', ')}`);
+        return;
     }
+    await octokit.pulls.removeRequestedReviewers({
+        ...context.repo,
+        pull_number: pullNumber,
+        reviewers: commentArgs,
+    });
 }
 /**
  * removeSelfReviewReq will remove the self review req if no arguments were provided
@@ -47056,6 +47074,13 @@ function commandForms(command) {
  * @param context - the github context of the current action event
  */
 async function handleIssueComment(context = platform_platform().context()) {
+    // only a newly written comment carries commands: editing an old comment (or deleting one)
+    // must not replay or smuggle in a command after the fact
+    const action = context.payload.action;
+    if (action !== undefined && action !== 'created') {
+        platform_platform().log.info(`issue_comment: ignoring the ${action} action; commands run only on created comments`);
+        return;
+    }
     const commandConfig = [...new Set(platform_platform().inputs.get('prow-commands', { required: false }).split(/\s+/).filter(command => command !== '').map(command => canonicalCommand(command.toLowerCase())))];
     // GitHub allows an empty comment, whose body arrives as null
     const commentBody = context.payload.comment?.body ?? '';

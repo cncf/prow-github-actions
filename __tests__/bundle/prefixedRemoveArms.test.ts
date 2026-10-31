@@ -19,7 +19,7 @@ function yamlFile(text: string) {
 // that bundle.test.ts, labelCommands and the dispatcher suites leave out, driven through dist/index.js
 describe('dist/index.js prefixed label and /remove arms', () => {
   let gh: FakeGithub
-  const { expectCommandThenConfig, expectRequests } = helpersFor(() => gh)
+  const { expectRequests } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -94,18 +94,29 @@ describe('dist/index.js prefixed label and /remove arms', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('could not get labels from issue: Error: could not get issue'))).toBe(true)
     expect(gh.requestsMatching('DELETE', /./)).toEqual([])
-    expectCommandThenConfig([`GET ${repo}/collaborators/Codertocat`, `GET ${repo}/issues/1`])
+    expectRequests([`GET ${repo}/collaborators/Codertocat`, ...configReads()], [`GET ${repo}/issues/1`])
   })
 
-  it('/remove by a collaborator naming only labels the issue does not carry fails as missing args', async () => {
+  it('/remove by a collaborator naming only labels the issue does not carry fails naming them', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
     gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [{ name: 'bar' }] } })
 
     const result = await run('/remove foo', '/remove')
 
     expect(result.status, result.stdout).toBe(1)
-    expect(result.errors.some(e => e.includes('remove: command args missing from body'))).toBe(true)
+    expect(result.errors.some(e => e.includes('remove: none of foo are on the issue'))).toBe(true)
     expect(gh.requestsMatching('DELETE', /./)).toEqual([])
-    expectCommandThenConfig([`GET ${repo}/collaborators/Codertocat`, `GET ${repo}/issues/1`])
+    expectRequests([`GET ${repo}/collaborators/Codertocat`, ...configReads()], [`GET ${repo}/issues/1`])
+  })
+
+  it('/remove by a collaborator refuses do-not-merge/hold, pointing at /hold cancel, without reading or writing labels', async () => {
+    gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+
+    const result = await run('/remove do-not-merge/hold', '/remove')
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('remove: do-not-merge/hold is managed by its own command') && e.includes('/hold cancel'))).toBe(true)
+    expect(gh.requestsMatching('DELETE', /./)).toEqual([])
+    expectRequests([`GET ${repo}/collaborators/Codertocat`, ...configReads()], [])
   })
 })

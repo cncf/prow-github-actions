@@ -51,7 +51,7 @@ describe('dist/index.js review and lock command refused writes', () => {
 
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('could not request reviewers'))).toBe(true)
-      expect(calls()).toEqual([...membershipReads('octocat'), `GET ${repo}/issues/1/comments`, `POST ${repo}/pulls/1/requested_reviewers`])
+      expect(calls()).toEqual([...membershipReads('octocat'), `GET ${repo}/issues/1/comments?per_page=100`, `POST ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('POST', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
   })
@@ -87,14 +87,13 @@ describe('dist/index.js review and lock command refused writes', () => {
     it('fails the action when removing the argument users is refused after the commenter is authorized', async () => {
       gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
-      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
       gh.route('DELETE', `${repo}/issues/1/assignees`, { status: 500, body: { message: 'boom' } })
 
       const result = await run('/unassign @octocat', '/unassign')
 
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('could not remove assignee'))).toBe(true)
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments`, `DELETE ${repo}/issues/1/assignees`])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
     })
   })

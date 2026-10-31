@@ -2,7 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { Context } from '../utils/context'
 
 import { platform } from '../platform'
-import { checkCollaborator, checkCommenterAuth } from '../utils/auth'
+import { checkCollaborator, checkOrgMember } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { newOctokitFromInputs } from '../utils/octokit'
 
@@ -37,24 +37,21 @@ export async function uncc(context: Context = platform().context()): Promise<voi
     return
   }
 
-  // Only target users who:
-  // - are members of the org
-  // - are collaborators
-  // - have previously commented on this issue
-  const authUser = await checkCommenterAuth(
-    octokit,
-    context,
-    pullNumber,
-    commenterId,
-  )
+  // Only a commenter who is an org member or a repo collaborator may remove
+  // other users' review requests; having commented on the PR is not enough
+  const isOrgMember = await checkOrgMember(octokit, context, commenterId)
+  const isCollaborator = await checkCollaborator(octokit, context, commenterId)
 
-  if (authUser) {
-    await octokit.pulls.removeRequestedReviewers({
-      ...context.repo,
-      pull_number: pullNumber,
-      reviewers: commentArgs,
-    })
+  if (!isOrgMember && !isCollaborator) {
+    platform().log.info(`uncc: ${commenterId} is not an org member or repo collaborator; not removing ${commentArgs.join(', ')}`)
+    return
   }
+
+  await octokit.pulls.removeRequestedReviewers({
+    ...context.repo,
+    pull_number: pullNumber,
+    reviewers: commentArgs,
+  })
 }
 
 /**

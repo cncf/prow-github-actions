@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 
+import issueListComments from '../fixtures/issues/assign/issueListComments.json'
 import issueCommentEventUnassign from '../fixtures/issues/unassign/issueCommentEventUnassign.json'
 
 import issueUnassignedResp from '../fixtures/issues/unassign/issueUnassignedResponse.json'
@@ -215,5 +216,63 @@ describe('/unassign', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('does not unassign another user when the commenter has only commented before', async () => {
+    issueCommentEventUnassign.comment.body = '/unassign @some-user'
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      // lists Codertocat's own comment, which used to authorize the commenter
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(200, issueListComments),
+      ),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/assignees`,
+        utils.mockResponse(201, issueUnassignedResp, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEventUnassign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('unassigns another user when the commenter is a repo collaborator', async () => {
+    issueCommentEventUnassign.comment.body = '/unassign @some-user'
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/assignees`,
+        utils.mockResponse(201, issueUnassignedResp, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEventUnassign)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({ assignees: ['some-user'] })
   })
 })

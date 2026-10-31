@@ -45,7 +45,7 @@ describe('dist/index.js checkOrgMember without payload.repository', () => {
     expect(gh.requestsMatching('GET', /^\/orgs\//)).toEqual([])
     expect(calls()).toEqual([
       `GET ${repo}/collaborators/octocat`,
-      `GET ${repo}/issues/1/comments`,
+      `GET ${repo}/issues/1/comments?per_page=100`,
       `POST ${repo}/issues/1/assignees`,
     ])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
@@ -61,6 +61,6 @@ describe('dist/index.js checkOrgMember without payload.repository', () => {
     expect(result.stdout).toContain('checkOrgMember error: context payload repository undefined')
     expect(gh.requestsMatching('GET', /^\/orgs\//)).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expect(calls()).toEqual([`GET ${repo}/collaborators/stranger`, `GET ${repo}/issues/1/comments`])
+    expect(calls()).toEqual([`GET ${repo}/collaborators/stranger`, `GET ${repo}/issues/1/comments?per_page=100`])
   })
 })

@@ -21,9 +21,9 @@ Commands | Policy | Description
 `/approve cancel` | same as `/approve` | on a repo with OWNERS files: withdraws the commenter's approval and re-evaluates (`approved` is removed if the files they covered are no longer covered). Otherwise: dismisses the bot's latest approval
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
-`/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must have been already assigned.
+`/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member or Collaborator; having commented before is not enough. Target must have been already assigned.
 `/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Self-cc requires Collaborator; targets must be an Org Member, Collaborator, or have previously commented.
-`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member, Collaborator, or have previously commented. Target must already have had a review requested.
+`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member or Collaborator; having commented before is not enough. Target must already have had a review requested.
 `/close` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR
 `/close not-planned` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR with the `not planned` state reason
 `/reopen` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | reopens a closed issue / PR
@@ -69,7 +69,7 @@ Label Commands | Policy | Description
 `/remove-good-first-issue` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `good first issue` label
 `/<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
 `/remove-<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
-`/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
+`/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR, matched case-insensitively; fails when none of them is on it. Refuses `lgtm`, `approved`, `hold`, the configured `hold.label` and every `do-not-merge/*` label: release those with `/lgtm cancel`, `/approve cancel` or `/hold cancel`
 
 Every label-writing command that ran (`/lgtm`, `/approve`, `/hold`, `/remove`, `/ok-to-test` and the label commands below) is followed by a re-check of the [`require_matching_label`](./configuration.md#require_matching_label) rules (`/kind cleanup` clears `needs-kind` in the same run) and, on an open PR, by the merge gate; see [events](./events.md#the-bots-writes-fire-no-events) for why.
 

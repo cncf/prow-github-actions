@@ -91,7 +91,8 @@ describe('/unassign error paths', () => {
   })
 
   it('wraps a failed unassignment of another user', async () => {
-    vi.mocked(auth.checkCommenterAuth).mockResolvedValueOnce(true)
+    vi.mocked(auth.checkOrgMember).mockResolvedValueOnce(true)
+    vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(false)
     failing('delete', `${issue}/assignees`)
 
     await expect(unassign(comment('/unassign @some-user'))).rejects.toThrow(

@@ -100,10 +100,9 @@ describe('dist/index.js OWNERS authorization on an issue without a root OWNERS f
   })
 
   describe('/unassign by a non-author', () => {
-    it('warns and removes nothing when the commenter is not a member or collaborator and the issue-comments read fails unexpectedly', async () => {
+    it('removes nothing, without reading the issue comments, when the commenter is not a member or collaborator', async () => {
       gh.route('GET', orgRead, notFound)
       gh.route('GET', collaboratorRead, notFound)
-      gh.route('GET', `${repo}/issues/1/comments`, serverError)
 
       const result = await runBundle({
         eventName: 'issue_comment',
@@ -114,9 +113,8 @@ describe('dist/index.js OWNERS authorization on an issue without a root OWNERS f
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(warnings(result.stdout).some(w => w.includes('status=500'))).toBe(true)
       expect(gh.requestsMatching('DELETE', /\/issues\/1\/assignees$/)).toEqual([])
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments`])
+      expect(calls()).toEqual(membershipReads('Codertocat'))
     })
   })
 })
