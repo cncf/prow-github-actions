@@ -1,0 +1,171 @@
+suite: wiring
+templates:
+  - service.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - cronjob.yaml
+values:
+  - ./values/creds.yaml
+tests:
+  - it: the service names its port http, the name the ingress and the probes target
+    template: service.yaml
+    asserts:
+      - equal: {path: spec.type, value: ClusterIP}
+      - equal:
+          path: spec.ports
+          value: [{name: http, port: 8080, targetPort: http}]
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: prow-github-app
+            app.kubernetes.io/instance: RELEASE-NAME
+  - it: creates a token-less service account named after the release by default
+    template: serviceaccount.yaml
+    asserts:
+      - hasDocuments: {count: 1}
+      - equal: {path: metadata.name, value: RELEASE-NAME-prow-github-app}
+      - equal: {path: automountServiceAccountToken, value: false}
+      - notExists: {path: metadata.annotations}
+  - it: serviceAccount.name and annotations pass through to the account and the pods
+    set:
+      serviceAccount.name: ops
+      serviceAccount.annotations: {eks.amazonaws.com/role-arn: arn:aws:iam::1:role/prow}
+    asserts:
+      - equal: {path: metadata.name, value: ops}
+        template: serviceaccount.yaml
+      - equal:
+          path: metadata.annotations
+          value: {eks.amazonaws.com/role-arn: arn:aws:iam::1:role/prow}
+        template: serviceaccount.yaml
+      - equal: {path: spec.template.spec.serviceAccountName, value: ops}
+        template: deployment.yaml
+      - equal: {path: spec.jobTemplate.spec.template.spec.serviceAccountName, value: ops}
+        template: cronjob.yaml
+  - it: serviceAccount.create false renders no account and the pods use default
+    set:
+      serviceAccount.create: false
+    asserts:
+      - hasDocuments: {count: 0}
+        template: serviceaccount.yaml
+      - equal: {path: spec.template.spec.serviceAccountName, value: default}
+        template: deployment.yaml
+      - equal: {path: spec.jobTemplate.spec.template.spec.serviceAccountName, value: default}
+        template: cronjob.yaml
+  - it: serviceAccount.create false with a name uses that pre-existing account
+    set:
+      serviceAccount.create: false
+      serviceAccount.name: ops
+    asserts:
+      - hasDocuments: {count: 0}
+        template: serviceaccount.yaml
+      - equal: {path: spec.template.spec.serviceAccountName, value: ops}
+        template: deployment.yaml
+  - it: the configmap carries the prow inputs as strings and no api url for github.com
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data
+          value:
+            PROW_COMMANDS: ''
+            PROW_JOBS: lgtm
+            PROW_MERGE_METHOD: ''
+            PROW_CONFIG: ''
+            PROW_DRY_RUN: 'false'
+  - it: github.apiUrl and prow values reach the configmap the pods read
+    set:
+      github.apiUrl: https://ghes.example/api/v3
+      prow.dryRun: true
+      prow.commands: lgtm approve
+      prow.mergeMethod: squash
+    asserts:
+      - equal: {path: data.GITHUB_API_URL, value: https://ghes.example/api/v3}
+        template: configmap.yaml
+      - equal: {path: data.PROW_DRY_RUN, value: 'true'}
+        template: configmap.yaml
+      - equal: {path: data.PROW_COMMANDS, value: lgtm approve}
+        template: configmap.yaml
+      - equal: {path: data.PROW_MERGE_METHOD, value: squash}
+        template: configmap.yaml
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value: [{configMapRef: {name: RELEASE-NAME-prow-github-app}}]
+        template: deployment.yaml
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].envFrom
+          value: [{configMapRef: {name: RELEASE-NAME-prow-github-app}}]
+        template: cronjob.yaml
+  - it: extraEnv entries land in both containers after the chart's own env
+    set:
+      extraEnv:
+        - {name: NODE_OPTIONS, value: --max-old-space-size=192}
+        - name: HTTPS_PROXY
+          valueFrom: {secretKeyRef: {name: proxy, key: url}}
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: NODE_OPTIONS, value: --max-old-space-size=192}
+        template: deployment.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: HTTPS_PROXY
+            valueFrom: {secretKeyRef: {name: proxy, key: url}}
+        template: deployment.yaml
+      - equal:
+          path: spec.template.spec.containers[0].env[-1].name
+          value: HTTPS_PROXY
+        template: deployment.yaml
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content: {name: NODE_OPTIONS, value: --max-old-space-size=192}
+        template: cronjob.yaml
+  - it: an empty image.tag resolves to the chart appVersion
+    chart:
+      appVersion: 3.4.0
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[0].image', value: ghcr.io/cncf/prow-github-actions:3.4.0}
+        template: deployment.yaml
+      - equal: {path: 'spec.jobTemplate.spec.template.spec.containers[0].image', value: ghcr.io/cncf/prow-github-actions:3.4.0}
+        template: cronjob.yaml
+  - it: image.tag and imagePullSecrets override the defaults in both pod specs
+    set:
+      image.tag: ci
+      image.repository: prow-github-app
+      image.pullPolicy: Never
+      imagePullSecrets: [{name: ghcr}]
+    asserts:
+      - equal: {path: 'spec.template.spec.containers[0].image', value: prow-github-app:ci}
+        template: deployment.yaml
+      - equal: {path: 'spec.template.spec.containers[0].imagePullPolicy', value: Never}
+        template: deployment.yaml
+      - equal: {path: spec.template.spec.imagePullSecrets, value: [{name: ghcr}]}
+        template: deployment.yaml
+      - equal: {path: spec.jobTemplate.spec.template.spec.imagePullSecrets, value: [{name: ghcr}]}
+        template: cronjob.yaml
+  - it: fullnameOverride names every resource and the references between them
+    set:
+      fullnameOverride: prow
+    asserts:
+      - equal: {path: metadata.name, value: prow}
+        template: service.yaml
+      - equal: {path: metadata.name, value: prow}
+        template: serviceaccount.yaml
+      - equal: {path: metadata.name, value: prow}
+        template: configmap.yaml
+      - equal: {path: metadata.name, value: prow}
+        template: deployment.yaml
+      - equal: {path: metadata.name, value: prow-jobs}
+        template: cronjob.yaml
+      - equal: {path: spec.template.spec.serviceAccountName, value: prow}
+        template: deployment.yaml
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value: [{configMapRef: {name: prow}}]
+        template: deployment.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: GITHUB_APP_ID
+            valueFrom: {secretKeyRef: {name: prow, key: appId}}
+        template: deployment.yaml
