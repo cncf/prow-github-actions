@@ -55,13 +55,13 @@ describe('dist/index.js issue_comment on an issue whose user is null', () => {
     expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ state: 'closed' })
   })
 
-  it('/close by a non-collaborator: the refusal reads authorization.close and nothing is closed', async () => {
+  it('/close by a non-collaborator: the refusal reads authorization.close, nothing is closed and the run fails', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
     const result = await runIssue('/close', '/close')
 
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('Codertocat is not authorized to close this issue'))).toBe(true)
     expect(calls().slice(0, 1)).toEqual([collaboratorRead])
     expect(calls().slice(1).sort()).toEqual(configReads().sort())
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])

@@ -31,16 +31,20 @@ export async function reopen(context: Context = platform().context()): Promise<v
       || (await checkCollaborator(octokit, context, commenterId))
       || (await closePolicyAllows(octokit, context, commenterId))
 
-  if (isAuthUser) {
-    try {
-      await octokit.issues.update({
-        ...context.repo,
-        issue_number: issueNumber,
-        state: 'open',
-      })
-    }
-    catch (e) {
-      throw new Error(`could not open issue: ${e}`)
-    }
+  if (!isAuthUser) {
+    throw new Error(
+      `${commenterId} is not authorized to reopen this issue. Must be the author, a collaborator or pass authorization.close`,
+    )
+  }
+
+  try {
+    await octokit.issues.update({
+      ...context.repo,
+      issue_number: issueNumber,
+      state: 'open',
+    })
+  }
+  catch (e) {
+    throw new Error(`could not open issue: ${e}`)
   }
 }

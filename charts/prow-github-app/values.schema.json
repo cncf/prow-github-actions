@@ -1,10 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
+    "global": { "type": "object" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
     "replicaCount": { "type": "integer", "minimum": 1 },
     "image": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "repository": { "type": "string", "minLength": 1 },
         "tag": { "type": "string" },
@@ -12,8 +17,10 @@
       },
       "required": ["repository"]
     },
+    "imagePullSecrets": { "type": "array" },
     "github": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "appId": { "type": "string" },
         "privateKey": { "type": "string" },
@@ -35,6 +42,7 @@
     },
     "prow": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "commands": { "type": "string" },
         "jobs": { "type": "string" },
@@ -45,6 +53,7 @@
     },
     "redis": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "url": { "type": "string", "pattern": "^$|^rediss?://" },
         "existingSecret": { "type": "string" },
@@ -53,12 +62,59 @@
     },
     "cronjob": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
-        "schedule": { "type": "string", "minLength": 9 }
+        "schedule": { "type": "string", "minLength": 1 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "successfulJobsHistoryLimit": { "type": "integer", "minimum": 0 },
+        "failedJobsHistoryLimit": { "type": "integer", "minimum": 0 }
       }
     },
-    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 }
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": { "type": "array" },
+        "tls": { "type": "array" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minAvailable": { "type": ["integer", "string"] }
+      }
+    },
+    "resources": { "type": "object" },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "topologySpreadConstraints": { "type": "array" },
+    "extraEnv": { "type": "array" }
   },
   "if": { "properties": { "replicaCount": { "minimum": 2 } } },
   "then": {

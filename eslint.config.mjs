@@ -8,7 +8,8 @@ export default antfu({
     '**/lib/**/',
     'node_modules/',
     '**/node_modules/**/',
-    '.sisyphus/',
+    '.omo/**',
+    '.sisyphus/**',
     // Go templates, not yaml
     'charts/*/templates/**',
   ],

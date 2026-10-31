@@ -154,7 +154,7 @@ lookup ([the `config` input](./configuration.md#the-config-input)).
 Ref | Behaviour
 --- | ---
 `@v3.4.0` | Exact release, what the templates ship. [Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot)'s `github-actions` ecosystem proposes the next release (it also updates reusable-workflow `uses:` refs).
-`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y`. Nothing to do; you get every fix and every minor change without review.
+`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y` that is newer than the one it points at (a backport to an older minor leaves it alone). Nothing to do; you get every fix and every minor change without review.
 `@<sha> # v3.4.0` | Hash pinning; the commit is on the [release page](https://github.com/cncf/prow-github-actions/releases/tag/v3.4.0). Dependabot keeps the comment and the sha in step.
 
 Whatever the ref, the reusable workflow checks out the action at the **same commit as the
@@ -179,7 +179,7 @@ Input | Default | Meaning
 --- | --- | ---
 `prow-commands` | every built-in command except `/meow` | The [`/commands`](./commands.md) to enable on `issue_comment`. Setting it replaces the list: add `/meow` or a dynamic `/<key>` command here.
 `jobs` | `lgtm` | The [jobs](./cron-jobs.md) for `schedule`, `workflow_dispatch` and `push`, and the [PR jobs](./pr-jobs.md) for `pull_request`: `lgtm` merges on the schedule and strips `lgtm` from updated PRs; `sweep` evaluates recently updated PRs (fork PRs under `pull_request`).
-`merge-method` | `merge` | `merge`, `squash` or `rebase`; `tide.merge_method` in `prow.yaml` wins. Ignored on a branch that requires a merge queue: the queue's method wins ([merge queues](./automatic-merging.md#merge-queues)).
+`merge-method` | `merge` | `merge`, `squash` or `rebase`, in any case; anything else is warned about and merges with `merge`. `tide.merge_method` in `prow.yaml` wins. Ignored on a branch that requires a merge queue: the queue's method wins ([merge queues](./automatic-merging.md#merge-queues)).
 `config` | — | An explicit configuration source, `owner/repo:path[@ref]` or an `https://` url ([configuration](./configuration.md#the-config-input)).
 `dry-run` | `false` | `label-sync` logs what it would create or update and writes nothing.
 

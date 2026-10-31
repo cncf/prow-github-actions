@@ -35,22 +35,30 @@ interface PullOverrides {
   author?: string
   draft?: boolean
   requested?: string[]
+  requestedTeams?: string[]
   assignees?: string[]
+  /** the review states by login, ex: { alice: 'APPROVED' } */
+  reviews?: Record<string, string>
 }
 
-function pullHandler({ author = 'some-author', draft = false, requested = [], assignees = [] }: PullOverrides = {}): HttpHandler {
+function pullHandler({ author = 'some-author', draft = false, requested = [], requestedTeams = [], assignees = [] }: PullOverrides = {}): HttpHandler {
   return http.get(`${repo}/pulls/1`, utils.mockResponse(200, {
     base: { ref: 'master', sha: baseSha },
     head: { sha: 'headsha' },
     user: { login: author },
     draft,
     requested_reviewers: requested.map(login => ({ login })),
+    requested_teams: requestedTeams.map(slug => ({ slug })),
     assignees: assignees.map(login => ({ login })),
   }))
 }
 
+function reviewsHandler(reviews: Record<string, string> = {}, status = 200): HttpHandler {
+  return http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(status, status < 300 ? Object.entries(reviews).map(([login, state], id) => ({ id, user: { login }, state })) : { message: 'boom' }))
+}
+
 function servePr(ownersFiles: Record<string, string>, files: string[], pull: PullOverrides = {}) {
-  server.use(pullHandler(pull), filesHandler(changedFiles(...files)), ...treeHandlers(ownersFiles))
+  server.use(pullHandler(pull), reviewsHandler(pull.reviews), filesHandler(changedFiles(...files)), ...treeHandlers(ownersFiles))
 }
 
 function serveConfig(yaml?: string) {
@@ -221,6 +229,58 @@ describe('blunderbuss handler', () => {
     expect(debug).toHaveBeenCalledWith('blunderbuss: #1 already has 2 requested reviewers, max_request_count is 2')
   })
 
+  it('skips the users who already reviewed, whatever the verdict, but not a pending review', async () => {
+    serveConfig('blunderbuss:\n  request_count: 4\n')
+    servePr(owners, ['sdk/x.go'], { reviews: { Alice: 'APPROVED', bob: 'COMMENTED', carol: 'PENDING' } })
+    const observe = observeRequestReviewers()
+
+    await blunderbuss(prEvent('opened'), first)
+
+    expect(await requested(observe)).toEqual(['carol', 'dave', 'rita'])
+  })
+
+  it('does nothing when every candidate has already reviewed', async () => {
+    serveConfig()
+    servePr(owners, ['sdk/x.go'], { reviews: { alice: 'APPROVED', bob: 'APPROVED', carol: 'CHANGES_REQUESTED', dave: 'COMMENTED', rita: 'DISMISSED' } })
+    const observe = observeRequestReviewers()
+
+    await blunderbuss(prEvent('opened'))
+
+    await expect(observe.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith('blunderbuss: every reviewer candidate for #1 has already reviewed it')
+  })
+
+  it('fails when the reviews cannot be listed', async () => {
+    serveConfig()
+    servePr(owners, ['sdk/x.go'])
+    server.use(reviewsHandler({}, 500))
+    const observe = observeRequestReviewers()
+
+    await expect(blunderbuss(prEvent('opened'))).rejects.toThrow('could not list reviews')
+    await expect(observe.notCalled()).resolves.toBe('not called')
+  })
+
+  it('max_request_count counts a requested team as one request', async () => {
+    serveConfig('blunderbuss:\n  request_count: 2\n  max_request_count: 3\n')
+    servePr(owners, ['sdk/x.go'], { requested: ['zed'], requestedTeams: ['sdk-reviewers'] })
+    const observe = observeRequestReviewers()
+
+    await blunderbuss(prEvent('opened'), first)
+
+    expect(await requested(observe)).toEqual(['alice'])
+  })
+
+  it('does nothing when requested teams already reach max_request_count', async () => {
+    serveConfig('blunderbuss:\n  request_count: 2\n  max_request_count: 2\n')
+    servePr(owners, ['sdk/x.go'], { requestedTeams: ['sdk-reviewers', 'docs'] })
+    const observe = observeRequestReviewers()
+
+    await blunderbuss(prEvent('opened'))
+
+    await expect(observe.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith('blunderbuss: #1 already has 2 requested reviewers, max_request_count is 2')
+  })
+
   it('opened: leaves a draft alone by default', async () => {
     serveConfig()
     servePr(owners, ['sdk/x.go'], { draft: true })
@@ -340,6 +400,7 @@ describe('blunderbuss handler', () => {
         pulls++
         return new Response(JSON.stringify({ base: { ref: 'master', sha: baseSha }, head: { sha: 'headsha' }, user: { login: 'some-author' }, draft: false, requested_reviewers: [], assignees: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
       }),
+      reviewsHandler(),
       filesHandler(changedFiles('sdk/x.go')),
       ...treeHandlers({ 'sdk/OWNERS': `${sdkOwners}labels:\n- area/sdk\n` }),
       http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [] })),

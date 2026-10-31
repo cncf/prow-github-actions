@@ -31,12 +31,7 @@ export async function assign(context: Context = platform().context()): Promise<v
 
   // no arguments after command provided
   if (commentArgs.length === 0) {
-    try {
-      await selfAssign(octokit, context, issueNumber, commenterId)
-    }
-    catch (e) {
-      throw new Error(`could not self assign: ${e}`)
-    }
+    await selfAssign(octokit, context, issueNumber, commenterId)
     return
   }
 
@@ -93,11 +88,20 @@ async function selfAssign(
     user,
   )
 
-  if (isAuthorized) {
+  if (!isAuthorized) {
+    throw new Error(
+      `${user} is not authorized to be assigned. Only users who are members of the org, are collaborators, or have previously commented on this issue may be assigned`,
+    )
+  }
+
+  try {
     await octokit.issues.addAssignees({
       ...context.repo,
       issue_number: issueNum,
       assignees: [user],
     })
+  }
+  catch (e) {
+    throw new Error(`could not self assign: ${e}`)
   }
 }

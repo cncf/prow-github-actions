@@ -16,6 +16,8 @@ export interface PullRequestOwners {
   /** the pull request is open (not closed or merged) */
   open: boolean
   requestedReviewers: string[]
+  /** the slugs of the teams whose review is requested */
+  requestedTeams: string[]
   assignees: string[]
   labels: string[]
   files: string[]
@@ -86,6 +88,7 @@ async function load(
     draft: pull.draft === true,
     open: pull.state === 'open',
     requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+    requestedTeams: (pull.requested_teams ?? []).map(team => team.slug),
     assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
     labels: (pull.labels ?? []).map(label => label.name),
     files,

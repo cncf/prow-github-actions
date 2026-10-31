@@ -310,7 +310,7 @@ section is optional; with no OWNERS files in the repository the plugin is a no-o
 Field | Default | Meaning
 --- | --- | ---
 `request_count` | `2` | reviewers to request; integer ≥ 1
-`max_request_count` | unset | never leave the pull request with more requested reviewers than this in total; ≥ `request_count`
+`max_request_count` | unset | never leave the pull request with more requested reviewers than this in total, a requested team counting as one; ≥ `request_count`
 `exclude_approvers` | `false` | only `reviewers` are candidates, not `approvers`
 `ignore_drafts` | `true` | a draft waits for `ready_for_review`; `false` requests on `opened` and skips `ready_for_review`
 `ignore_authors` | `[]` | pull requests by these authors get no automatic request (case-insensitive)
@@ -324,10 +324,11 @@ Event | Action
 
 Candidates are the union of `reviewers` (plus `approvers` unless `exclude_approvers`) of
 every OWNERS file covering a changed file, minus the author, the already requested
-reviewers and the assignees. Like Prow, each candidate is weighted by the number of changed
+reviewers, the assignees and anyone who has already submitted a review (GitHub drops a
+reviewer from the requested list once they review). Like Prow, each candidate is weighted by the number of changed
 files they cover: the request is filled from the best-covering candidates first and drawn at
 random among equals. With `max_request_count`, `request_count` is reduced so that the
-already requested reviewers plus the new ones do not exceed it. Nobody left to request is a
+already requested reviewers and teams plus the new ones do not exceed it. Nobody left to request is a
 debug-logged no-op; a refused request fails the run. No comment is posted.
 
 With `delay` the `opened` and `ready_for_review` handlers request nothing and log that the
@@ -363,6 +364,13 @@ Field | Default | Meaning
 `ignore_review_state` | `false` | `true`: GitHub reviews neither add (`APPROVED`) nor remove (`CHANGES_REQUESTED`) approvers
 `lgtm_acts_as_approve` | `false` | `true`: `/lgtm` counts as `/approve` and `/lgtm cancel` as `/approve cancel` when computing approval; the `lgtm` label is unaffected
 `github_review` | `false` | `true`: while the PR carries `approved`, the token keeps an `APPROVE` review on the PR's head commit, and dismisses it when `approved` goes away, so that a required approving review is met by the Prow decision ([mirrored review](./commands.md#mirroring-approved-as-a-github-review)). Needs "Allow GitHub Actions to create and approve pull requests" with `GITHUB_TOKEN`; that setting is repo-wide and lets **any** workflow approve PRs with `GITHUB_TOKEN`, so a dedicated GitHub App or machine-user `token` is the safer setup ([repository setting](./automatic-merging.md#required-reviews-and-openssf-scorecard)). `false`: no review is written and no extra API call is made
+
+> [!IMPORTANT]
+> **`require_self_approval: true` is stricter than upstream Prow.** Here the PR author never
+> counts toward approval, not even through an explicit `/approve`: someone else must approve
+> every file. In Prow the same setting only turns off the *implicit* author approval, so the
+> author can still approve by commenting `/approve`. Leave it `false` if you want Prow's
+> behaviour of the author counting once they ask.
 
 ### `lgtm`
 
@@ -421,8 +429,9 @@ and `users` can only grow. Organizations that need enforcement should use GitHub
 
 A refused label command or `/hold` fails the run with
 `<user> is not authorized to run <command>: authorization.<key> is <policy>`, writes no label and
-posts no comment; a refused `/close` or `/reopen` silently does nothing, even when the
-configuration cannot be loaded (a warning is logged), while the label commands and `/hold` fail
+posts no comment; a refused `/close` or `/reopen` fails the run with
+`<user> is not authorized to close this issue` (or `reopen`); when the configuration cannot
+be loaded they log a warning and admit only the author and collaborators, while the label commands and `/hold` fail
 the run when it cannot be loaded; a refused review command replies and fails the run as it always
 did, with `<user> is not a org member, collaborator or listed in authorization.users` under
 `review: trusted` ([not authorized](./commands.md#what-happens-when-you-are-not-authorized)). When

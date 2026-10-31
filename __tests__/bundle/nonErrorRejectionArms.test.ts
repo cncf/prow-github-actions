@@ -106,7 +106,7 @@ describe('dist/index.js when an api call rejects with a non-Error value', () => 
   })
 
   describe('issue_comment: a non-Error collaborator rejection denies the write', () => {
-    it('/retitle warns with the primitive error details and does not update the issue', async () => {
+    it('/retitle warns with the primitive error details, does not update the issue and fails the run', async () => {
       const collaboratorPath = `${repo}/collaborators/Codertocat`
       const target = `GET ${collaboratorPath}`
       gh.route('GET', collaboratorPath, { status: 204 })
@@ -120,8 +120,8 @@ describe('dist/index.js when an api call rejects with a non-Error value', () => 
         env: env(target),
       })
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('Codertocat is not authorized to retitle this issue'))).toBe(true)
       expect(result.stdout.split(/\r?\n/).filter(line => line.startsWith('::warning::'))).toEqual([
         `::warning::encountered unexpected error checking collaborator status: status=unknown, message=${target} rejected with a string, not an Error`,
       ])

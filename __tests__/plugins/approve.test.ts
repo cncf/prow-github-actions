@@ -21,6 +21,7 @@ function pullOwners(ownersFiles: Record<string, string>, files: string[], author
     draft: false,
     open: true,
     requestedReviewers: [],
+    requestedTeams: [],
     assignees: [],
     labels: [],
     files,

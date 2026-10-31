@@ -5,7 +5,7 @@ metadata:
   labels: {{- include "prow-github-app.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  selector: {{- include "prow-github-app.selectorLabels" . | nindent 4 }}
+  selector: {{- include "prow-github-app.serverSelectorLabels" . | nindent 4 }}
   ports:
     - name: http
       port: {{ .Values.service.port }}

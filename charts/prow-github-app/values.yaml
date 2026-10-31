@@ -45,6 +45,9 @@ redis:
 cronjob:
   enabled: true
   schedule: '0 * * * *'
+  # a run still going after this many seconds is killed, so a hung job cannot hold the next schedule
+  # back forever (concurrencyPolicy: Forbid); keep it under the schedule's interval
+  activeDeadlineSeconds: 3000
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
 

@@ -311,16 +311,10 @@ export async function loadOwnersTree(
   if (tree.truncated) {
     // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
     platform().log.debug(`tree at ${ref} is truncated; probing for OWNERS files`)
-    return probeOwners(octokit, context, ref, dirs)
+    return probeOwners(octokit, context, ref, dirs, listedOwners(tree).length > 0)
   }
 
-  const entries = tree.tree.filter(
-    entry =>
-      entry.type === 'blob'
-      && entry.path !== undefined
-      && entry.sha !== undefined
-      && isOwnersPath(entry.path),
-  ) as { path: string, sha: string }[]
+  const entries = listedOwners(tree)
 
   const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)))
 
@@ -346,11 +340,30 @@ export async function loadOwnersTree(
   }
 }
 
+function listedOwners(tree: TreeListing): { path: string, sha: string }[] {
+  return tree.tree.filter(
+    entry =>
+      entry.type === 'blob'
+      && entry.path !== undefined
+      && entry.sha !== undefined
+      && isOwnersPath(entry.path),
+  ) as { path: string, sha: string }[]
+}
+
+/**
+ * probeOwners reads the OWNERS file of each directory in dirs through the
+ * contents API, for a tree listing GitHub truncated. The ref has OWNERS files
+ * when a probe finds one (the root is always probed) or when the partial
+ * listing names one elsewhere, the same answer `branchHasOwners` gives, so
+ * that an OWNERS file outside the changed paths' ancestors keeps the OWNERS
+ * rules on whether or not the listing was truncated.
+ */
 async function probeOwners(
   octokit: Octokit,
   context: Context,
   ref: string,
   dirs: Set<string>,
+  listed: boolean,
 ): Promise<OwnersTree> {
   const owners = new Map<string, OwnersFile>()
 
@@ -375,7 +388,7 @@ async function probeOwners(
     owners.set(dir, parseOwners(path, decode(data, path)))
   }
 
-  return { owners, hasOwners: owners.size > 0 }
+  return { owners, hasOwners: listed || owners.size > 0 }
 }
 
 /**

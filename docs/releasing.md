@@ -42,6 +42,14 @@ For stable releases, `release.yml` additionally moves the floating major tag
 and `uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3` track the
 latest `v3.x.y`. Pre-releases never move the floating tag.
 
+A floating tag only moves forward. The image job compares the pushed tag with
+every stable tag in the repository (`git tag --sort=-v:refname`): `latest`
+(the image tag, and the GitHub release marked *Latest*) moves only when the
+release is the highest overall, `X` and the floating `vX` only when it is the
+highest in its major, and `X.Y` only when it is the highest in its minor. A
+backport `v3.3.2` tagged after `v3.4.0` therefore publishes `3.3.2` and `3.3`
+and leaves `3`, `v3` and `latest` on `v3.4.0`.
+
 The templates, the README and the docs pin the **exact** release (`@v3.4.0`) on
 purpose: organizations that hash-pin can replace it with the release's commit
 sha, and Dependabot bumps it to the next release. The floating `v3` tag keeps
