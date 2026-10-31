@@ -51,6 +51,12 @@ either file is exercised by its own bot run. `__tests__/workflows.test.ts` check
 that the reusable workflow, its callers and the [install templates](../templates)
 stay in step with `action.yml` and the label catalogue.
 
+Issues the Hive quality agent (`hivecommons-hive[bot]`) opens carry no kind label, so
+[`agent-issues.yml`](../.github/workflows/agent-issues.yml) adds `kind/cleanup` to each
+one — after the bot's own run on the `opened` event has finished, since a label applied
+with `github.token` raises no event the bot could react to — and clears the `needs-kind`
+label and reminder comment the bot left in the meantime.
+
 ## Testing
 
 | Command | What it runs |
