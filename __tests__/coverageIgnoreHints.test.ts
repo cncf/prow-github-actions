@@ -59,7 +59,7 @@ const armHints = hints.filter(hint => hint.kind === 'next')
  */
 const driversOutsideTheHint: Record<string, string> = {
   // "a binding refused with a non-Error value fails the command with its string form"
-  'src/labels/lgtm.ts:65': '__tests__/label/lgtm.test.ts',
+  'src/labels/lgtm.ts:66': '__tests__/label/lgtm.test.ts',
 }
 
 /** `__tests__/**\/<name>.test.ts` for the `<name>.test.ts drives it` clause of a hint */

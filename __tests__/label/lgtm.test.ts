@@ -115,6 +115,79 @@ describe('lgtm', () => {
     await expect(observeReq.called()).resolves.toBe('called')
   })
 
+  it('removes the issue\'s own spelling when the label is LGTM', async () => {
+    issueCommentEvent.comment.body = '/lgtm cancel'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'LGTM' })
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/LGTM`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, payload),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('treats a sentence that only mentions cancel as a plain /lgtm', async () => {
+    issueCommentEvent.comment.body = '/lgtm looks good, no need to cancel the hold'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeAdd = new utils.ObserveRequest()
+    const observeDelete = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
+        utils.mockResponse(200, null, observeAdd),
+      ),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      utils.repoHasLabels(['lgtm']),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    await handleIssueComment(commentContext)
+    await observeAdd.called()
+    expect(await observeAdd.body()).toEqual({ labels: ['lgtm'] })
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+  })
+
   it('removes the lgtm label with /remove-lgtm', async () => {
     issueCommentEvent.comment.body = '/remove-lgtm'
     const commentContext = new utils.MockContext(issueCommentEvent)

@@ -57,9 +57,8 @@ triage:
 With `prow-commands: /area /triage`, the commands `/area bug` and
 `/triage accepted` label the issue or PR with `area/bug` and `triage/accepted`.
 Because `triage` is `exclusive`, `/triage needs-information` on that issue removes
-`triage/accepted` before adding `triage/needs-information`. Exclusivity applies to
-labels already on the issue, not to the current comment: every requested value is
-kept, so `/priority low high` adds both `priority/low` and `priority/high`.
+`triage/accepted` before adding `triage/needs-information`. An exclusive command takes
+one value: `/triage accepted needs-information` fails the run and changes nothing.
 
 A key name must be lower case and consist of letters, digits and dashes
 (`^[a-z][a-z0-9-]*$`) to be usable as a command. Listing a `/<key>` in `prow-commands`
@@ -80,7 +79,8 @@ priority:
 With the command `/priority low`,
 the issue or PR will be labeled with `priority/low`.
 `/priority` is exclusive by default: a later `/priority` command replaces any existing
-`priority/*` labels instead of stacking them. Write the section in mapping form with
+`priority/*` labels instead of stacking them, so it takes one value: `/priority low high`
+fails the run and changes nothing. Write the section in mapping form with
 `exclusive: false` to let priorities stack.
 
 ## Plain labels

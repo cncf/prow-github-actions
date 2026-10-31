@@ -815,6 +815,19 @@ describe('the sweep after a label-writing command', () => {
     expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
   })
 
+  it('reports every failing command, not only the first', async () => {
+    utils.setupActionsEnv('/lgtm /hold')
+    issueCommentEvent.comment.body = '/lgtm\n/hold'
+    vi.spyOn(lgtm, 'lgtm').mockRejectedValue(new Error('lgtm exploded'))
+    vi.spyOn(hold, 'hold').mockRejectedValue(new Error('hold exploded'))
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(core.setFailed).toHaveBeenCalledExactlyOnceWith(
+      'TypeError: error handling issue comment: Error: lgtm exploded; TypeError: error handling issue comment: Error: hold exploded',
+    )
+  })
+
   it('joins a command failure and a sweep failure into one message', async () => {
     utils.setupActionsEnv('/lgtm')
     issueCommentEvent.comment.body = '/lgtm'

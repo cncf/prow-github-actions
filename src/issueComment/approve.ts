@@ -4,7 +4,7 @@ import type { Context } from '../utils/context'
 import { platform } from '../platform'
 import { approveSettings, evaluateApproval } from '../plugins/approve'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
+import { hasCommand, hasExactArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { newOctokitFromInputs } from '../utils/octokit'
@@ -45,7 +45,7 @@ export async function approve(
   }
 
   const isCancel = hasCommand('/remove-approve', commentBody)
-    || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'))
+    || hasExactArgs('/approve', commentBody, 'cancel')
 
   if (context.payload.issue?.pull_request !== undefined) {
     const owners = await loadPullRequestOwners(octokit, context, issueNumber)

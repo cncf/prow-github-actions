@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { commandLines, getCommandArgs, getLineArgs, hasCommand, hasKeyword } from '../../src/utils/command'
+import { commandLines, getCommandArgs, getLineArgs, hasCommand, hasExactArgs, hasKeyword } from '../../src/utils/command'
 
 it('handles comments with multiple lines', () => {
   const body = `Here is something
@@ -436,5 +436,26 @@ describe('hasKeyword', () => {
     expect(hasKeyword([], 'cancel')).toBe(false)
     expect(hasKeyword(['cancelled'], 'cancel')).toBe(false)
     expect(hasKeyword(['no-cancel'], 'cancel')).toBe(false)
+  })
+})
+
+describe('hasExactArgs', () => {
+  it('matches a line whose whole argument text is the given one, ignoring case and surrounding whitespace', () => {
+    expect(hasExactArgs('/lgtm', '/lgtm cancel', 'cancel')).toBe(true)
+    expect(hasExactArgs('/lgtm', '/LGTM CANCEL', 'cancel')).toBe(true)
+    expect(hasExactArgs('/lgtm', '  /lgtm   cancel  ', 'cancel')).toBe(true)
+    expect(hasExactArgs('/lgtm', '/lgtm\nthanks!\n/lgtm cancel', 'cancel')).toBe(true)
+  })
+
+  it('refuses a sentence that only mentions the argument', () => {
+    expect(hasExactArgs('/lgtm', '/lgtm looks good, no need to cancel the hold', 'cancel')).toBe(false)
+    expect(hasExactArgs('/lgtm', '/lgtm cancel please', 'cancel')).toBe(false)
+    expect(hasExactArgs('/lgtm', '/lgtm cancelled', 'cancel')).toBe(false)
+  })
+
+  it('refuses an absent or longer command and a mid-sentence mention', () => {
+    expect(hasExactArgs('/lgtm', 'no command here', 'cancel')).toBe(false)
+    expect(hasExactArgs('/lgtm', '/remove-lgtm cancel', 'cancel')).toBe(false)
+    expect(hasExactArgs('/lgtm', 'please /lgtm cancel', 'cancel')).toBe(false)
   })
 })

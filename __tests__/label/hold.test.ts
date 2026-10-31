@@ -122,6 +122,23 @@ describe('hold', () => {
       expect(setFailed).not.toHaveBeenCalled()
     })
 
+    it('treats a sentence that only mentions cancel as a plain /hold', async () => {
+      issueCommentEvent.comment.body = '/hold until CI is green, then cancel it'
+      const commentContext = new utils.MockContext(issueCommentEvent)
+
+      const observeAdd = new utils.ObserveRequest()
+      server.use(
+        http.post(labelsUrl, utils.mockResponse(200, null, observeAdd)),
+        utils.repoHasLabels([holdLabel, legacyHold]),
+      )
+      const observeNew = observeDelete(holdLabel)
+
+      await handleIssueComment(commentContext)
+      await observeAdd.called()
+      expect(await observeAdd.body()).toEqual({ labels: [holdLabel] })
+      await expect(observeNew.notCalled()).resolves.toBe('not called')
+    })
+
     it('removes only the legacy hold label when that is all the issue carries', async () => {
       issueCommentEvent.comment.body = '/hold cancel'
       const commentContext = new utils.MockContext(issueCommentEvent)
