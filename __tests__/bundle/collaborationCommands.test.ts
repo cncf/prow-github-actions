@@ -204,21 +204,21 @@ describe('dist/index.js collaboration commands', () => {
       expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ title: 'A much better title: with punctuation' })
     })
 
-    it('by a non-collaborator changes nothing', async () => {
+    it('by a non-collaborator changes nothing and fails the run', async () => {
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
       const result = await run('/retitle Sneaky', '/retitle')
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('Codertocat is not authorized to retitle this issue'))).toBe(true)
       expect(calls()).toEqual([collaboratorRead])
     })
 
-    it('without a title calls the api not at all', async () => {
+    it('without a title calls the api not at all and fails the run', async () => {
       const result = await run('/retitle', '/retitle')
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('please provide a new title'))).toBe(true)
       expect(calls()).toEqual([])
     })
   })
@@ -291,13 +291,13 @@ describe('dist/index.js collaboration commands', () => {
       expect(calls()).toEqual([collaboratorRead, `PATCH ${repo}/issues/1`])
     })
 
-    it('by a non-collaborator non-author is a silent no-op', async () => {
+    it('by a non-collaborator non-author fails the run without reopening', async () => {
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
       const result = await run('/reopen', '/reopen', 'some-author')
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('Codertocat is not authorized to reopen this issue'))).toBe(true)
       // only the refusal reads authorization.close, after the collaborator check
       expect(calls().slice(0, 1)).toEqual([collaboratorRead])
       expect(calls().slice(1).sort()).toEqual(configReads().sort())

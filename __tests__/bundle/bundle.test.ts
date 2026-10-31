@@ -396,7 +396,7 @@ describe('dist/index.js', () => {
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
   })
 
-  it('issue_comment /close by a non-collaborator non-author is a silent no-op', async () => {
+  it('issue_comment /close by a non-collaborator non-author fails the run without closing', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
     const result = await runBundle({
@@ -406,8 +406,8 @@ describe('dist/index.js', () => {
       apiUrl: gh.url,
     })
 
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('Codertocat is not authorized to close this issue'))).toBe(true)
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])
     // only the refusal reads authorization.close, after the collaborator check
     expect(gh.requests.map(r => `${r.method} ${r.path}`).slice(0, 1)).toEqual([
@@ -990,6 +990,7 @@ describe('dist/index.js', () => {
     }
     const ownersBlobs = [`GET ${repo}/git/blobs/${blobSha('OWNERS')}`, `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`].sort()
     const requestReviewers = `POST ${repo}/pulls/1/requested_reviewers`
+    const reviewsRead = `GET ${repo}/pulls/1/reviews?per_page=100`
 
     function routeWrites() {
       gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
@@ -1021,7 +1022,7 @@ describe('dist/index.js', () => {
       expect(['alice', 'bob', 'carol']).toEqual(expect.arrayContaining(reviewers))
       // require-matching-label's configuration probes interleave with the OWNERS plugins; the memo means one pull request read for both
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, requestReviewers, ownersProbe].sort())
+      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, reviewsRead, requestReviewers, ownersProbe].sort())
       expect(calls.indexOf(`POST ${repo}/issues/1/labels`)).toBeGreaterThan(calls.indexOf(labelsRead))
       expect(calls.indexOf(requestReviewers)).toBeGreaterThan(calls.indexOf(`GET ${repo}/git/trees/basesha?recursive=true`))
     })
@@ -1081,7 +1082,7 @@ describe('dist/index.js', () => {
       // alice covers both changed files, so with request_count 1 she is the deterministic pick
       expect(requestedReviewers()).toEqual(['alice'])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-      expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [requestReviewers])
+      expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [reviewsRead, requestReviewers])
     })
 
     it('synchronize of a pull request carrying ok-to-test approves the runs waiting on its head', async () => {
