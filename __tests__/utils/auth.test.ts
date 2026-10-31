@@ -186,6 +186,34 @@ describe('checkIssueComments', () => {
     await expect(checkIssueComments(octokit, context, 1, 'nobody')).resolves.toBe(false)
   })
 
+  it('finds the user\'s comment on a later page', async () => {
+    const url = `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`
+    server.use(
+      http.get(url, ({ request }) => {
+        const page = new URL(request.url).searchParams.get('page')
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (page === null) {
+          headers.Link = `<${url}?per_page=100&page=2>; rel="next"`
+        }
+        const login = page === null ? 'someone-else' : 'some-user'
+        return new Response(JSON.stringify([{ id: 1, user: { login }, body: 'hi' }]), { status: 200, headers })
+      }),
+    )
+
+    await expect(checkIssueComments(octokit, context, 1, 'some-user')).resolves.toBe(true)
+  })
+
+  it('matches the login case-insensitively', async () => {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
+        utils.mockResponse(200, [{ id: 1, user: { login: 'Some-User' }, body: 'hi' }]),
+      ),
+    )
+
+    await expect(checkIssueComments(octokit, context, 1, 'some-user')).resolves.toBe(true)
+  })
+
   it('warns when listing comments fails', async () => {
     const warningSpy = vi.spyOn(core, 'warning')
 

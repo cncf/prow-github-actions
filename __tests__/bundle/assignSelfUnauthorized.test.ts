@@ -35,6 +35,6 @@ describe('dist/index.js /assign by an unauthorized commenter', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments`])
+    expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments?per_page=100`])
   })
 })

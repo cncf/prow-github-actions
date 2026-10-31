@@ -390,7 +390,7 @@ describe('dist/index.js', () => {
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
       'GET /orgs/Codertocat/members/Codertocat',
       `GET ${repo}/collaborators/Codertocat`,
-      `GET ${repo}/issues/1/comments`,
+      `GET ${repo}/issues/1/comments?per_page=100`,
       `POST ${repo}/issues/1/assignees`,
     ])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
@@ -826,8 +826,8 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toMatch(/could not remove label foo/)
-    expectCommandThenConfig([
-      `GET ${repo}/collaborators/Codertocat`,
+    // the collaborator check, then the configuration (for hold.label), then the issue's labels
+    expectRequests([`GET ${repo}/collaborators/Codertocat`, ...configReads()], [
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/foo`,
     ])

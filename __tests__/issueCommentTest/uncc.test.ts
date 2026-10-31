@@ -288,7 +288,7 @@ describe('/uncc', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('uncc user if they have previously commented', async () => {
+  it('does not uncc another user when the commenter has only commented before', async () => {
     issueCommentEvent.comment.body = '/uncc @some-user'
 
     server.use(
@@ -316,10 +316,10 @@ describe('/uncc', () => {
 
     const commentContext = new utils.MockContext(issueCommentEvent)
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      reviewers: ['some-user'],
-    })
+    // the fixture lists Codertocat's own comment: commenting is not authority over other users' review requests
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })

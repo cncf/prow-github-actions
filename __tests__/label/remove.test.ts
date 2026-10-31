@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { http } from 'msw'
 
@@ -7,6 +8,7 @@ import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issuePayload from '../fixtures/issues/issue.json'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import * as utils from '../testUtils'
 
 const server = setupServer()
@@ -131,7 +133,105 @@ describe('remove', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('command args missing from body'),
+      expect.stringContaining('remove: none of not-present are on the issue'),
+    )
+  })
+
+  it('fails as missing args when no label is named', async () => {
+    issueCommentEvent.comment.body = '/remove'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('remove: command args missing from body'),
+    )
+  })
+
+  it('removes the label under the issue\'s own spelling when the comment differs only by case', async () => {
+    issueCommentEvent.comment.body = '/remove Some-Label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const removeSomeLabel = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
+        utils.mockResponse(200, null, removeSomeLabel),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(removeSomeLabel.called()).resolves.toBe('called')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it.each(['lgtm', 'approved', 'hold', 'do-not-merge/hold', 'Do-Not-Merge/Work-In-Progress'])(
+    'refuses to remove %s, which its own command manages, and removes nothing',
+    async (label) => {
+      issueCommentEvent.comment.body = `/remove some-label ${label}`
+      const commentContext = new utils.MockContext(issueCommentEvent)
+
+      const observeDelete = new utils.ObserveRequest()
+      server.use(
+        http.delete(
+          `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+          utils.mockResponse(200, null, observeDelete),
+        ),
+        http.get(
+          `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+          utils.mockResponse(204),
+        ),
+      )
+
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+      await handleIssueComment(commentContext)
+      await expect(observeDelete.notCalled()).resolves.toBe('not called')
+      expect(setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(`remove: ${label} is managed by its own command and cannot be removed with /remove; use /lgtm cancel, /approve cancel or /hold cancel`),
+      )
+    },
+  )
+
+  it('refuses to remove the configured hold.label', async () => {
+    issueCommentEvent.comment.body = '/remove blocked'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const file = structuredClone(labelFileContents)
+    file.content = Buffer.from('hold:\n  label: blocked\n').toString('base64')
+    const observeDelete = new utils.ObserveRequest()
+    server.use(
+      http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(200, file)),
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('remove: blocked is managed by its own command'),
     )
   })
 

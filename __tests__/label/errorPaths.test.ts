@@ -66,6 +66,7 @@ describe('/remove error paths', () => {
 
   it('wraps a failed label lookup', async () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
+    server.use(...utils.noOrgOrRepoConfigExcept())
     issueLookupFails()
 
     await expect(remove(comment('/remove some-label'))).rejects.toThrow(

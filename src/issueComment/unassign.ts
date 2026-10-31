@@ -1,7 +1,7 @@
 import type { Context } from '../utils/context'
 
 import { platform } from '../platform'
-import { checkCommenterAuth } from '../utils/auth'
+import { checkCollaborator, checkOrgMember } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { newOctokitFromInputs } from '../utils/octokit'
 
@@ -43,23 +43,24 @@ export async function unassign(
     return
   }
 
-  const isAuthUser = await checkCommenterAuth(
-    octokit,
-    context,
-    issueNumber,
-    commenterId,
-  )
+  // Only a commenter who is an org member or a repo collaborator may unassign
+  // other users; having commented on the issue is not enough
+  const isOrgMember = await checkOrgMember(octokit, context, commenterId)
+  const isCollaborator = await checkCollaborator(octokit, context, commenterId)
 
-  if (isAuthUser) {
-    try {
-      await octokit.issues.removeAssignees({
-        ...context.repo,
-        issue_number: issueNumber,
-        assignees: commentArgs,
-      })
-    }
-    catch (e) {
-      throw new Error(`could not remove assignee: ${e}`)
-    }
+  if (!isOrgMember && !isCollaborator) {
+    platform().log.info(`unassign: ${commenterId} is not an org member or repo collaborator; not unassigning ${commentArgs.join(', ')}`)
+    return
+  }
+
+  try {
+    await octokit.issues.removeAssignees({
+      ...context.repo,
+      issue_number: issueNumber,
+      assignees: commentArgs,
+    })
+  }
+  catch (e) {
+    throw new Error(`could not remove assignee: ${e}`)
   }
 }
