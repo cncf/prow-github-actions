@@ -27,9 +27,8 @@ function serveMergeablePr(options: { updatedNow?: boolean } = {}) {
     ...utils.noOrgOrRepoConfigExcept(),
     utils.defaultBranchTree(),
     utils.lgtmStatus(),
-    http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
-      const page = new URL(request.url).searchParams.get('page')
-      return new Response(JSON.stringify(page === '1' ? payload : []), {
+    http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, () => {
+      return new Response(JSON.stringify(payload), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })

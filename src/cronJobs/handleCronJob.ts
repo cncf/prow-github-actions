@@ -23,7 +23,7 @@ export async function handleCronJobs(context: Context = platform().context()): P
       switch (command) {
         case 'lgtm':
           platform().log.debug('running cronLgtm job')
-          return await cronLgtm(1, context).catch(async (e) => {
+          return await cronLgtm(context).catch(async (e) => {
             return e
           })
 

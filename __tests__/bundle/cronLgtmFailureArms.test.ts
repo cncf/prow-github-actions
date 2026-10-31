@@ -11,11 +11,11 @@ vi.setConfig({ testTimeout: 30_000 })
 // the arms of src/cronJobs/lgtm.ts that the schedule lgtm job cases in bundle.test.ts do not reach: a listing
 // that cannot be read, a closed pull request in the page, and a pull request whose evaluation throws
 describe('dist/index.js schedule lgtm job failure arms', () => {
-  const page1 = `GET ${repo}/pulls?state=open&page=1`
-  const page2 = `GET ${repo}/pulls?state=open&page=2`
+  const page1 = `GET ${repo}/pulls?state=open&per_page=100`
+  const page2 = `GET ${repo}/pulls?state=open&per_page=100&page=2`
   const head = pullReqListPulls[0].head.sha
   let gh: FakeGithub
-  const { expectRequests } = helpersFor(() => gh)
+  const { calls, expectRequests } = helpersFor(() => gh)
 
   beforeAll(async () => {
     gh = await start()
@@ -30,7 +30,7 @@ describe('dist/index.js schedule lgtm job failure arms', () => {
 
   function routePage(prs: Record<string, unknown>[]) {
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-      const page = new URL(req.path, gh.url).searchParams.get('page')
+      const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
       return { status: 200, body: page === '1' ? prs : [] }
     })
   }
@@ -79,14 +79,15 @@ describe('dist/index.js schedule lgtm job failure arms', () => {
       `GET ${repo}/commits/${head}/status?per_page=100`,
       queueRead,
       `PUT ${repo}/pulls/2/merge`,
-      page2,
     ])
   })
 
-  it('keeps evaluating the later pull requests and pages when one cannot be re-read, and fails the run naming it', async () => {
+  it('lists every page first, keeps evaluating the other pull requests when one cannot be re-read, and fails the run naming it', async () => {
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-      const page = new URL(req.path, gh.url).searchParams.get('page')
-      return { status: 200, body: page === '1' ? [openPr(['lgtm'])] : page === '2' ? [openPr(['lgtm'], { number: 4 })] : [] }
+      const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
+      return page === '1'
+        ? { status: 200, body: [openPr(['lgtm'])], headers: { link: `<${gh.url}${repo}/pulls?state=open&per_page=100&page=2>; rel="next"` } }
+        : { status: 200, body: [openPr(['lgtm'], { number: 4 })] }
     })
     gh.route('GET', `${repo}/pulls/2`, { status: 500, body: { message: 'Internal Server Error' } })
     gh.route('GET', `${repo}/pulls/4`, { status: 200, body: { ...openPr(['lgtm'], { number: 4 }), mergeable: true, mergeable_state: 'clean' } })
@@ -102,16 +103,17 @@ describe('dist/index.js schedule lgtm job failure arms', () => {
     const merges = gh.requestsMatching('PUT', /./)
     expect(merges).toHaveLength(1)
     expect(merges[0].path).toBe(`${repo}/pulls/4/merge`)
-    expectRequests(configReads(), [
-      page1,
+    // both pages are read before any pull request; the two are then evaluated side by side
+    const reads = configReads()
+    const recorded = calls()
+    expect(recorded.slice(reads.length, reads.length + 2)).toEqual([page1, page2])
+    expect(recorded.slice(reads.length + 2).sort()).toEqual([
       ownersProbe,
       `GET ${repo}/pulls/2`,
-      page2,
       `GET ${repo}/pulls/4`,
       `GET ${repo}/commits/${head}/status?per_page=100`,
       queueRead,
       `PUT ${repo}/pulls/4/merge`,
-      `GET ${repo}/pulls?state=open&page=3`,
-    ])
+    ].sort())
   })
 })

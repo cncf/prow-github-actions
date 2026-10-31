@@ -58,7 +58,7 @@ describe('dist/index.js optional pull request fields folded by tide and sweep', 
     }
     gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-      const page = new URL(req.path, gh.url).searchParams.get('page')
+      const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
       return { status: 200, body: page === '1' ? [pr] : [] }
     })
     gh.route('GET', `${repo}/pulls/2`, { status: 200, body: { ...pr, mergeable: true, mergeable_state: 'clean' } })
@@ -83,7 +83,7 @@ describe('dist/index.js optional pull request fields folded by tide and sweep', 
     expect(result.stdout).toContain('skipping pr #2: fork pull request with workflow changes: the token may not merge it')
     expect(gh.requestsMatching('POST', /\/issues\/2\/comments$/)).toHaveLength(1)
     expectRequests(configReads(), [
-      `GET ${repo}/pulls?state=open&page=1`,
+      `GET ${repo}/pulls?state=open&per_page=100`,
       ownersProbe,
       `GET ${repo}/pulls/2`,
       `GET ${repo}/commits/${head}/status?per_page=100`,
@@ -94,7 +94,6 @@ describe('dist/index.js optional pull request fields folded by tide and sweep', 
       `GET ${repo}/pulls/2/files?per_page=100`,
       `GET ${repo}/issues/2/comments?per_page=100`,
       `POST ${repo}/issues/2/comments`,
-      `GET ${repo}/pulls?state=open&page=2`,
     ])
   })
 
@@ -117,7 +116,7 @@ describe('dist/index.js optional pull request fields folded by tide and sweep', 
     }
     gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-      const page = new URL(req.path, gh.url).searchParams.get('page')
+      const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
       return { status: 200, body: page === '1' ? [listed] : [] }
     })
     gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: Object.keys(ownersFiles).map(path => ({ path, type: 'blob', sha: blobSha(path) })) } })

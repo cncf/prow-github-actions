@@ -36,31 +36,8 @@ const server = setupServer(
   // every head is bound unless a test says otherwise
   utils.lgtmStatus(),
   servePullsByNumber(listPullReqs),
-  // /repos/Codertocat/Hello-World/pulls?state=open&page={1,2}
-  http.get(
-    `${utils.api}/repos/Codertocat/Hello-World/pulls`,
-    ({ request }) => {
-      const url = new URL(request.url)
-      const page = url.searchParams.get('page')
-
-      if (page === '1') {
-        return new Response(JSON.stringify(listPullReqs), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
-      }
-      else {
-        return new Response(JSON.stringify([]), {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        })
-      }
-    },
-  ),
+  // /repos/Codertocat/Hello-World/pulls?state=open&per_page=100: one page, no Link to a next one
+  http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, utils.mockResponse(200, listPullReqs)),
 )
 utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
@@ -155,13 +132,7 @@ describe('cronLgtm', () => {
 
     const observeReq = new utils.ObserveRequest()
     server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
-        ({ request }) => {
-          const page = new URL(request.url).searchParams.get('page')
-          return utils.mockResponse(200, page === '1' ? lockedPrs : [])({ request })
-        },
-      ),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, utils.mockResponse(200, lockedPrs)),
       http.put(
         `${utils.api}/repos/Codertocat/Hello-World/pulls/2/merge`,
         utils.mockResponse(200, null, observeReq),
@@ -214,13 +185,7 @@ describe('cronLgtm', () => {
 
   function routePulls(prs: typeof listPullReqs) {
     server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls`,
-        ({ request }) => {
-          const page = new URL(request.url).searchParams.get('page')
-          return utils.mockResponse(200, page === '1' ? prs : [])({ request })
-        },
-      ),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, utils.mockResponse(200, prs)),
       servePullsByNumber(prs),
     )
   }
@@ -234,6 +199,20 @@ describe('cronLgtm', () => {
       ),
     )
     return observeReq
+  }
+
+  /** serves the open pull requests `open()` returns one per page, each page linking the next as the api does */
+  function routePages(open: () => typeof listPullReqs) {
+    const listing = `${utils.api}/repos/Codertocat/Hello-World/pulls`
+    return http.get(listing, ({ request }) => {
+      const page = Number(new URL(request.url).searchParams.get('page') ?? '1')
+      const prs = open()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (page < prs.length) {
+        headers.Link = `<${listing}?state=open&per_page=100&page=${page + 1}>; rel="next"`
+      }
+      return new Response(JSON.stringify(prs.slice(page - 1, page)), { status: 200, headers })
+    })
   }
 
   describe('merge gate', () => {
@@ -533,15 +512,11 @@ describe('cronLgtm', () => {
     expect(setFailed).not.toHaveBeenCalledWith(expect.stringContaining('#8'))
   })
 
-  it('keeps paging after a pr whose evaluation throws, and names every pr that failed', async () => {
+  it('keeps evaluating the next page after a pr whose evaluation throws, and names every pr that failed', async () => {
     utils.setupJobsEnv('lgtm')
     const context = new utils.MockContext(pullReqOpenedEvent)
-    const pages: Record<string, typeof listPullReqs> = { 1: [lgtmPr(7)], 2: [lgtmPr(9)] }
     server.use(
-      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, ({ request }) => {
-        const page = new URL(request.url).searchParams.get('page') ?? ''
-        return utils.mockResponse(200, pages[page] ?? [])({ request })
-      }),
+      routePages(() => [lgtmPr(7), lgtmPr(9)]),
       http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls/7`, utils.mockResponse(500, { message: 'Server Error' })),
       servePullsByNumber([lgtmPr(9)]),
       http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/9/merge`, utils.mockResponse(405, { message: 'Pull Request is not mergeable' })),
@@ -552,5 +527,27 @@ describe('cronLgtm', () => {
     await expect(handleCronJobs(context)).resolves.not.toThrow()
     expect(setFailed).toHaveBeenCalledTimes(1)
     expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('2 pull request(s) could not be merged: #7 (could not evaluate: HttpError: Server Error), #9 (Pull Request is not mergeable)'))
+  })
+
+  it('lists every page before merging, so a merge does not shift a later pr onto a page already read', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    // the api pages the pull requests that are open when each page is read: merging #21 moves #22 onto page 1
+    let open = [lgtmPr(21), lgtmPr(22), lgtmPr(23)]
+    const merged: number[] = []
+    server.use(
+      routePages(() => open),
+      servePullsByNumber(open),
+      http.put(`${utils.api}/repos/Codertocat/Hello-World/pulls/:number/merge`, ({ params }) => {
+        merged.push(Number(params.number))
+        open = open.filter(pr => pr.number !== Number(params.number))
+        return new Response(JSON.stringify({ merged: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+    expect(merged.sort()).toEqual([21, 22, 23])
+    expect(setFailed).not.toHaveBeenCalled()
   })
 })
