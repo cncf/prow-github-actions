@@ -427,8 +427,9 @@ and `users` can only grow. Organizations that need enforcement should use GitHub
 
 A refused label command or `/hold` fails the run with
 `<user> is not authorized to run <command>: authorization.<key> is <policy>`, writes no label and
-posts no comment; a refused `/close` or `/reopen` silently does nothing, even when the
-configuration cannot be loaded (a warning is logged), while the label commands and `/hold` fail
+posts no comment; a refused `/close` or `/reopen` fails the run with
+`<user> is not authorized to close this issue` (or `reopen`); when the configuration cannot
+be loaded they log a warning and admit only the author and collaborators, while the label commands and `/hold` fail
 the run when it cannot be loaded; a refused review command replies and fails the run as it always
 did, with `<user> is not a org member, collaborator or listed in authorization.users` under
 `review: trusted` ([not authorized](./commands.md#what-happens-when-you-are-not-authorized)). When

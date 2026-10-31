@@ -53,7 +53,7 @@ describe('/close', () => {
     })
   })
 
-  it('does not close the issue when commenter is neither a collaborator nor the author', async () => {
+  it('fails without closing the issue when commenter is neither a collaborator nor the author', async () => {
     issueCommentEvent.comment.body = '/close'
 
     server.use(
@@ -77,7 +77,7 @@ describe('/close', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('Codertocat is not authorized to close this issue'))
   })
 
   it('lets the author close without checking collaborator status', async () => {
@@ -137,7 +137,7 @@ describe('/close', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('does not close as not planned when commenter is neither a collaborator nor the author', async () => {
+  it('fails without closing as not planned when commenter is neither a collaborator nor the author', async () => {
     issueCommentEvent.comment.body = '/close not-planned'
 
     server.use(
@@ -161,7 +161,7 @@ describe('/close', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('Codertocat is not authorized to close this issue'))
   })
 })
 
@@ -260,7 +260,7 @@ describe('authorization.close for /close', () => {
     expect(await update.body()).toMatchObject({ state: 'closed' })
   })
 
-  it('under trusted refuses an outsider silently', async () => {
+  it('under trusted refuses an outsider and fails the run', async () => {
     server.use(
       ...prowYaml('authorization:\n  close: trusted\n  users: [friend]\n'),
       ...membership('outsider'),
@@ -270,20 +270,20 @@ describe('authorization.close for /close', () => {
     const { update, setFailed } = await run('outsider')
 
     await expect(update.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('outsider is not authorized to close this issue'))
   })
 
   it.each([
     ['a failed read', () => [http.get(utils.contentsUrl('.github/prow.yaml'), utils.mockResponse(500, { message: 'boom' })), ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml')]],
     ['malformed yaml', () => prowYaml('authorization:\n  close: everyone\n')],
-  ])('refuses an outsider silently, with a warning, when the configuration cannot be loaded: %s', async (_, handlers) => {
+  ])('refuses an outsider, with a warning, when the configuration cannot be loaded: %s', async (_, handlers) => {
     const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
     server.use(...handlers(), ...membership('outsider'))
 
     const { update, setFailed } = await run('outsider')
 
     await expect(update.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('outsider is not authorized to close this issue'))
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('authorization: could not load prow config: '))
     // the organization tier keeps probing after the repository tier failed; let it finish inside this test
     await vi.waitFor(() => expect(calls).toContain('GET /repos/Codertocat/.github/contents/prow.yaml'))

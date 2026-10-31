@@ -76,7 +76,7 @@ describe('/retitle', () => {
     })
   })
 
-  it('does not retitle when commenter is not a collaborator', async () => {
+  it('fails without retitling when commenter is not a collaborator', async () => {
     issueCommentEvent.comment.body = '/retitle much better title'
 
     server.use(
@@ -99,10 +99,10 @@ describe('/retitle', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('Codertocat is not authorized to retitle this issue'))
   })
 
-  it('does nothing when no new title is provided', async () => {
+  it('fails without a request when no new title is provided', async () => {
     issueCommentEvent.comment.body = '/retitle'
 
     const observeReq = new utils.ObserveRequest()
@@ -118,6 +118,48 @@ describe('/retitle', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('please provide a new title'))
+  })
+
+  it('fails before any request when the new title is longer than 256 characters', async () => {
+    issueCommentEvent.comment.body = `/retitle ${'x'.repeat(257)}`
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('the new title is 257 characters long, at most 256 are allowed'))
+  })
+
+  it('accepts a title of exactly 256 characters', async () => {
+    issueCommentEvent.comment.body = `/retitle ${'x'.repeat(256)}`
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({ title: 'x'.repeat(256) })
   })
 })
