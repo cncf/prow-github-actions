@@ -1,4 +1,8 @@
 import type { Job, Step, Workflow } from './utils/workflowYaml'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { expression, loadYaml, read } from './utils/workflowYaml'
@@ -176,16 +180,71 @@ describe.each([
 describe('image tags', () => {
   const tagsOf = (workflow: Workflow) => String(steps(workflow.jobs.image).find(s => s.uses?.startsWith('docker/metadata-action@'))?.with?.tags)
 
-  it('a release gets its version, and the floating minor, major and latest only when it is not a pre-release', () => {
+  it('a release gets its version, and each floating tag only when it is the highest stable release that tag covers', () => {
     const tags = tagsOf(release)
     expect(tags).toContain('type=semver,pattern={{version}}')
-    const gate = `enable=${expression('!contains(github.ref_name, \'-\')')}`
-    expect(tags).toContain(`type=semver,pattern={{major}}.{{minor}},${gate}`)
-    expect(tags).toContain(`type=semver,pattern={{major}},${gate}`)
-    expect(tags).toContain(`type=raw,value=latest,${gate}`)
+    const gate = (output: string) => `enable=${expression(`steps.order.outputs.${output} == 'true'`)}`
+    expect(tags).toContain(`type=semver,pattern={{major}}.{{minor}},${gate('minor')}`)
+    expect(tags).toContain(`type=semver,pattern={{major}},${gate('major')}`)
+    expect(tags).toContain(`type=raw,value=latest,${gate('latest')}`)
   })
 
   it('a pre-release gets only its own version', () => {
     expect(tagsOf(preRelease).trim()).toBe(`type=raw,value=${expression('inputs.version')}`)
+  })
+})
+
+describe('release.yml floating tags', () => {
+  const image = release.jobs.image
+  const order = runOf(image, 'Compare with the released tags')
+  const gitEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'release',
+    GIT_AUTHOR_EMAIL: 'release@example.com',
+    GIT_COMMITTER_NAME: 'release',
+    GIT_COMMITTER_EMAIL: 'release@example.com',
+  }
+
+  // runs the step's script in a repository carrying `tags`, as the tag push of `ref` would
+  function compare(tags: string[], ref: string): Record<string, string> {
+    const dir = mkdtempSync(path.join(tmpdir(), 'release-order-'))
+    try {
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env: gitEnv, stdio: 'pipe' })
+      git('init', '-q')
+      git('commit', '-q', '--allow-empty', '-m', 'release')
+      for (const tag of [...tags, ref]) {
+        git('tag', tag)
+      }
+      const output = path.join(dir, 'github-output')
+      execFileSync('bash', ['-e', '-c', order], { cwd: dir, env: { ...gitEnv, GITHUB_REF_NAME: ref, GITHUB_OUTPUT: output }, stdio: 'pipe' })
+      return Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => line.split('=')))
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it.each([
+    ['the newest release moves every floating tag', ['v3', 'v3.3.1'], 'v3.4.0', { latest: 'true', major: 'true', minor: 'true' }],
+    ['a backport to an older minor moves only its minor', ['v3', 'v3.3.1', 'v3.4.0'], 'v3.3.2', { latest: 'false', major: 'false', minor: 'true' }],
+    ['a backport to an older major moves its major and minor, not latest', ['v2.9.0', 'v3.4.0'], 'v2.9.1', { latest: 'false', major: 'true', minor: 'true' }],
+    ['an older patch moves nothing', ['v3.4.1'], 'v3.4.0', { latest: 'false', major: 'false', minor: 'false' }],
+    ['a pre-release moves nothing, even above every release', ['v3.4.0'], 'v3.5.0-rc.1', { latest: 'false', major: 'false', minor: 'false' }],
+    ['releases compare as versions, not as strings', ['v3.9.0', 'v3.10.0-rc.1'], 'v3.10.0', { latest: 'true', major: 'true', minor: 'true' }],
+  ])('%s', (_name, tags, ref, expected) => {
+    expect(compare(tags, ref)).toEqual(expected)
+  })
+
+  it('checks out every tag for the comparison', () => {
+    expect(steps(image)[0]?.with).toEqual({ 'fetch-depth': 0 })
+  })
+
+  it('moves the floating major git tag and marks the GitHub release latest only by the comparison', () => {
+    expect(image.outputs).toMatchObject({ latest: expression('steps.order.outputs.latest'), major: expression('steps.order.outputs.major') })
+    const publish = release.jobs['github-release']
+    expect(steps(publish).find(s => s.name === 'Update floating major tag')?.if).toBe(expression('needs.image.outputs.major == \'true\''))
+    expect(releaseStep(publish).with?.make_latest).toBe(expression('needs.image.outputs.latest'))
   })
 })
