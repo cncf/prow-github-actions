@@ -1098,7 +1098,8 @@ describe('tideOnCheckSuite', () => {
     await expect(tideOnCheckSuite(suiteEvent())).resolves.toBeUndefined()
     await expect(merge.called()).resolves.toBe('called')
     expect(gets).toHaveLength(1)
-    expect(seen).toEqual(['?state=open&per_page=100&page=1', '?state=open&per_page=100&page=2'])
+    // a short first page is the last: no request for the empty page after it
+    expect(seen).toEqual(['?state=open&per_page=100&page=1'])
   })
 
   it('no open pr has the sha: nothing to evaluate', async () => {
@@ -1137,7 +1138,7 @@ describe('tideOnCheckSuite', () => {
 
     await expect(tideOnCheckSuite(context)).resolves.toBeUndefined()
     await expect(merge.called()).resolves.toBe('called')
-    expect(seen).toHaveLength(2)
+    expect(seen).toHaveLength(1)
   })
 
   it.each(['pending', 'failure', 'error'])('status %s: makes no api call', async (state) => {

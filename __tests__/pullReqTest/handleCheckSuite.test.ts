@@ -75,18 +75,28 @@ describe('pullRequestsForSha', () => {
     return seen
   }
 
-  it('returns the numbers of the open prs whose head is the sha across pages', async () => {
-    const seen = servePages([
-      [{ number: 2, sha }, { number: 3, sha: 'other' }],
-      [{ number: 5, sha }],
-    ])
+  // a full page of 100 whose only match is #2
+  const fullPage = [{ number: 2, sha }, ...Array.from({ length: 99 }, (_, i) => ({ number: 100 + i, sha: 'other' }))]
+
+  it('returns the numbers of the open prs whose head is the sha across pages, stopping at a short page', async () => {
+    const seen = servePages([fullPage, [{ number: 5, sha }]])
 
     const context = new utils.MockContext(checkSuiteCompletedEvent)
     await expect(pullRequestsForSha(newOctokit('some-token'), context, sha)).resolves.toEqual([2, 5])
     expect(seen).toEqual([
       '?state=open&per_page=100&page=1',
       '?state=open&per_page=100&page=2',
-      '?state=open&per_page=100&page=3',
+    ])
+  })
+
+  it('reads the empty page after a full last page', async () => {
+    const seen = servePages([fullPage])
+
+    const context = new utils.MockContext(checkSuiteCompletedEvent)
+    await expect(pullRequestsForSha(newOctokit('some-token'), context, sha)).resolves.toEqual([2])
+    expect(seen).toEqual([
+      '?state=open&per_page=100&page=1',
+      '?state=open&per_page=100&page=2',
     ])
   })
 

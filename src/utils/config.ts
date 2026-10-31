@@ -240,37 +240,47 @@ async function loadOrgTier(octokit: Octokit, context: Context): Promise<Tier | u
   const { owner } = context.repo
 
   // the event repository is the org config repo itself: its file is the repo tier
-  for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
-    const source = `${owner}/${repo}:${orgConfigPath}`
-    let text: string | undefined
-    try {
-      text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath })
-    }
-    catch (e) {
-      throw new Error(`could not load organization prow config from ${source}: ${e}`)
-    }
-
-    if (text !== undefined) {
-      return { source, config: parseProwConfig(source, text) }
-    }
-  }
-
-  return undefined
+  return firstFound(orgConfigRepos.filter(repo => repo !== context.repo.repo).map(repo => ({
+    source: `${owner}/${repo}:${orgConfigPath}`,
+    file: { owner, repo, path: orgConfigPath },
+    failure: 'could not load organization prow config from',
+  })), octokit)
 }
 
 async function loadRepoTier(octokit: Octokit, context: Context): Promise<Tier | undefined> {
-  for (const path of repoConfigPaths) {
-    const source = `${context.repo.owner}/${context.repo.repo}:${path}`
+  return firstFound(repoConfigPaths.map(path => ({
+    source: `${context.repo.owner}/${context.repo.repo}:${path}`,
+    file: { ...context.repo, path },
+    failure: 'could not load prow config from',
+  })), octokit)
+}
+
+interface Probe {
+  source: string
+  file: { owner: string, repo: string, path: string }
+  failure: string
+}
+
+// probes every candidate at once and settles in precedence order: the first that exists wins, and an
+// error stops the walk only when no candidate before it exists, as probing one after another would
+async function firstFound(probes: Probe[], octokit: Octokit): Promise<Tier | undefined> {
+  const fetched = probes.map(probe => fetchRepoFile(octokit, probe.file))
+  // the walk below may stop before reading every probe; a later rejection is not an unhandled one
+  for (const pending of fetched) {
+    pending.catch(() => undefined)
+  }
+
+  for (const [i, probe] of probes.entries()) {
     let text: string | undefined
     try {
-      text = await fetchRepoFile(octokit, { ...context.repo, path })
+      text = await fetched[i]
     }
     catch (e) {
-      throw new Error(`could not load prow config from ${source}: ${e}`)
+      throw new Error(`${probe.failure} ${probe.source}: ${e}`)
     }
 
     if (text !== undefined) {
-      return { source, config: parseProwConfig(source, text) }
+      return { source: probe.source, config: parseProwConfig(probe.source, text) }
     }
   }
 
@@ -365,8 +375,12 @@ function isNotFound(error: unknown): boolean {
  * @param text - the yaml text
  */
 export function parseProwConfig(source: string, text: string): Partial<ProwConfig> {
-  // a comment-only file holds zero documents, which yaml.load rejects
-  const loaded: unknown = yaml.loadAll(text).length === 0 ? undefined : yaml.load(text)
+  // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+  const documents: unknown[] = yaml.loadAll(text)
+  if (documents.length > 1) {
+    throw new yaml.YAMLException('expected a single document in the stream, but found more')
+  }
+  const loaded = documents[0]
 
   if (loaded === undefined || loaded === null) {
     return {}

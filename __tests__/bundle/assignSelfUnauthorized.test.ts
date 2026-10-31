@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, commentsRead, helpersFor, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -35,6 +35,6 @@ describe('dist/index.js /assign by an unauthorized commenter', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments?per_page=100`])
+    expect(calls()).toEqual([...membershipReads('Codertocat'), commentsRead])
   })
 })

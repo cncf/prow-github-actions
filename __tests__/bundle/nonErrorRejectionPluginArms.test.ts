@@ -8,7 +8,7 @@ import checkSuiteCompletedEvent from '../fixtures/pullReq/checkSuiteCompletedEve
 import pullReqListPulls from '../fixtures/pullReq/pullReqListPulls.json'
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, memberReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -170,7 +170,7 @@ describe('dist/index.js when a plugin\'s api call rejects with a non-Error value
   describe('issue_comment /retest', () => {
     const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
     const rerun = `POST ${repo}/actions/runs/1/rerun-failed-jobs`
-    const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+    const authReads = [...ownersReads, ...memberReads('Codertocat')]
     const prow = { id: 3, name: 'Prow', path: '.github/workflows/prow.yml', head_sha: 'headsha', status: 'in_progress', conclusion: null }
     const failedCi = { id: 1, name: 'CI', path: '.github/workflows/ci.yml', head_sha: 'headsha', status: 'completed', conclusion: 'failure' }
 

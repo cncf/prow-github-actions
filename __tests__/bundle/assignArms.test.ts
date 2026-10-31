@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, commentsRead, helpersFor, memberReads, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -30,9 +30,10 @@ describe('dist/index.js /assign failure arms', () => {
     })
   }
 
-  // the three reads checkCommenterAuth / getOrgCollabCommentUsers make for one user, in order
+  // the reads checkCommenterAuth / getOrgCollabCommentUsers make for one user that is neither an org member nor a
+  // collaborator, in order; the comment thread is read once per run however many users need it
   function membershipOrCommentReads(user: string) {
-    return [...membershipReads(user), `GET ${repo}/issues/1/comments?per_page=100`]
+    return [...membershipReads(user), commentsRead]
   }
 
   it('fails the action when the self-assign write is refused', async () => {
@@ -43,7 +44,8 @@ describe('dist/index.js /assign failure arms', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('could not self assign'))).toBe(true)
-    expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), assigneesWrite])
+    // the collaborator read admits the commenter: no comment-thread read
+    expect(calls()).toEqual([...membershipReads('Codertocat'), assigneesWrite])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
   })
 
@@ -56,7 +58,7 @@ describe('dist/index.js /assign failure arms', () => {
     expect(result.errors.some(e => e.includes('no authorized users found'))).toBe(true)
     expect(gh.requestsMatching('POST', /./)).toEqual([])
     // the two users are authorized concurrently, so their reads have no fixed order among themselves
-    expect(calls().sort()).toEqual([...membershipOrCommentReads('stranger'), ...membershipOrCommentReads('drifter')].sort())
+    expect(calls().sort()).toEqual([...membershipReads('stranger'), ...membershipOrCommentReads('drifter')].sort())
   })
 
   it('fails the action when the argument users\' assignee write is refused', async () => {
@@ -69,7 +71,8 @@ describe('dist/index.js /assign failure arms', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('could not add assignees'))).toBe(true)
-    expect(calls()).toEqual([...membershipOrCommentReads('octocat'), assigneesWrite])
+    // membership admits octocat: no collaborator or comment-thread read
+    expect(calls()).toEqual([...memberReads('octocat'), assigneesWrite])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
   })
 })

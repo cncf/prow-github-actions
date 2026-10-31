@@ -666,18 +666,15 @@ describe('after a command ran', () => {
     utils.setupActionsEnv('/assign')
     server.use(
       http.get(`${utils.api}/orgs/Codertocat/members/bob`, utils.mockResponse(204)),
-      http.get(`${repo}/collaborators/bob`, utils.mockResponse(404)),
-      ok('get', '/issues/1/comments', []),
       http.post(`${repo}/issues/1/assignees`, utils.mockResponse(201, {})),
     )
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
 
     await handleIssueComment(new utils.MockContext(prCommentEvent('/assign @bob')))
 
+    // an org member needs neither the collaborator check nor the comment thread
     expect(calls).toEqual([
       'GET /orgs/Codertocat/members/bob',
-      'GET /repos/Codertocat/Hello-World/collaborators/bob',
-      'GET /repos/Codertocat/Hello-World/issues/1/comments',
       'POST /repos/Codertocat/Hello-World/issues/1/assignees',
     ])
     expect(setFailed).not.toHaveBeenCalled()

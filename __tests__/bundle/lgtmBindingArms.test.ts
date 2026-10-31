@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, memberReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -40,7 +40,7 @@ describe('dist/index.js lgtm binding failure arms', () => {
   describe('/lgtm on a pull request', () => {
     const labelsRead = `GET ${repo}/issues/1`
     const unlabel = `DELETE ${repo}/issues/1/labels/lgtm`
-    const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+    const authReads = [...ownersReads, ...memberReads('Codertocat')]
     // the post-command sweep: tide reads the pr, probes its base for OWNERS files and asks for the merge queue state
     const sweep = [`GET ${repo}/pulls/1`, ownersProbe, queueRead]
 

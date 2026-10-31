@@ -161,7 +161,8 @@ export async function removeLabels(
   issueNum: number,
   labels: string[],
 ): Promise<void> {
-  for (const label of labels) {
+  // every label at once; the first failure in the given order is the one reported
+  const settled = await Promise.allSettled(labels.map(async (label) => {
     try {
       await octokit.issues.removeLabel({
         ...context.repo,
@@ -176,6 +177,11 @@ export async function removeLabels(
       else
         throw new Error(`could not remove label ${label}: ${e}`)
     }
+  }))
+
+  const failed = settled.find(result => result.status === 'rejected')
+  if (failed !== undefined) {
+    throw failed.reason
   }
 }
 

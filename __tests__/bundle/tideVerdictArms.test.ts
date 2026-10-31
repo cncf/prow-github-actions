@@ -220,9 +220,9 @@ describe('dist/index.js tide verdicts', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(result.stdout).toContain('tide: no open pull request to evaluate')
+      // a short first page is the last: no request for the empty page after it
       expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&per_page=100&page=1`,
-        `GET ${repo}/pulls?state=open&per_page=100&page=2`,
       ])
     })
   })

@@ -1,7 +1,7 @@
 import process from 'node:process'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { newOctokit } from '../../src/utils/octokit'
+import { newOctokit, newOctokitFromInputs } from '../../src/utils/octokit'
 
 describe('newOctokit', () => {
   let saved: string | undefined
@@ -33,5 +33,29 @@ describe('newOctokit', () => {
     process.env.GITHUB_API_URL = ''
     const octokit = newOctokit('some-token')
     expect(octokit.request.endpoint.DEFAULTS.baseUrl).toBe('https://api.github.com')
+  })
+})
+
+describe('newOctokitFromInputs', () => {
+  let saved: string | undefined
+
+  beforeEach(() => {
+    saved = process.env['INPUT_GITHUB-TOKEN']
+  })
+
+  afterEach(() => {
+    if (saved === undefined)
+      delete process.env['INPUT_GITHUB-TOKEN']
+    else
+      process.env['INPUT_GITHUB-TOKEN'] = saved
+  })
+
+  it('builds one client per token per run', () => {
+    process.env['INPUT_GITHUB-TOKEN'] = 'some-token'
+    const first = newOctokitFromInputs()
+    expect(newOctokitFromInputs()).toBe(first)
+
+    process.env['INPUT_GITHUB-TOKEN'] = 'other-token'
+    expect(newOctokitFromInputs()).not.toBe(first)
   })
 })

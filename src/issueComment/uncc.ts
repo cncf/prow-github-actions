@@ -39,10 +39,11 @@ export async function uncc(context: Context = platform().context()): Promise<voi
 
   // Only a commenter who is an org member or a repo collaborator may remove
   // other users' review requests; having commented on the PR is not enough
-  const isOrgMember = await checkOrgMember(octokit, context, commenterId)
-  const isCollaborator = await checkCollaborator(octokit, context, commenterId)
+  // org membership admits the commenter without a collaborator read
+  const authorized = await checkOrgMember(octokit, context, commenterId)
+    || await checkCollaborator(octokit, context, commenterId)
 
-  if (!isOrgMember && !isCollaborator) {
+  if (!authorized) {
     platform().log.info(`uncc: ${commenterId} is not an org member or repo collaborator; not removing ${commentArgs.join(', ')}`)
     return
   }

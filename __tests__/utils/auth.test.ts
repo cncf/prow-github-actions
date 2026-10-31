@@ -313,6 +313,53 @@ describe('getOrgCollabCommentUsers', () => {
       getOrgCollabCommentUsers(octokit, context, 1, ['some-user', 'nobody']),
     ).resolves.toEqual(['some-user'])
   })
+
+  it('keeps the argument order, stops at the first passing check and reads the comment thread once', async () => {
+    const reads: string[] = []
+    const status = (ok: boolean) => new Response(null, { status: ok ? 204 : 404 })
+    server.use(
+      http.get(`${utils.api}/orgs/Codertocat/members/:user`, ({ request, params }) => {
+        reads.push(new URL(request.url).pathname)
+        return status(params.user === 'member')
+      }),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/collaborators/:user`, ({ request, params }) => {
+        reads.push(new URL(request.url).pathname)
+        return status(params.user === 'collab')
+      }),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`, ({ request }) => {
+        reads.push(new URL(request.url).pathname)
+        return Response.json([{ user: { login: 'Commenter' } }])
+      }),
+    )
+
+    await expect(
+      getOrgCollabCommentUsers(octokit, context, 1, ['stranger', 'commenter', 'collab', 'member', 'other']),
+    ).resolves.toEqual(['commenter', 'collab', 'member'])
+    // stranger, commenter and other need all three checks, but the thread is read once
+    expect(reads.filter(r => r.endsWith('/comments'))).toHaveLength(1)
+    // the member needs no collaborator check, the collaborator no comment read
+    expect(reads.filter(r => r.endsWith('/member'))).toEqual(['/orgs/Codertocat/members/member'])
+    expect(reads.filter(r => r.endsWith('/collab'))).toEqual(['/orgs/Codertocat/members/collab', '/repos/Codertocat/Hello-World/collaborators/collab'])
+    expect(reads).toHaveLength(3 * 2 + 1 + 2 + 1)
+  })
+
+  it('memoizes the org membership and collaborator answers per login for the run', async () => {
+    let checks = 0
+    server.use(
+      http.get(`${utils.api}/orgs/Codertocat/members/some-user`, () => {
+        checks++
+        return new Response(null, { status: 404 })
+      }),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`, () => {
+        checks++
+        return new Response(null, { status: 204 })
+      }),
+    )
+
+    await expect(checkCommenterAuth(octokit, context, 1, 'some-user')).resolves.toBe(true)
+    await expect(checkCommenterAuth(octokit, context, 2, 'some-user')).resolves.toBe(true)
+    expect(checks).toBe(2)
+  })
 })
 
 describe('assertAuthorizedByOwnersOrMembership', () => {
@@ -440,8 +487,8 @@ describe('authorization policies', () => {
     const [owner, path] = source.split(':')
     return `GET /repos/${owner}/contents/${encodeURIComponent(path)}`
   })
-  // the repository probes stop at .github/prow.yaml, the first path
-  const prowYamlReads = configReads.slice(0, 3)
+  // every probe is sent at once; .github/prow.yaml, the first path, wins
+  const prowYamlReads = configReads
 
   describe('policyAllows', () => {
     it('refuses an empty login under every policy without any API call', async () => {
@@ -505,6 +552,14 @@ describe('authorization policies', () => {
 
       await expect(policyAllows(octokit, context, 'collaborators', 'Alice', ['alice'])).resolves.toBe(false)
       expect(calls).toEqual(['GET /repos/Codertocat/Hello-World/collaborators/Alice'])
+    })
+
+    it('reads the root OWNERS file once per run', async () => {
+      server.use(rootOwners('reviewers:\n  - carol\n'), ...membership(), ...membership({}, 'Bob'))
+
+      await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(false)
+      await expect(policyAllows(octokit, context, 'trusted', 'Bob', [])).resolves.toBe(false)
+      expect(calls.filter(call => call.endsWith('/contents/OWNERS'))).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS'])
     })
 
     it('skips the checks the caller already ran', async () => {
@@ -582,17 +637,13 @@ describe('authorization policies', () => {
 
   describe('the review fallback of assertAuthorizedByOwnersOrMembership', () => {
     it.each([
-      ['an org member', { member: true }],
-      ['a collaborator', { collaborator: true }],
-    ])('admits %s without reading the configuration', async (_, who) => {
+      ['an org member, without the collaborator check', { member: true }, ['GET /orgs/Codertocat/members/Alice']],
+      ['a collaborator', { collaborator: true }, ['GET /orgs/Codertocat/members/Alice', 'GET /repos/Codertocat/Hello-World/collaborators/Alice']],
+    ])('admits %s without reading the configuration', async (_, who, checks) => {
       server.use(rootOwners(), ...membership(who))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice')).resolves.toBeUndefined()
-      expect(calls).toEqual([
-        'GET /repos/Codertocat/Hello-World/contents/OWNERS',
-        'GET /orgs/Codertocat/members/Alice',
-        'GET /repos/Codertocat/Hello-World/collaborators/Alice',
-      ])
+      expect(calls).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS', ...checks])
     })
 
     it('under the default members policy reads the configuration only to refuse, with the same message', async () => {

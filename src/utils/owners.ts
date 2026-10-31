@@ -352,9 +352,8 @@ async function probeOwners(
   ref: string,
   dirs: Set<string>,
 ): Promise<OwnersTree> {
-  const owners = new Map<string, OwnersFile>()
-
-  for (const dir of dirs) {
+  // every candidate directory at once; a missing OWNERS file is just absent
+  const found = await Promise.all([...dirs].map(async (dir): Promise<[string, OwnersFile] | undefined> => {
     const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`
     let data
     try {
@@ -367,14 +366,15 @@ async function probeOwners(
     }
     catch (e) {
       if (isNotFound(e)) {
-        continue
+        return undefined
       }
       throw new Error(`error loading OWNERS files at ${ref}: ${e}`)
     }
 
-    owners.set(dir, parseOwners(path, decode(data, path)))
-  }
+    return [dir, parseOwners(path, decode(data, path))]
+  }))
 
+  const owners = new Map(found.filter(entry => entry !== undefined))
   return { owners, hasOwners: owners.size > 0 }
 }
 
@@ -407,7 +407,8 @@ export function branchHasOwners(octokit: Octokit, context: Context, branch: stri
     probeBranchOwners(octokit, context, branch))
 }
 
-function memoized<T>(cache: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
+/** memoized returns the cached promise for `key`, computing it on first use */
+export function memoized<T>(cache: Map<string, Promise<T>>, key: string, compute: () => Promise<T>): Promise<T> {
   let pending = cache.get(key)
   if (pending === undefined) {
     pending = compute()
