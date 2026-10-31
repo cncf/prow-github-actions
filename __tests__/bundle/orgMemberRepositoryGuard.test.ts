@@ -2,13 +2,13 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, repo, token } from './helpers'
+import { comment, commentsRead, helpersFor, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
 
 // checkOrgMember reads the org to probe from `payload.repository.owner.login`, and answers "not a member"
-// without a request when the payload carries no `repository` (auth.ts:43-45). The fixtures always carry it,
+// without a request when the payload carries no `repository` (auth.ts:56-59). The fixtures always carry it,
 // so the guard is driven here, through dist/index.js, by deleting the object: the other probes keep working
 // because `context.repo` falls back to GITHUB_REPOSITORY, which runBundle always sets
 describe('dist/index.js checkOrgMember without payload.repository', () => {
@@ -43,9 +43,9 @@ describe('dist/index.js checkOrgMember without payload.repository', () => {
     expect(result.errors).toEqual([])
     expect(result.stdout).toContain('checkOrgMember error: context payload repository undefined')
     expect(gh.requestsMatching('GET', /^\/orgs\//)).toEqual([])
+    // the collaborator read admits octocat: no comment-thread read
     expect(calls()).toEqual([
       `GET ${repo}/collaborators/octocat`,
-      `GET ${repo}/issues/1/comments`,
       `POST ${repo}/issues/1/assignees`,
     ])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
@@ -61,6 +61,6 @@ describe('dist/index.js checkOrgMember without payload.repository', () => {
     expect(result.stdout).toContain('checkOrgMember error: context payload repository undefined')
     expect(gh.requestsMatching('GET', /^\/orgs\//)).toEqual([])
     expect(gh.requestsMatching('POST', /./)).toEqual([])
-    expect(calls()).toEqual([`GET ${repo}/collaborators/stranger`, `GET ${repo}/issues/1/comments`])
+    expect(calls()).toEqual([`GET ${repo}/collaborators/stranger`, commentsRead])
   })
 })

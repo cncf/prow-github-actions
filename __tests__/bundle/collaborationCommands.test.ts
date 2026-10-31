@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, commentsRead, configReads, helpersFor, memberReads, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -30,9 +30,10 @@ describe('dist/index.js collaboration commands', () => {
     return result
   }
 
-  // the three reads checkCommenterAuth / getOrgCollabCommentUsers make for one user, in order
+  // the reads checkCommenterAuth / getOrgCollabCommentUsers make for one user that is neither an org member nor a
+  // collaborator, in order; the comment thread is read once per run however many users need it
   function membershipOrCommentReads(user: string) {
-    return [...membershipReads(user), `GET ${repo}/issues/1/comments`]
+    return [...membershipReads(user), commentsRead]
   }
 
   describe('/cc', () => {
@@ -70,15 +71,16 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      // the two users are checked concurrently, so their reads interleave
-      expect(calls().slice(0, 6).sort()).toEqual([...membershipOrCommentReads('octocat'), ...membershipOrCommentReads('stranger')].sort())
-      expect(calls().slice(6)).toEqual([`POST ${repo}/pulls/1/requested_reviewers`])
+      // the two users are checked concurrently, so their reads interleave; membership admits octocat, so only
+      // stranger goes on to the collaborator and comment-thread reads
+      expect(calls().slice(0, 4).sort()).toEqual([...memberReads('octocat'), ...membershipOrCommentReads('stranger')].sort())
+      expect(calls().slice(4)).toEqual([`POST ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('POST', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
 
     it('scans the comment thread past other people\'s comments: a commenter behind them is granted, a stranger the thread lacks is not', async () => {
       // every other scenario answers the comments read with `[]` or the target's own comment alone, so
-      // checkIssueComments never meets a comment it has to skip (auth.ts:129's non-matching arm)
+      // checkIssueComments never meets a commenter other than the one it looks for
       for (const user of ['octocat', 'stranger']) {
         gh.route('GET', `/orgs/Codertocat/members/${user}`, { status: 404, body: { message: 'Not Found' } })
         gh.route('GET', `${repo}/collaborators/${user}`, { status: 404, body: { message: 'Not Found' } })
@@ -97,8 +99,9 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls().slice(0, 6).sort()).toEqual([...membershipOrCommentReads('octocat'), ...membershipOrCommentReads('stranger')].sort())
-      expect(calls().slice(6)).toEqual([`POST ${repo}/pulls/1/requested_reviewers`])
+      // both need the comment thread, which is read once
+      expect(calls().slice(0, 5).sort()).toEqual([...membershipReads('octocat'), ...membershipOrCommentReads('stranger')].sort())
+      expect(calls().slice(5)).toEqual([`POST ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('POST', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
 
@@ -138,7 +141,8 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
+      // membership admits the commenter: no collaborator or comment-thread read
+      expect(calls()).toEqual([...memberReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('DELETE', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat', 'hubot'] })
     })
 

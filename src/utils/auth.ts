@@ -6,7 +6,7 @@ import { platform } from '../platform'
 
 import { decodeContent } from './base64'
 import { defaultAuthorization, loadProwConfig, resolveAuthorization } from './config'
-import { ownersInclude, parseOwners } from './owners'
+import { memoized, ownersInclude, parseOwners } from './owners'
 import { loadPullRequestOwners } from './pullRequestOwners'
 
 function getErrorDetails(error: unknown): { status: unknown, message: string } {
@@ -38,7 +38,16 @@ function getErrorDetails(error: unknown): { status: unknown, message: string } {
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-export async function checkOrgMember(
+export function checkOrgMember(
+  octokit: Octokit,
+  context: Context,
+  user: string,
+): Promise<boolean> {
+  const org = context.payload.repository?.owner.login
+  return memoized(platform().state().authChecks, `member:${org}/${user}`, () => fetchOrgMember(octokit, context, user))
+}
+
+async function fetchOrgMember(
   octokit: Octokit,
   context: Context,
   user: string,
@@ -78,7 +87,16 @@ export async function checkOrgMember(
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-export async function checkCollaborator(
+export function checkCollaborator(
+  octokit: Octokit,
+  context: Context,
+  user: string,
+): Promise<boolean> {
+  const { owner, repo } = context.repo
+  return memoized(platform().state().authChecks, `collaborator:${owner}/${repo}/${user}`, () => fetchCollaborator(octokit, context, user))
+}
+
+async function fetchCollaborator(
   octokit: Octokit,
   context: Context,
   user: string,
@@ -110,7 +128,8 @@ export async function checkCollaborator(
 
 /**
  * checkIssueComments will check to see if the given user
- * has commented on the given issue
+ * has commented on the given issue, reading every page of comments once per
+ * issue for the run and comparing logins case-insensitively
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -124,18 +143,18 @@ export async function checkIssueComments(
   user: string,
 ): Promise<boolean> {
   try {
-    const comments = await octokit.issues.listComments({
-      ...context.repo,
-      issue_number: issueNum,
+    const commenters = await memoized(platform().state().issueCommenters, `${context.repo.owner}/${context.repo.repo}#${issueNum}`, async () => {
+      // every page: on a busy issue the user's comment may be past the first 30
+      const comments = await octokit.paginate(octokit.issues.listComments, {
+        ...context.repo,
+        issue_number: issueNum,
+        per_page: 100,
+      })
+      // GitHub logins are case-insensitive
+      return comments.map(e => e.user?.login.toLowerCase())
     })
 
-    for (const e of comments.data) {
-      if (e.user?.login === user) {
-        return true
-      }
-    }
-
-    return false
+    return commenters.includes(user.toLowerCase())
   }
   catch (e) {
     const { status, message } = getErrorDetails(e)
@@ -161,17 +180,8 @@ export async function getOrgCollabCommentUsers(
   issueNum: number,
   args: string[],
 ): Promise<string[]> {
-  const toReturn: string[] = []
-
-  await Promise.all(
-    args.map(async (arg) => {
-      if (await checkCommenterAuth(octokit, context, issueNum, arg)) {
-        toReturn.push(arg)
-      }
-    }),
-  )
-
-  return toReturn
+  const results = await Promise.all(args.map(arg => checkCommenterAuth(octokit, context, issueNum, arg)))
+  return args.filter((_, i) => results[i])
 }
 
 /**
@@ -189,11 +199,14 @@ export async function checkCommenterAuth(
   issueNum: number,
   user: string,
 ): Promise<boolean> {
-  const isOrgMember = await checkOrgMember(octokit, context, user)
-  const isCollaborator = await checkCollaborator(octokit, context, user)
-  const hasCommented = await checkIssueComments(octokit, context, issueNum, user)
-
-  return isOrgMember || isCollaborator || hasCommented
+  // cheapest first; each check runs only when the previous ones refused the user
+  if (await checkOrgMember(octokit, context, user)) {
+    return true
+  }
+  if (await checkCollaborator(octokit, context, user)) {
+    return true
+  }
+  return checkIssueComments(octokit, context, issueNum, user)
 }
 
 /**
@@ -222,10 +235,7 @@ export async function assertAuthorizedByOwnersOrMembership(
       : await assertRootOwner(octokit, context, role, username)
 
   if (!hasOwners) {
-    const isOrgMember = await checkOrgMember(octokit, context, username)
-    const isCollaborator = await checkCollaborator(octokit, context, username)
-
-    if (!isOrgMember && !isCollaborator) {
+    if (!(await isOrgMemberOrCollaborator(octokit, context, username))) {
       // every review policy admits members and collaborators, so only a refusal needs the configuration
       const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization)
       if (review === 'members') {
@@ -236,6 +246,14 @@ export async function assertAuthorizedByOwnersOrMembership(
       }
     }
   }
+}
+
+// the collaborator check runs only when the org membership check refused the user
+async function isOrgMemberOrCollaborator(octokit: Octokit, context: Context, user: string): Promise<boolean> {
+  if (await checkOrgMember(octokit, context, user)) {
+    return true
+  }
+  return checkCollaborator(octokit, context, user)
 }
 
 /** checks the caller already ran that refused the user, so policyAllows does not repeat them */
@@ -428,10 +446,18 @@ async function rootOwnersIncludes(
 }
 
 /**
- * Retrieve the contents of the OWNERS file at the root of the repository.
+ * Retrieve the contents of the OWNERS file at the root of the repository,
+ * once per repository for the run.
  * If the file does not exist, returns an empty string.
  */
-async function retrieveOwnersFile(
+function retrieveOwnersFile(
+  octokit: Octokit,
+  context: Context,
+): Promise<string> {
+  return memoized(platform().state().rootOwners, `${context.repo.owner}/${context.repo.repo}`, () => fetchOwnersFile(octokit, context))
+}
+
+async function fetchOwnersFile(
   octokit: Octokit,
   context: Context,
 ): Promise<string> {

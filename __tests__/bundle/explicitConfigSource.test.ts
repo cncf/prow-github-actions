@@ -78,7 +78,8 @@ describe('dist/index.js prow configuration sources', () => {
     const result = await kind()
 
     expectConfigFailure(result, 'could not load organization prow config from Codertocat/.project:prow.yaml: HttpError: boom')
-    expect(calls()).not.toContain('GET /repos/Codertocat/.github/contents/prow.yaml')
+    // every probe is sent at once: the later source is read, but the earlier failure still decides
+    expect(calls()).toContain('GET /repos/Codertocat/.github/contents/prow.yaml')
   })
 
   it('a failed repository config read fails the command naming the repository file', async () => {
@@ -87,6 +88,7 @@ describe('dist/index.js prow configuration sources', () => {
     const result = await kind()
 
     expectConfigFailure(result, 'could not load prow config from Codertocat/Hello-World:.github/prow.yaml: HttpError: boom')
-    expect(calls()).not.toContain(`GET ${repo}/contents/.github%2Fprowlabels.yaml`)
+    // every probe is sent at once: the later path is read, but the earlier failure still decides
+    expect(calls()).toContain(`GET ${repo}/contents/.github%2Fprowlabels.yaml`)
   })
 })

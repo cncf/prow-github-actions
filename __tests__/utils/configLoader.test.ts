@@ -53,8 +53,9 @@ describe('loadProwConfig', () => {
 
       const config = await loadProwConfig(octokit, context)
 
+      // both are probed at once; the lower-precedence answer is read and dropped
       expect(config.labels).toEqual({ kind: section('from-project') })
-      await expect(github.notCalled()).resolves.toBe('not called')
+      await expect(github.called()).resolves.toBe('called')
     })
 
     it('falls back to <owner>/.github when .project has no prow.yaml', async () => {
@@ -92,8 +93,9 @@ describe('loadProwConfig', () => {
 
       const config = await loadProwConfig(octokit, context)
 
+      // every path is probed at once; the lower-precedence answer is read and dropped
       expect(config.labels).toEqual({ kind: section('modern') })
-      await expect(legacy.notCalled()).resolves.toBe('not called')
+      await expect(legacy.called()).resolves.toBe('called')
     })
 
     it('reads a legacy .prowlabels.yml when nothing else exists', async () => {
@@ -114,6 +116,47 @@ describe('loadProwConfig', () => {
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from Codertocat/Hello-World:prow.yaml:',
       )
+    })
+
+    it('a file found before a failing probe wins, as probing one after another would', async () => {
+      serve('.github/prow.yaml', 'labels:\n  kind: [modern]\n')
+      server.use(
+        http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })),
+        ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml', 'prow.yaml'),
+      )
+
+      await expect(loadProwConfig(octokit, context)).resolves.toMatchObject({ labels: { kind: section('modern') } })
+    })
+
+    it('a failing probe before a file found fails closed, as probing one after another would', async () => {
+      serve('.prowlabels.yml', 'kind: [legacy]\n')
+      server.use(
+        http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })),
+        ...utils.noOrgOrRepoConfigExcept('.prowlabels.yml', 'prow.yaml'),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from Codertocat/Hello-World:prow.yaml:',
+      )
+    })
+
+    it('sends every probe of both tiers before any answer arrives', async () => {
+      let started = 0
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      server.use(...utils.configProbes.map(source => http.get(utils.contentsUrl(source), async () => {
+        started++
+        if (started === utils.configProbes.length) {
+          release()
+        }
+        await gate
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+      })))
+
+      await expect(loadProwConfig(octokit, context)).resolves.toMatchObject({ sources: [] })
+      expect(started).toBe(utils.configProbes.length)
     })
   })
 

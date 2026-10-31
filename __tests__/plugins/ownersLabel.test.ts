@@ -175,7 +175,8 @@ describe('ownersLabel', () => {
   })
 
   it('fails when the pull request cannot be read', async () => {
-    server.use(http.get(`${repo}/pulls/1`, utils.mockResponse(500, { message: 'boom' })))
+    // the changed files are read alongside the pull request
+    server.use(http.get(`${repo}/pulls/1`, utils.mockResponse(500, { message: 'boom' })), filesHandler([]))
 
     await expect(ownersLabel(prEvent('opened'))).rejects.toThrow(/boom/)
   })
@@ -220,6 +221,7 @@ describe('ownersLabel', () => {
       // the approve handler runs on opened too; an OWNERS-less default branch keeps it out of this test
       utils.defaultBranchTree(),
       http.get(`${repo}/pulls/1`, utils.mockResponse(500, { message: 'boom' })),
+      filesHandler([]),
     )
 
     await handlePullReq(prEvent('opened'))
