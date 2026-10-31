@@ -11,11 +11,11 @@ spec:
     type: Recreate
   {{- end }}
   selector:
-    matchLabels: {{- include "prow-github-app.selectorLabels" . | nindent 6 }}
+    matchLabels: {{- include "prow-github-app.serverSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "prow-github-app.selectorLabels" . | nindent 8 }}
+        {{- include "prow-github-app.serverSelectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

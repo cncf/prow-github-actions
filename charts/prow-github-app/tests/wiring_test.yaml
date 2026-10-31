@@ -20,6 +20,7 @@ tests:
           value:
             app.kubernetes.io/name: prow-github-app
             app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/component: server
   - it: creates a token-less service account named after the release by default
     template: serviceaccount.yaml
     asserts:

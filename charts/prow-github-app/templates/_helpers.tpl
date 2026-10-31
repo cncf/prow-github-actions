@@ -27,6 +27,12 @@ app.kubernetes.io/name: {{ include "prow-github-app.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{/* the Deployment's pods only: the CronJob's pods share the selector labels and must not match it, the Service or the PDB */}}
+{{- define "prow-github-app.serverSelectorLabels" -}}
+{{ include "prow-github-app.selectorLabels" . }}
+app.kubernetes.io/component: server
+{{- end -}}
+
 {{- define "prow-github-app.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "prow-github-app.fullname" .) .Values.serviceAccount.name -}}
