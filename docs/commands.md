@@ -30,7 +30,7 @@ Commands | Policy | Description
 `/lock [resolved / off-topic / too-heated / spam]` | Collaborators | locks the issue / PR with the specified reason (case-insensitive; an unknown reason fails the run without locking)
 `/milestone milestone-name` | Collaborators | Adds issue / PR to an existing milestone. With no title the run fails. An unknown title fails the run with the list of available milestones
 `/milestone clear` | Collaborators | Removes the issue / PR from its milestone
-`/retitle some new title` | Collaborators | Renames the issue / PR. With no title, nothing happens
+`/retitle some new title` | Collaborators | Renames the issue / PR. No title, or one longer than 256 characters, fails the run without renaming
 `/meow` | anyone | replies with a random cat image from [the cat API](https://thecatapi.com)
 `/label-sync` | Collaborators | runs the [label-sync job](./cron-jobs.md) on the repository and replies with what it created and updated; the equivalent of *Run workflow* for the [GitHub App](./github-app.md), which has no button
 `/check-required-labels` | anyone | re-evaluates every [`require_matching_label`](./configuration.md#require_matching_label) rule on the open issue / PR at once: adds the missing `needs-*` labels, removes the satisfied ones. No `/remove-` form
@@ -79,7 +79,7 @@ Every label command applies only labels the repository already defines ([labelin
 
 Failure behaviour differs per command:
 
-- `/close`, `/reopen` and `/retitle` silently do nothing.
+- `/close`, `/reopen`, `/retitle` and a self `/assign` fail the run with `<user> is not authorized to ...`.
 - `/lock`, `/remove` and `/milestone` fail the run.
 - `/lgtm`, `/approve`, `/retest`, `/test` and `/ok-to-test` reply with a comment and fail the run.
   On a repository without OWNERS files the message is `<user> is not a org member or collaborator`,
