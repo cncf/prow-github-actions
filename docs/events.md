@@ -92,7 +92,7 @@ Rather than fail on the first label write, the action recognises the situation a
 
 Event | `head.repo` | Token | Does
 --- | --- | --- | ---
-`pull_request`, `pull_request_review` | another repository (a fork) | read-only | `core.notice`: `fork pull request under <event>: the token is read-only; the sweep job handles it`; no handler runs, no API call is made
+`pull_request`, `pull_request_review` | another repository (a fork), or `null` (a deleted fork) | read-only | `core.notice`: `fork pull request under <event>: the token is read-only; the sweep job handles it`; no handler runs, no API call is made
 `pull_request`, `pull_request_review` | the repository itself | write | every handler, as usual
 `pull_request_target` | anything | write | every handler, as usual
 
