@@ -35,13 +35,13 @@ describe('dist/index.js /reopen and /retitle failure arms', () => {
   }
 
   describe('/reopen', () => {
-    it('by a non-author whose collaborator read returns 500 warns and reopens nothing', async () => {
+    it('by a non-author whose collaborator read returns 500 warns, reopens nothing and fails the run', async () => {
       gh.route('GET', collaboratorPath, { status: 500, body: { message: 'boom' } })
 
       const result = await run('/reopen', '/reopen', 'some-author')
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('Codertocat is not authorized to reopen this issue'))).toBe(true)
       expect(result.stdout).toContain(collaboratorWarning)
       expect(calls().slice(0, 1)).toEqual([collaboratorRead])
       expect(calls().slice(1).sort()).toEqual(configReads().sort())
