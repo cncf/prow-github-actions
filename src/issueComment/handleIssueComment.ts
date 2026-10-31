@@ -106,6 +106,14 @@ function commandForms(command: string): string[] {
  * @param context - the github context of the current action event
  */
 export async function handleIssueComment(context: Context = platform().context()): Promise<void> {
+  // only a newly written comment carries commands: editing an old comment (or deleting one)
+  // must not replay or smuggle in a command after the fact
+  const action: string | undefined = context.payload.action
+  if (action !== undefined && action !== 'created') {
+    platform().log.info(`issue_comment: ignoring the ${action} action; commands run only on created comments`)
+    return
+  }
+
   const commandConfig = [...new Set(
     platform().inputs.get('prow-commands', { required: false }).split(/\s+/).filter(command => command !== '').map(command => canonicalCommand(command.toLowerCase())),
   )]

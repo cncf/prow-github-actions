@@ -110,7 +110,8 @@ export async function checkCollaborator(
 
 /**
  * checkIssueComments will check to see if the given user
- * has commented on the given issue
+ * has commented on the given issue, reading every page of comments
+ * and comparing logins case-insensitively
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -124,18 +125,16 @@ export async function checkIssueComments(
   user: string,
 ): Promise<boolean> {
   try {
-    const comments = await octokit.issues.listComments({
+    // every page: on a busy issue the user's comment may be past the first 30
+    const comments = await octokit.paginate(octokit.issues.listComments, {
       ...context.repo,
       issue_number: issueNum,
+      per_page: 100,
     })
 
-    for (const e of comments.data) {
-      if (e.user?.login === user) {
-        return true
-      }
-    }
-
-    return false
+    // GitHub logins are case-insensitive
+    const wanted = user.toLowerCase()
+    return comments.some(e => e.user?.login.toLowerCase() === wanted)
   }
   catch (e) {
     const { status, message } = getErrorDetails(e)

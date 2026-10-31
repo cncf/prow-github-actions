@@ -378,9 +378,9 @@ Label | Applied by | Meaning in Prow
 `do-not-merge/cherry-pick-not-approved` | humans, other automation | a release branch cherry-pick lacks approval
 `do-not-merge/<anything>` | humans, other automation | matched by `do-not-merge/*`; Kubernetes uses `do-not-merge/needs-kind` and `do-not-merge/needs-sig`
 
-`needs-rebase` and the legacy `hold` complete the default deny-list. `/label` and `/remove-label` refuse
-every `do-not-merge/*` label ([commands](./commands.md)); apply the others through GitHub's UI or other
-tooling, and remove them with `/remove`. Only `do-not-merge/hold` is in the
+`needs-rebase` and the legacy `hold` complete the default deny-list. `/label`, `/remove-label` and `/remove`
+refuse every `do-not-merge/*` label ([commands](./commands.md)); apply and remove the others through GitHub's
+UI or other tooling, and release `do-not-merge/hold` with `/hold cancel`. Only `do-not-merge/hold` is in the
 [label catalogue](./configuration.md#the-label-catalogue); create the others by hand or list them in a
 `labels` section.
 

@@ -33,6 +33,17 @@ describe('dist/index.js issue_comment dispatcher', () => {
     expect(gh.requests).toEqual([])
   })
 
+  it.each(['edited', 'deleted'])('an %s comment runs no command and makes no api call', async (action) => {
+    const payload = comment('/hold')
+    payload.action = action
+
+    const result = await runBundle({ eventName: 'issue_comment', payload, inputs: { ...token, 'prow-commands': '/hold' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requests).toEqual([])
+  })
+
   it('one failing command does not stop another in the same body: /remove fails, /hold still applies', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
     gh.route('GET', `${repo}/labels`, { status: 200, body: [{ name: 'do-not-merge/hold' }] })

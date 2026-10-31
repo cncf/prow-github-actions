@@ -30,9 +30,9 @@ describe('dist/index.js collaboration commands', () => {
     return result
   }
 
-  // the three reads checkCommenterAuth / getOrgCollabCommentUsers make for one user, in order
+  // the three reads getOrgCollabCommentUsers makes for one user, in order
   function membershipOrCommentReads(user: string) {
-    return [...membershipReads(user), `GET ${repo}/issues/1/comments`]
+    return [...membershipReads(user), `GET ${repo}/issues/1/comments?per_page=100`]
   }
 
   describe('/cc', () => {
@@ -131,27 +131,26 @@ describe('dist/index.js collaboration commands', () => {
     it('removes the argument users\' review requests when the commenter is an org member', async () => {
       gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
-      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
       gh.route('DELETE', `${repo}/pulls/1/requested_reviewers`, { status: 200, body: {} })
 
       const result = await run('/uncc @octocat @hubot', '/uncc')
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('DELETE', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat', 'hubot'] })
     })
 
-    it('by an unauthorized commenter with arguments removes nothing', async () => {
+    it('by a commenter who is neither org member nor collaborator removes nothing, even after commenting on the pull request', async () => {
       gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 404, body: { message: 'Not Found' } })
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
-      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [{ user: { login: 'Codertocat' } }] })
 
       const result = await run('/uncc @octocat', '/uncc')
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual(membershipOrCommentReads('Codertocat'))
+      expect(calls()).toEqual(membershipReads('Codertocat'))
     })
   })
 
@@ -167,18 +166,29 @@ describe('dist/index.js collaboration commands', () => {
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
     })
 
-    it('unassigns the argument users when the commenter has commented on the issue before', async () => {
-      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 404, body: { message: 'Not Found' } })
+    it('unassigns the argument users when the commenter is an org member', async () => {
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 204 })
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
-      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [{ user: { login: 'Codertocat' } }] })
       gh.route('DELETE', `${repo}/issues/1/assignees`, { status: 200, body: {} })
 
       const result = await run('/unassign @octocat', '/unassign')
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipOrCommentReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
+    })
+
+    it('by a commenter who has only commented on the issue before unassigns nobody', async () => {
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [{ user: { login: 'Codertocat' } }] })
+
+      const result = await run('/unassign @octocat', '/unassign')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(calls()).toEqual(membershipReads('Codertocat'))
     })
 
     it('fails the action when the assignee removal is refused', async () => {
