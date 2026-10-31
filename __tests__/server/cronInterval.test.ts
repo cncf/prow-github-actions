@@ -63,9 +63,14 @@ describe('main() and PROW_CRON_INTERVAL', () => {
       await polled
       await vi.waitFor(() => expect(stdoutLines(write).filter(line => line.level === 'error')).toHaveLength(2))
       expect(polls).toBe(2)
+
+      // closing clears the interval: another period passes with no further run
+      await listening.close()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(polls).toBe(2)
     }
     finally {
-      listening.close()
+      await listening.close()
       vi.useRealTimers()
       write.mockRestore()
     }

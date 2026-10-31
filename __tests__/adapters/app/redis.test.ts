@@ -54,7 +54,15 @@ describe('redisLocks', () => {
     })
 
     expect(client.store.has('prow:lock:o/r#1')).toBe(false)
-    expect(client.calls.at(-1)).toBe('eval prow:lock:o/r#1')
+    expect(client.calls).toEqual(['set prow:lock:o/r#1 {"NX":true,"PX":500}', 'eval prow:lock:o/r#1'])
+  })
+
+  it('takes the lock for 60 s unless told otherwise', async () => {
+    const client = fakeRedis()
+
+    await redisLocks(client).withLock('k', async () => {})
+
+    expect(client.calls[0]).toBe('set prow:lock:k {"NX":true,"PX":60000}')
   })
 
   it('waits for a held lock, then takes it', async () => {
