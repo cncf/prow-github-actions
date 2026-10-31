@@ -166,7 +166,9 @@ inside the server every hour instead.
 
 Each repository runs under its own installation token and state, four at a time;
 a repository that fails is logged and reported, and never stops the others.
-Suspended installations and archived repositories are skipped.
+Suspended installations and archived repositories are skipped. An installation whose token
+cannot be minted or whose repositories cannot be listed is logged (`installationId` and the
+error) and skipped; the other installations still run.
 
 `PROW_JOBS` defaults to `lgtm`, the merger. The action also offers `sweep`, which
 exists because `GITHUB_TOKEN` cannot write on a fork's `pull_request` events; the

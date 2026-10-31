@@ -124,7 +124,7 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const settings = settingsFromEnv(env as unknown as Record<string, string | undefined>)
-    const lister = appInstallationLister(settings, appTokenSource(settings))
+    const lister = appInstallationLister(settings, appTokenSource(settings), sinkFor())
     const seen = new Set<number>()
     for await (const target of lister.repositories()) {
       if (!seen.has(target.installationId)) {
@@ -142,7 +142,7 @@ export default {
         if (message.body.kind === 'schedule') {
           const { installationId } = message.body
           const tokens = appTokenSource(settings)
-          const all = appInstallationLister(settings, tokens)
+          const all = appInstallationLister(settings, tokens, sinkFor())
           const one = {
             async* repositories() {
               for await (const target of all.repositories()) {

@@ -3,7 +3,7 @@ import type { Context } from '../../../src/platform'
 import { generateKeyPairSync } from 'node:crypto'
 import { http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { appInstallationLister, runScheduledJobs } from '../../../src/adapters/app/cron'
 import { appTokenSource } from '../../../src/adapters/app/platform'
@@ -175,10 +175,54 @@ describe('appInstallationLister', () => {
     )
 
     const out: ScheduledRepository[] = []
-    for await (const target of appInstallationLister({ ...settings, privateKey, apiBaseUrl: api }, appTokenSource({ ...settings, privateKey, apiBaseUrl: api })).repositories()) {
+    for await (const target of appInstallationLister({ ...settings, privateKey, apiBaseUrl: api }, appTokenSource({ ...settings, privateKey, apiBaseUrl: api }), () => {}).repositories()) {
       out.push(target)
     }
 
     expect(out.map(t => `${t.installationId}:${t.repository.full_name}`)).toEqual(['1:acme/api', '2:globex/core'])
+  })
+
+  it.each([
+    ['its token cannot be minted', 'access_tokens'],
+    ['its repositories cannot be listed', 'repositories'],
+  ])('logs and skips an installation when %s, and lists the others', async (_case, failing) => {
+    server.use(
+      http.get(`${api}/app/installations`, () => new Response(JSON.stringify([{ id: 1, suspended_at: null }, { id: 2, suspended_at: null }]), { headers: { 'Content-Type': 'application/json' } })),
+      http.post(`${api}/app/installations/:id/access_tokens`, ({ params }) => failing === 'access_tokens' && params.id === '1'
+        ? new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+        : new Response(JSON.stringify({ token: `tok-${params.id}`, expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: {}, repository_selection: 'all' }), { status: 201, headers: { 'Content-Type': 'application/json' } })),
+      http.get(`${api}/installation/repositories`, ({ request }) => {
+        if (failing === 'repositories' && request.headers.get('authorization') === 'token tok-1') {
+          return new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+        }
+        const repos = [{ name: 'core', full_name: 'globex/core', owner: { login: 'globex' }, archived: false }]
+        return new Response(JSON.stringify({ total_count: repos.length, repositories: repos }), { headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    const { lines, sink } = recordingSink()
+
+    const out: ScheduledRepository[] = []
+    for await (const target of appInstallationLister({ ...settings, privateKey, apiBaseUrl: api }, appTokenSource({ ...settings, privateKey, apiBaseUrl: api }), sink).repositories()) {
+      out.push(target)
+    }
+
+    expect(out.map(t => `${t.installationId}:${t.repository.full_name}`)).toEqual(['2:globex/core'])
+    expect(lines).toEqual([expect.objectContaining({ level: 'error', event: 'schedule', installationId: 1, message: expect.stringMatching(/^could not list the repositories of installation 1: .*Resource not accessible by integration/) })])
+  })
+
+  it('logs an installation whose token source rejects with a non-Error value as its string form', async () => {
+    server.use(
+      http.get(`${api}/app/installations`, () => new Response(JSON.stringify([{ id: 1, suspended_at: null }]), { headers: { 'Content-Type': 'application/json' } })),
+    )
+    const { lines, sink } = recordingSink()
+    const tokens = { installationToken: vi.fn<(id: number) => Promise<string>>().mockRejectedValue('plain string failure') }
+
+    const out: ScheduledRepository[] = []
+    for await (const target of appInstallationLister({ ...settings, privateKey, apiBaseUrl: api }, tokens, sink).repositories()) {
+      out.push(target)
+    }
+
+    expect(out).toEqual([])
+    expect(lines).toEqual([expect.objectContaining({ installationId: 1, message: 'could not list the repositories of installation 1: plain string failure' })])
   })
 })

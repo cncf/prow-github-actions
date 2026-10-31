@@ -17,7 +17,13 @@ export interface InstallationLister {
   repositories: () => AsyncIterable<ScheduledRepository>
 }
 
-export function appInstallationLister(settings: AppSettings, tokens: TokenSource): InstallationLister {
+/**
+ * appInstallationLister lists the repositories of every installation. An
+ * installation whose token cannot be minted or whose repositories cannot be
+ * listed (revoked, suspended mid-run) is logged to `sink` and skipped, so it
+ * never stops the others.
+ */
+export function appInstallationLister(settings: AppSettings, tokens: TokenSource, sink: LogSink): InstallationLister {
   const asApp = new Octokit({ authStrategy: createAppAuth, auth: { appId: settings.appId, privateKey: settings.privateKey }, baseUrl: settings.apiBaseUrl })
   return {
     async* repositories() {
@@ -26,9 +32,16 @@ export function appInstallationLister(settings: AppSettings, tokens: TokenSource
         if (installation.suspended_at) {
           continue
         }
-        const token = await tokens.installationToken(installation.id)
-        const asInstallation = new Octokit({ auth: token, baseUrl: settings.apiBaseUrl })
-        const repositories = await asInstallation.paginate(asInstallation.apps.listReposAccessibleToInstallation, { per_page: 100 })
+        let repositories
+        try {
+          const token = await tokens.installationToken(installation.id)
+          const asInstallation = new Octokit({ auth: token, baseUrl: settings.apiBaseUrl })
+          repositories = await asInstallation.paginate(asInstallation.apps.listReposAccessibleToInstallation, { per_page: 100 })
+        }
+        catch (error) {
+          sink({ level: 'error', event: 'schedule', installationId: installation.id, message: `could not list the repositories of installation ${installation.id}: ${error instanceof Error ? error.message : String(error)}` })
+          continue
+        }
         for (const repository of repositories) {
           if (repository.archived) {
             continue

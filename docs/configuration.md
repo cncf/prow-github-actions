@@ -328,7 +328,10 @@ reviewers and the assignees. Like Prow, each candidate is weighted by the number
 files they cover: the request is filled from the best-covering candidates first and drawn at
 random among equals. With `max_request_count`, `request_count` is reduced so that the
 already requested reviewers plus the new ones do not exceed it. Nobody left to request is a
-debug-logged no-op; a refused request fails the run. No comment is posted.
+debug-logged no-op. When GitHub refuses the request with a `422` (one login cannot be asked, for
+example a reviewer who is not a collaborator), each reviewer is requested on their own: the ones
+GitHub refuses are logged as warnings and the run fails only when it refuses every one. Any
+other refused request fails the run. No comment is posted.
 
 With `delay` the `opened` and `ready_for_review` handlers request nothing and log that the
 request is deferred. Each [`sweep`](./cron-jobs.md#sweep) run then requests reviewers on every

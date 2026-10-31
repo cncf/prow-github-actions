@@ -46,15 +46,18 @@ beforeAll(() => server.listen(utils.failOnUnhandledRequest))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
-/** serves the listing page by page, an empty page after the last, and each listed PR as clean and mergeable */
+/** serves the listing page by page, each page linking the next as the api does, and each listed PR as clean and mergeable */
 function routePages(pages: ReturnType<typeof lgtmPr>[][], listing?: utils.ObserveRequest) {
   const all = pages.flat()
   server.use(
     http.get(`${repo}/pulls`, ({ request }) => {
       if (listing)
         listing.ref = request
-      const page = Number(new URL(request.url).searchParams.get('page'))
-      return utils.mockResponse(200, pages[page - 1] ?? [])({ request })
+      const page = Number(new URL(request.url).searchParams.get('page') ?? '1')
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (page < pages.length)
+        headers.Link = `<${repo}/pulls?state=open&per_page=100&page=${page + 1}>; rel="next"`
+      return new Response(JSON.stringify(pages[page - 1] ?? []), { status: 200, headers })
     }),
     http.get(`${repo}/pulls/:number`, ({ params }) => {
       const pr = all.find(item => item.number === Number(params.number))
@@ -90,7 +93,7 @@ describe('cronLgtm', () => {
     acceptMerge(11)
     acceptMerge(13)
 
-    await expect(cronLgtm(1, context)).resolves.toBe(2)
+    await expect(cronLgtm(context)).resolves.toBe(2)
   })
 
   it('resolves to zero when every listed pull request is skipped', async () => {
@@ -98,16 +101,7 @@ describe('cronLgtm', () => {
     const context = new utils.MockContext(pullReqOpenedEvent)
     routePages([[withoutLgtm(14), lgtmPr(15, 'do-not-merge/hold')]])
 
-    await expect(cronLgtm(1, context)).resolves.toBe(0)
-  })
-
-  it('carries the count of earlier pages into the pages that follow', async () => {
-    utils.setupJobsEnv('lgtm')
-    const context = new utils.MockContext(pullReqOpenedEvent)
-    routePages([[], [lgtmPr(16)]])
-    acceptMerge(16)
-
-    await expect(cronLgtm(2, context, { jobsDone: 3, failures: [] })).resolves.toBe(4)
+    await expect(cronLgtm(context)).resolves.toBe(0)
   })
 
   it('lists only open pull requests', async () => {
@@ -116,7 +110,7 @@ describe('cronLgtm', () => {
     const listing = new utils.ObserveRequest()
     routePages([], listing)
 
-    await expect(cronLgtm(1, context)).resolves.toBe(0)
+    await expect(cronLgtm(context)).resolves.toBe(0)
     expect(listing.ref).not.toBeNull()
     expect(new URL(listing.ref!.url).searchParams.get('state')).toBe('open')
   })
@@ -130,7 +124,7 @@ describe('cronLgtm', () => {
     routePages([[pr]])
     const { read, merge } = observeRead(pr.number)
 
-    await expect(cronLgtm(1, context)).resolves.toBe(0)
+    await expect(cronLgtm(context)).resolves.toBe(0)
     await expect(read.notCalled()).resolves.toBe('not called')
     await expect(merge.notCalled()).resolves.toBe('not called')
   })
@@ -143,7 +137,7 @@ describe('cronLgtm', () => {
     routePages([[locked]])
     const { read, merge } = observeRead(19)
 
-    await expect(cronLgtm(1, context)).resolves.toBe(0)
+    await expect(cronLgtm(context)).resolves.toBe(0)
     await expect(read.notCalled()).resolves.toBe('not called')
     await expect(merge.notCalled()).resolves.toBe('not called')
   })
@@ -158,7 +152,7 @@ tide:
     routePages([[lgtmPr(20)]])
     const { read, merge } = observeRead(20)
 
-    await expect(cronLgtm(1, context)).resolves.toBe(0)
+    await expect(cronLgtm(context)).resolves.toBe(0)
     await expect(read.notCalled()).resolves.toBe('not called')
     await expect(merge.notCalled()).resolves.toBe('not called')
   })
@@ -170,7 +164,7 @@ tide:
     const listing = new utils.ObserveRequest()
     routePages([], listing)
 
-    await expect(cronLgtm(1, context)).rejects.toThrow('Input required and not supplied: github-token')
+    await expect(cronLgtm(context)).rejects.toThrow('Input required and not supplied: github-token')
     expect(listing.ref).toBeNull()
   })
 })

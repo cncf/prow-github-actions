@@ -9,6 +9,7 @@ import { evaluateMerge, loadTide, successfulResults } from '../plugins/tide'
 import { loadProwConfig } from '../utils/config'
 import { meetsMergeGate } from '../utils/mergeGate'
 import { newOctokitFromInputs } from '../utils/octokit'
+import { forEachLimited, sweepConcurrency } from './sweep'
 
 type PullsListResponseDataType
   = RestEndpointMethodTypes['pulls']['list']['response']['data']
@@ -35,25 +36,21 @@ interface MergePolicy {
 
 /**
  * Inspired by https://github.com/actions/stale
- * this will recurse through the pages of PRs for a repo
- * and evaluate every one that passes the tide merge gate
+ * this lists every open PR of a repo first, then evaluates every one
+ * that passes the tide merge gate
  * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
  * through the shared merge path: the lgtm binding, GitHub's mergeability,
  * then the merge. It is the backstop of the event-driven tide handlers.
- * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused or any evaluation threw, listing the affected PRs.
+ * Listing before merging keeps a merge from shifting a later PR onto a
+ * page already read. A few PRs are evaluated at a time; every PR is
+ * attempted, and the run then fails if any merge was refused or any
+ * evaluation threw, listing the affected PRs.
  * Only a listing that cannot be read stops the run early.
  *
- * @param currentPage - the page to return from the github api
  * @param context - The github actions event context
- * @param progress - merges done and failures collected on earlier pages
  */
-export async function cronLgtm(
-  currentPage: number,
-  context: Context,
-  progress: LgtmProgress = { jobsDone: 0, failures: [] },
-): Promise<number> {
-  platform().log.info(`starting lgtm merger page: ${currentPage}`)
+export async function cronLgtm(context: Context): Promise<number> {
+  platform().log.info('starting lgtm merger')
 
   const octokit = newOctokitFromInputs()
 
@@ -62,75 +59,65 @@ export async function cronLgtm(
     lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
   }
 
-  // Get next batch
   let prs: PullsListResponseDataType
   try {
-    prs = await getOpenPrs(octokit, context, currentPage)
+    prs = await getOpenPrs(octokit, context)
   }
   catch (e) {
     throw new Error(`could not get PRs: ${e}`)
   }
 
-  if (prs.length <= 0) {
-    // All done!
-    if (progress.failures.length > 0) {
-      const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ')
-      throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`)
+  const progress: LgtmProgress = { jobsDone: 0, failures: [] }
+  await forEachLimited(prs, sweepConcurrency, async (pr) => {
+    platform().log.info(`processing pr: ${pr.number}`)
+    if (pr.state === 'closed') {
+      return
     }
-    return progress.jobsDone
+
+    if (pr.locked) {
+      return
+    }
+
+    try {
+      if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
+        progress.jobsDone++
+      }
+    }
+    catch (error) {
+      // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
+      platform().log.error(`could not evaluate pr #${pr.number}: ${error}`)
+      progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` })
+    }
+  })
+
+  if (progress.failures.length > 0) {
+    const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ')
+    throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`)
   }
-
-  await Promise.all(
-    prs.map(async (pr) => {
-      platform().log.info(`processing pr: ${pr.number}`)
-      if (pr.state === 'closed') {
-        return
-      }
-
-      if (pr.locked) {
-        return
-      }
-
-      try {
-        if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
-          progress.jobsDone++
-        }
-      }
-      catch (error) {
-        // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
-        platform().log.error(`could not evaluate pr #${pr.number}: ${error}`)
-        progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` })
-      }
-    }),
-  )
-
-  // Recurse, continue to next page
-  return await cronLgtm(currentPage + 1, context, progress)
+  return progress.jobsDone
 }
 
 /**
- * grabs pulls from github in baches of 100
+ * lists every open pull request, following the api's pages
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions workflow context
- * @param page - the page number to get from the api
  */
 async function getOpenPrs(
   octokit: Octokit,
-  context: Context = platform().context(),
-  page: number,
+  context: Context,
 ): Promise<PullsListResponseDataType> {
-  platform().log.debug(`getting prs page ${page}...`)
+  platform().log.debug('getting open prs...')
 
-  const prResults = await octokit.pulls.list({
+  const prs = await octokit.paginate(octokit.pulls.list, {
     ...context.repo,
     state: 'open',
-    page,
+    per_page: 100,
   })
 
-  platform().log.debug(`got: ${prResults.data}`)
+  platform().log.debug(`got: ${prs.length} open prs`)
 
-  return prResults.data
+  return prs
 }
 
 /**

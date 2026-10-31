@@ -1,6 +1,6 @@
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 import type { BlunderbussSettings } from '../plugins/blunderbuss'
-import type { ProwConfig } from '../utils/config'
+import type { ProwConfig, ResolvedTide } from '../utils/config'
 import type { Context } from '../utils/context'
 
 import { approvePendingRuns, okToTestLabel } from '../issueComment/trigger'
@@ -128,8 +128,18 @@ type Step = [name: string, run: () => Promise<void>]
 async function sweepPullRequest(octokit: Octokit, context: Context, pr: PullsListItem, plugins: SweepPlugins): Promise<PullOutcome> {
   const outcome: PullOutcome = { result: 'evaluated', errors: [] }
   // both memoized per base branch: one tree listing however many pull requests share it
-  const hasOwners = await branchHasOwners(octokit, context, pr.base.ref)
-  const tide = await loadTide(octokit, context, pr.base.ref)
+  let hasOwners: boolean
+  let tide: ResolvedTide
+  try {
+    hasOwners = await branchHasOwners(octokit, context, pr.base.ref)
+    tide = await loadTide(octokit, context, pr.base.ref)
+  }
+  catch (e) {
+    // collected like a failed step, so a base branch whose OWNERS or configuration cannot be read does not stop the other pull requests
+    outcome.errors.push(`setup: ${e instanceof Error ? e.message : String(e)}`)
+    platform().log.info(`sweep: #${pr.number} ${outcome.result} with ${outcome.errors.length} error(s)`)
+    return outcome
+  }
   const ownersSteps: Step[] = [
     ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
     ['blunderbuss', () => plugins.reviewers.delay > 0
@@ -267,7 +277,8 @@ async function recentlyUpdatedPulls(octokit: Octokit, context: Context, since: D
   }
 }
 
-async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+/** runs fn over items, at most `limit` at once, in order */
+export async function forEachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {

@@ -351,11 +351,10 @@ describe('label-sync job', () => {
     const writes = recordWrites(complete.filter(l => l.name !== 'documentation'))
     const mergeReq = new utils.ObserveRequest()
     server.use(
-      http.get(`${repo}/pulls`, ({ request }) => {
-        const page = new URL(request.url).searchParams.get('page')
+      http.get(`${repo}/pulls`, () => {
         const payload = structuredClone(listPullReqs)
         payload[0].labels[0].name = 'lgtm'
-        return json(page === '1' ? payload : [])
+        return json(payload)
       }),
       http.get(`${repo}/pulls/2`, () => {
         const payload = structuredClone(listPullReqs[0])
