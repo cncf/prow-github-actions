@@ -17,7 +17,9 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
       // the Worker runs only inside workerd (__tests__/worker, via miniflare), where V8 coverage
-      // does not reach; its behaviour is tested there, its lines are not counted here
+      // does not reach; its behaviour is tested there, its lines are not counted here, and
+      // __tests__/worker/entryPoints.test.ts pins that every entry point the file declares
+      // has a driver in that suite
       exclude: ['src/server/worker.ts', 'src/server/worker-env.d.ts'],
       // lcovonly + json-summary are machine-readable for CI artifacts and job summaries
       reporter: ['text', 'text-summary', 'lcovonly', 'json-summary'],

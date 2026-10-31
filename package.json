@@ -36,6 +36,7 @@
     "test:coverage:e2e": "npm run pack:coverage && vitest run --coverage --config vitest.e2e-coverage.config.mjs __tests__/bundle",
     "test:shuffle": "vitest run --sequence.shuffle",
     "test:mutation": "stryker run",
+    "test:mutation:nightly": "stryker run stryker.nightly.config.mjs",
     "test:watch": "vitest",
     "all": "npm run build && npm run lint:fix && npm run lint && npm run pack && npm test",
     "pack:server": "ncc build src/server/main.ts -o dist-server",

@@ -71,6 +71,75 @@ jobs:
             exit 1
           fi
 
+  # The whole suite with every file's tests in a random order (npm run
+  # test:shuffle, see docs/contributing.md "Test order"). A test that leaks
+  # state into its neighbour passes in source order by luck; the seed Vitest
+  # prints with a failure repeats the order locally (--sequence.seed=<n>).
+  shuffle:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_TEST_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: npm run test:shuffle
+
+  # Mutation checks over the merge-decision code (npm run test:mutation:nightly,
+  # stryker.nightly.config.mjs): a surviving mutant means a pull request could
+  # merge or be held for the wrong reason, and line coverage cannot see it.
+  # Too slow for every push, so it runs on the daily schedule and on demand;
+  # it fails below the break score in the nightly config.
+  mutation:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: npm run test:mutation:nightly
+      - name: Mutation summary
+        if: always()
+        run: |
+          [ -f reports/mutation/report.json ] || exit 0
+          # shellcheck disable=SC2016
+          node -e '
+            const { files } = require("./reports/mutation/report.json");
+            const tally = {};
+            for (const [file, { mutants }] of Object.entries(files)) {
+              const t = tally[file] = { killed: 0, survived: 0, timeout: 0, noCoverage: 0, other: 0 };
+              for (const { status } of mutants) {
+                if (status === "Killed") t.killed++;
+                else if (status === "Survived") t.survived++;
+                else if (status === "Timeout") t.timeout++;
+                else if (status === "NoCoverage") t.noCoverage++;
+                else t.other++;
+              }
+            }
+            const score = t => { const d = t.killed + t.timeout + t.survived + t.noCoverage; return d ? (100 * (t.killed + t.timeout) / d).toFixed(2) : "n/a"; };
+            console.log("### Mutation score (`npm run test:mutation:nightly`)\n\n| File | Score | Killed | Timeout | Survived | No coverage |\n|---|---|---|---|---|---|");
+            for (const [file, t] of Object.entries(tally)) console.log(`| ${file} | ${score(t)}% | ${t.killed} | ${t.timeout} | ${t.survived} | ${t.noCoverage} |`);
+          ' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation-${{ github.sha }}
+          path: reports/mutation/
+          retention-days: 14
+          if-no-files-found: ignore
+
   # End-to-end coverage: the bundle acceptance suite run against a
   # source-mapped bundle (npm run test:coverage:e2e). Reported separately from
   # the unit figure on purpose (see docs/contributing.md); it is a record, not
