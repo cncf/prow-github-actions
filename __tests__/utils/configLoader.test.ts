@@ -203,6 +203,9 @@ describe('loadProwConfig', () => {
   })
 
   describe('explicit config input', () => {
+    // the repository tier is probed alongside the explicit source; every case below whose explicit source rejects
+    // ends it on its first probe so that no probe of its chain starts after the test has returned (see configFoundAt)
+
     it('owner/repo:path@ref replaces the org tier and is read at that ref', async () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:configs/prow.yaml@v1'
       const org = new utils.ObserveRequest()
@@ -276,7 +279,7 @@ describe('loadProwConfig', () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
       server.use(
         http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(404, { message: 'Not Found' })),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -288,7 +291,7 @@ describe('loadProwConfig', () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
       server.use(
         http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(500, { message: 'boom' })),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -300,7 +303,7 @@ describe('loadProwConfig', () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:configs'
       server.use(
         http.get(`${utils.api}/repos/cncf/prow-config/contents/configs`, utils.mockResponse(200, [{ name: 'prow.yaml', type: 'file' }])),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -312,7 +315,7 @@ describe('loadProwConfig', () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
       server.use(
         http.get('https://config.example.com/prow.yaml', () => HttpResponse.error()),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
@@ -325,7 +328,7 @@ describe('loadProwConfig', () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
       server.use(
         http.get('https://config.example.com/prow.yaml', () => new Response('gone', { status: 410 })),
-        ...utils.noOrgOrRepoConfigExcept(),
+        ...utils.configFoundAt('.github/prow.yaml'),
       )
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
