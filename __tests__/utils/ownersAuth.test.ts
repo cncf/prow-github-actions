@@ -123,6 +123,23 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     )
   })
 
+  it('fails closed the same way when the tree is truncated but still lists an OWNERS file elsewhere', async () => {
+    const observeMember = new utils.ObserveRequest()
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('README.md')),
+      ...treeHandlers({ 'sdk/OWNERS': sdkOwners }, { truncated: true }),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      http.get(`${utils.api}/orgs/Codertocat/members/bob`, utils.mockResponse(204, null, observeMember)),
+      http.get(`${repo}/collaborators/bob`, utils.mockResponse(404)),
+    )
+
+    await expect(authorize('approvers', 'bob')).rejects.toThrow(
+      'no OWNERS file covers README.md',
+    )
+    await expect(observeMember.notCalled()).resolves.toBe('not called')
+  })
+
   it('falls back to membership when the tree has no OWNERS files', async () => {
     server.use(
       ...prHandlers({}, ['src/file1.txt']),
