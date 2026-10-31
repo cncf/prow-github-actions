@@ -8,7 +8,7 @@ export const root = path.resolve(__dirname, '..', '..')
 
 export type Mapping = Record<string, unknown>
 export interface Step { name?: string, id?: string, if?: string, uses?: string, with?: Mapping, run?: string, env?: Mapping }
-export interface Job { name?: string, needs?: string, if?: string, uses?: string, with?: Mapping, permissions?: Mapping, env?: Mapping, steps?: Step[] }
+export interface Job { name?: string, needs?: string, if?: string, uses?: string, with?: Mapping, permissions?: Mapping, env?: Mapping, outputs?: Mapping, steps?: Step[] }
 export interface Workflow {
   on: Mapping
   permissions?: Mapping

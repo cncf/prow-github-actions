@@ -154,7 +154,7 @@ lookup ([the `config` input](./configuration.md#the-config-input)).
 Ref | Behaviour
 --- | ---
 `@v3.4.0` | Exact release, what the templates ship. [Dependabot](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/keeping-your-actions-up-to-date-with-dependabot)'s `github-actions` ecosystem proposes the next release (it also updates reusable-workflow `uses:` refs).
-`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y`. Nothing to do; you get every fix and every minor change without review.
+`@v3` | Floats: `release.yml` moves it to every stable `v3.x.y` that is newer than the one it points at (a backport to an older minor leaves it alone). Nothing to do; you get every fix and every minor change without review.
 `@<sha> # v3.4.0` | Hash pinning; the commit is on the [release page](https://github.com/cncf/prow-github-actions/releases/tag/v3.4.0). Dependabot keeps the comment and the sha in step.
 
 Whatever the ref, the reusable workflow checks out the action at the **same commit as the
