@@ -58,7 +58,9 @@ stay in step with `action.yml` and the label catalogue.
 | `npm test` | The whole Vitest suite |
 | `npm run test:coverage` | The suite with v8 coverage; CI enforces the thresholds in `vitest.config.mjs` (lines 99, branches 99, functions 99, statements 99, a floor set just under what `main` reaches) |
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
-| `npm run test:shuffle` | The whole suite with the tests of every file in a random order (`--sequence.shuffle`; pass `--sequence.seed=<n>` to repeat an order); see "Test order" below |
+| `npm run test:shuffle` | The whole suite with the tests of every file in a random order (`--sequence.shuffle`; pass `--sequence.seed=<n>` to repeat an order); the `shuffle` job runs it on every pull request; see "Test order" below |
+| `npm run test:mutation` | StrykerJS over the merge-decision code, locally; see "Mutation checks" below |
+| `npm run test:mutation:nightly` | The same set as the `mutation` job runs on the daily schedule (`stryker.nightly.config.mjs`): no incremental file, and a `break` score of 95 |
 | `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`, written to `coverage-e2e/` so it never overwrites the unit run's `coverage/` (ncc's map is line-only, so the build also emits tsc's per-file maps into `.coverage-bundle/tsc/` and `coverageEntry/remap.mjs` composes their columns into it; without that, inner lines of a multi-line expression that tsc flattens onto one JS line report 0 hits). This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine. Fails below 99 % lines / 99 % branches / 99 % functions / 99 % statements (`vitest.e2e-coverage.config.mjs`), a floor set just under what `main` reaches so a scenario that stops driving a `src/` path is caught |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API
@@ -125,7 +127,9 @@ range of its own, is counted correctly.
 Vitest runs the tests of a file in source order, so a test that leaves state
 behind is only noticed by the tests that happen to follow it. `npm run
 test:shuffle` runs every file's tests in a random order (the seed is printed
-with the failure; `--sequence.seed=<n>` repeats it). The four ways a test has
+with the failure; `--sequence.seed=<n>` repeats it); the `shuffle` job of
+`test.yml` runs it on every pull request, so an order-dependent test fails
+there even when the source order happens to pass. The four ways a test has
 leaked into its neighbour here, and how each file now avoids them:
 
 - **A mutated fixture.** The JSON fixtures are imported once per file, so
@@ -169,9 +173,13 @@ statement changing. `npm run test:mutation` runs [StrykerJS](https://stryker-mut
 (`stryker.config.mjs`) over a small default set of merge-decision code —
 `src/utils/mergeGate.ts`, `src/utils/labelMatch.ts`, `src/labels/hold.ts` and
 `src/utils/duration.ts` — where a surviving mutant means a pull request could
-merge, or be held, for the wrong reason. It is a bounded local check, not a CI
-gate: the full suite takes minutes per mutant set, so there is no `break`
-threshold and nothing fails a push.
+merge, or be held, for the wrong reason. It is a bounded check, not a per-push
+gate: the suite takes minutes per mutant set, so the local run sets no `break`
+threshold and nothing fails a push. The `mutation` job of `test.yml` runs the
+same set on the daily schedule (and on `workflow_dispatch`) through
+`stryker.nightly.config.mjs`, which fails below a score of 95 — just under
+what `main` reaches with its equivalent survivors — and publishes the per-file
+tally in the job summary and `reports/mutation/` as an artifact.
 
 ```sh
 npm run test:mutation                                   # the default set (~150 mutants, ~12 minutes)
