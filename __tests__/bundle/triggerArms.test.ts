@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { comment, helpersFor, memberReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -18,7 +18,7 @@ describe('dist/index.js /retest and /ok-to-test arms', () => {
   const commentPost = `POST ${repo}/issues/1/comments`
   const rocket = `POST ${repo}/issues/comments/492700400/reactions`
   const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
-  const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+  const authReads = [...ownersReads, ...memberReads('Codertocat')]
   const tail = [`GET ${repo}/pulls/1`, ownersProbe, queueRead]
   let gh: FakeGithub
   const { calls, expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)

@@ -5,7 +5,7 @@ import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, memberReads, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -40,9 +40,9 @@ describe('dist/index.js /test and lgtm cancel', () => {
     gh.route('GET', `${repo}/collaborators/${login}`, { status: 404, body: { message: 'Not Found' } })
   }
 
-  // the OWNERS-less authorization of a reviewer: owners reads, then org membership and collaborator (unordered among themselves)
+  // the OWNERS-less authorization of a member: owners reads, then org membership, which admits it without the collaborator read
   function expectAuthorized(rest: string[], login = 'Codertocat') {
-    expectRequests([...ownersReads, ...membershipReads(login)], rest)
+    expectRequests([...ownersReads, ...memberReads(login)], rest)
   }
 
   describe('/test', () => {
@@ -262,7 +262,7 @@ describe('dist/index.js /test and lgtm cancel', () => {
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       // the reviewer is authorized (owners reads, membership), the label read and removed, the configuration read for the
       // binding setting, the head (already read) unbound, then the sweep
-      expectCommandThenConfig([labelsRead, unlabel], [unbind, ...sweep], [...ownersReads, ...membershipReads('Codertocat')])
+      expectCommandThenConfig([labelsRead, unlabel], [unbind, ...sweep], [...ownersReads, ...memberReads('Codertocat')])
     })
 
     it('/remove-lgtm by the pr author needs no membership: removes the label and voids the binding', async () => {

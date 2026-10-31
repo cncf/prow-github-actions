@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { configReads, helpersFor, memberReads, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -17,7 +17,7 @@ describe('dist/index.js /approve membership-mode failure arms', () => {
   const bot = { login: 'github-actions[bot]', type: 'Bot' }
   const boom = { status: 500, body: { message: 'boom' } }
   const reviewsRead = `GET ${repo}/pulls/1/reviews`
-  const authReads = [...ownersReads, ...membershipReads('bob')]
+  const authReads = [...ownersReads, ...memberReads('bob')]
 
   beforeAll(async () => {
     gh = await start()

@@ -96,6 +96,14 @@ export interface RunState {
   hasOwners: Map<string, Promise<boolean>>
   pullRequestOwners: Map<string, Promise<unknown>>
   pullRequestTips: Map<string, Promise<string>>
+  /** org membership and collaborator answers, per repository and login */
+  authChecks: Map<string, Promise<boolean>>
+  /** the logins that commented on an issue, lower-cased */
+  issueCommenters: Map<string, Promise<string[]>>
+  /** the root OWNERS file of the default branch, '' when there is none */
+  rootOwners: Map<string, Promise<string>>
+  /** the github clients built from the token input */
+  clients: Map<string, unknown>
   tideEvaluated: Set<number>
   warned: Set<'merge-queue-unavailable' | 'merge-method-ignored'>
 }
@@ -110,6 +118,10 @@ export function newRunState(): RunState {
     hasOwners: new Map(),
     pullRequestOwners: new Map(),
     pullRequestTips: new Map(),
+    authChecks: new Map(),
+    issueCommenters: new Map(),
+    rootOwners: new Map(),
+    clients: new Map(),
     tideEvaluated: new Set(),
     warned: new Set(),
   }

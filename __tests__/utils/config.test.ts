@@ -449,6 +449,10 @@ describe('parseProwConfig', () => {
     expect(parseProwConfig('x', text)).toEqual({})
   })
 
+  it('rejects a stream of more than one document with the yaml.load message', () => {
+    expect(() => parseProwConfig('x', 'labels:\n  kind: [bug]\n---\ntide: {}\n')).toThrow('expected a single document in the stream, but found more')
+  })
+
   it.each([
     ['a list', '- a\n- b\n'],
     ['a scalar', 'just a string\n'],

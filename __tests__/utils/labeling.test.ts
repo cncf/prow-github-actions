@@ -187,18 +187,22 @@ describe('removeLabels', () => {
     expect(deleted).toEqual(['gone', 'kind/bug', 'still-there'])
   })
 
-  it('stops at the first failure that is not a 404 and names the label', async () => {
+  it('removes every label at once and names the first failure that is not a 404, in the given order', async () => {
     const deleted: string[] = []
     server.use(
-      http.delete(`${repo}/issues/1/labels/:name`, ({ params }) => {
+      http.delete(`${repo}/issues/1/labels/:name`, async ({ params }) => {
         deleted.push(String(params.name))
-        return new Response(null, { status: params.name === 'broken' ? 500 : 200 })
+        // the later failure answers first; the error still names the earlier label
+        if (params.name === 'broken') {
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+        return new Response(null, { status: params.name === 'broken' || params.name === 'also-broken' ? 500 : 200 })
       }),
     )
 
-    await expect(removeLabels(octokit, context, 1, ['first', 'broken', 'never'])).rejects.toThrow('could not remove label broken')
+    await expect(removeLabels(octokit, context, 1, ['first', 'broken', 'also-broken', 'last'])).rejects.toThrow(/^could not remove label broken: /)
 
-    expect(deleted).toEqual(['first', 'broken'])
+    expect(deleted.sort()).toEqual(['also-broken', 'broken', 'first', 'last'])
   })
 })
 

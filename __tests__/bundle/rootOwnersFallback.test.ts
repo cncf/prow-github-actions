@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, commentsRead, helpersFor, membershipReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -116,7 +116,7 @@ describe('dist/index.js OWNERS authorization on an issue without a root OWNERS f
       expect(result.errors).toEqual([])
       expect(warnings(result.stdout).some(w => w.includes('status=500'))).toBe(true)
       expect(gh.requestsMatching('DELETE', /\/issues\/1\/assignees$/)).toEqual([])
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `GET ${repo}/issues/1/comments`])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), commentsRead])
     })
   })
 })

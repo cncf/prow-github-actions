@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { helpersFor, membershipReads, ownersReads, repo, token } from './helpers'
+import { helpersFor, memberReads, ownersReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -54,7 +54,7 @@ describe('dist/index.js /test listing arms', () => {
   }
 
   function expectAuthorized(rest: string[]) {
-    expectRequests([...ownersReads, ...membershipReads('Codertocat')], rest)
+    expectRequests([...ownersReads, ...memberReads('Codertocat')], rest)
   }
 
   const header = [

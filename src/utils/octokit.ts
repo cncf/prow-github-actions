@@ -9,6 +9,16 @@ export function newOctokit(token: string): Octokit {
   })
 }
 
+/**
+ * The client for the configured token, built once per run: every handler of an event shares it.
+ */
 export function newOctokitFromInputs(): Octokit {
-  return newOctokit(platform().inputs.get('github-token', { required: true }))
+  const token = platform().inputs.get('github-token', { required: true })
+  const clients = platform().state().clients
+  let client = clients.get(token) as Octokit | undefined
+  if (client === undefined) {
+    client = newOctokit(token)
+    clients.set(token, client)
+  }
+  return client
 }

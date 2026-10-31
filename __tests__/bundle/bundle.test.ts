@@ -13,7 +13,7 @@ import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import pullReqReviewSubmittedEvent from '../fixtures/pullReq/pullReqReviewSubmittedEvent.json'
 import { blobSha, prCommentEvent, pullBody } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, repoLabels, token } from './helpers'
+import { comment, configReads, helpersFor, memberReads, ownersProbe, ownersReads, queueRead, repo, repoLabels, token } from './helpers'
 import { bundlePath, runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -388,9 +388,8 @@ describe('dist/index.js', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
+      // org membership admits the commenter: no collaborator or comment-thread read
       'GET /orgs/Codertocat/members/Codertocat',
-      `GET ${repo}/collaborators/Codertocat`,
-      `GET ${repo}/issues/1/comments`,
       `POST ${repo}/issues/1/assignees`,
     ])
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
@@ -697,11 +696,10 @@ describe('dist/index.js', () => {
       expect(reviews[0].body).toEqual({ event: 'APPROVE', comments: [] })
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
-      // the membership fallback checks org membership and collaborator status; the sweep then reads the configuration and the pr
+      // the membership fallback checks org membership, which admits bob without the collaborator read; the sweep then reads the configuration and the pr
       expectCommandThenConfig([
         ...ownersReads,
         `GET /orgs/Codertocat/members/bob`,
-        `GET ${repo}/collaborators/bob`,
         `POST ${repo}/pulls/1/reviews`,
       ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
     })
@@ -733,7 +731,7 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/)).toEqual([])
       expectCommandThenConfig([
         ...ownersReads,
-        ...membershipReads('bob'),
+        ...memberReads('bob'),
         `GET ${repo}/pulls/1/reviews`,
         `PUT ${repo}/pulls/1/reviews/12/dismissals`,
       ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
@@ -761,7 +759,7 @@ describe('dist/index.js', () => {
       gh.route('POST', `${repo}/issues/comments/492700400/reactions`, { status: 201, body: { content: 'rocket' } })
     }
 
-    const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+    const authReads = [...ownersReads, ...memberReads('Codertocat')]
     const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
     const rocket = `POST ${repo}/issues/comments/492700400/reactions`
 
@@ -1305,7 +1303,7 @@ describe('dist/index.js', () => {
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
       const post = calls.indexOf(`POST ${repo}/issues/1/labels`)
       const reads = configReads({ repo: '.github/prow.yaml' })
-      expect(calls.slice(0, post - 2).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, `GET ${repo}/collaborators/Codertocat`, ...reads].sort())
+      expect(calls.slice(0, post - 2).sort()).toEqual([...ownersReads, `GET /orgs/Codertocat/members/Codertocat`, ...reads].sort())
       expect(calls.slice(post - 2, post)).toEqual([`POST ${repo}/statuses/headsha`, labelsRead])
       expect(calls.slice(post + 1)).toEqual([pullRead, ownersProbe, `GET ${repo}/commits/headsha/status?per_page=100`, queueRead, merge])
     })
@@ -1634,7 +1632,6 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expectRequests(configReads(), [
         `GET ${repo}/pulls?state=open&per_page=100&page=1`,
-        `GET ${repo}/pulls?state=open&per_page=100&page=2`,
         pullRead,
         ownersProbe,
         `GET ${repo}/commits/${sha}/status?per_page=100`,
