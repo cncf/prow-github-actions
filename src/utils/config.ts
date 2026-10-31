@@ -805,7 +805,14 @@ export function resolveTide(tide: TideConfig, inputMergeMethod = '', options: Re
 }
 
 function toMergeMethod(input: string): MergeMethod {
-  return (mergeMethods as readonly string[]).includes(input) ? input as MergeMethod : 'merge'
+  const method = input.trim().toLowerCase()
+  if ((mergeMethods as readonly string[]).includes(method)) {
+    return method as MergeMethod
+  }
+  if (method !== '') {
+    platform().log.warning(`merge-method: ignoring '${input}', not one of ${mergeMethods.join(', ')}; merging with 'merge'`)
+  }
+  return 'merge'
 }
 
 /**
