@@ -55,6 +55,7 @@ describe('loadPullRequestOwners', () => {
           user: { login: 'Some-Author' },
           draft: true,
           requested_reviewers: [{ login: 'Rita' }],
+          requested_teams: [{ slug: 'sdk-reviewers' }],
           assignees: [{ login: 'Al' }],
           labels: [{ name: 'kind/bug' }, { name: 'Approved' }],
         }, observePull)(info)
@@ -76,6 +77,7 @@ describe('loadPullRequestOwners', () => {
       author: 'some-author',
       draft: true,
       requestedReviewers: ['rita'],
+      requestedTeams: ['sdk-reviewers'],
       assignees: ['al'],
       labels: ['kind/bug', 'Approved'],
       files: ['sdk/x.go', 'docs/y.md'],
@@ -127,7 +129,7 @@ describe('loadPullRequestOwners', () => {
 
     const owners = await loadPullRequestOwners(octokit, context, 1)
 
-    expect(owners).toMatchObject({ author: '', draft: false, open: false, requestedReviewers: [], assignees: [], labels: [] })
+    expect(owners).toMatchObject({ author: '', draft: false, open: false, requestedReviewers: [], requestedTeams: [], assignees: [], labels: [] })
   })
 
   it('reports draft and open only for draft: true and state: open', async () => {
