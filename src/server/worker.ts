@@ -1,12 +1,13 @@
 import type { DeliveryStore } from '../adapters/app/dedupe'
-import type { DeferStrategy, Delivery } from '../adapters/app/platform'
+import type { DeferStrategy, Delivery, TokenSource } from '../adapters/app/platform'
+import type { AppSettings } from '../adapters/app/settings'
 import type { WebhookReceiver } from '../adapters/app/webhook'
 import type { Deferred } from '../platform'
 import { DurableObject } from 'cloudflare:workers'
 import { Hono } from 'hono'
 
 import { appInstallationLister, runScheduledJobs } from '../adapters/app/cron'
-import { pullRequestKey } from '../adapters/app/lock'
+import { memoryLocks, pullRequestKey } from '../adapters/app/lock'
 import { appPlatform, appTokenSource } from '../adapters/app/platform'
 import { asyncLocalScope } from '../adapters/app/scope'
 import { settingsFromEnv } from '../adapters/app/settings'
@@ -32,10 +33,19 @@ export interface Env {
   PULL_REQUEST_LOCK: DurableObjectNamespace<PullRequestLock>
 }
 
-/** what travels through the queue: a scheduled run for one installation, or deferred work */
+/**
+ * what travels through the queue: a scheduled run for one installation, work
+ * deferred from a delivery (whose context the consumer rebuilds from it), or a
+ * delivery about no issue or pull request, which has no lock to run under
+ */
 export type QueueMessage
   = | { kind: 'schedule', installationId: number }
-    | { kind: 'deferred', delivery: Delivery, deferred: Omit<Deferred, 'context'> & { payload: Delivery['payload'] } }
+    | { kind: 'deferred', delivery: Delivery, deferred: Omit<Deferred, 'context'> }
+    | { kind: 'delivery', delivery: Delivery }
+
+// every handler, the Durable Object's included, runs its deliveries under this one scope; installing a new one per
+// request would orphan the platform of every run still in flight in the isolate
+installPlatformScope(asyncLocalScope())
 
 /** webhook delivery ids live in KV for a day; GitHub's redelivery button reaches back further, which is intended */
 export function kvDeliveryStore(kv: KVNamespace): DeliveryStore {
@@ -53,12 +63,20 @@ export function kvDeliveryStore(kv: KVNamespace): DeliveryStore {
 
 /**
  * PullRequestLock serializes the events of one pull request, as the action's
- * `concurrency:` group does: a Durable Object runs one call at a time, so
- * events that arrive together run in order instead of racing the merge gate.
+ * `concurrency:` group does. A Durable Object alone does not: its input gate
+ * closes only on storage, so a call that awaits a fetch to GitHub lets the next
+ * one start. Every call therefore queues on one in-memory lock, which a single
+ * object per pull request makes the pull request's lock.
  */
 export class PullRequestLock extends DurableObject<Env> {
+  private locks = memoryLocks()
+
   async handle(delivery: Delivery): Promise<void> {
-    await handleDelivery(this.env, delivery)
+    await this.locks.withLock('pull request', () => handleDelivery(this.env, delivery))
+  }
+
+  async resume(delivery: Delivery, deferred: Omit<Deferred, 'context'>): Promise<void> {
+    await this.locks.withLock('pull request', () => handleDelivery(this.env, delivery, context => resumeDeferred({ ...deferred, context })))
   }
 }
 
@@ -70,19 +88,36 @@ function sinkFor(): (line: Record<string, unknown>) => void {
   return emit
 }
 
+// one token source per deployment, so an isolate reuses the installation tokens it has minted (auth-app caches them)
+// instead of minting one per delivery
+const tokenSources = new WeakMap<Env, TokenSource>()
+
+function tokensFor(env: Env, settings: AppSettings): TokenSource {
+  let tokens = tokenSources.get(env)
+  if (tokens === undefined) {
+    tokens = appTokenSource(settings)
+    tokenSources.set(env, tokens)
+  }
+  return tokens
+}
+
 function deferViaQueue(env: Env, delivery: Delivery): DeferStrategy {
   return async (delayMs, resume) => {
-    const { context: _context, ...rest } = resume
-    const message: QueueMessage = { kind: 'deferred', delivery, deferred: { ...rest, payload: delivery.payload } }
+    const { context: _context, ...deferred } = resume
+    const message: QueueMessage = { kind: 'deferred', delivery, deferred }
     await env.PROW_QUEUE.send(message, { delaySeconds: Math.max(1, Math.ceil(delayMs / 1000)) })
     return 'deferred'
   }
 }
 
-/** runs one delivery under its platform: the webhook path and the Durable Object both end here */
+/**
+ * runs one delivery under its platform: the Durable Object and the queue
+ * consumer both end here. A run that failed throws once its errors are logged,
+ * so a queue message is retried and the webhook receiver sees the failure.
+ */
 export async function handleDelivery(env: Env, delivery: Delivery, work: (context: import('../platform').Context) => Promise<void> = run): Promise<void> {
   const settings = settingsFromEnv(env as unknown as Record<string, string | undefined>)
-  const appRun = appPlatform(settings, appTokenSource(settings), delivery, sinkFor(), deferViaQueue(env, delivery))
+  const appRun = appPlatform(settings, tokensFor(env, settings), delivery, sinkFor(), deferViaQueue(env, delivery))
   try {
     await appRun.resolveToken()
     await runWithPlatform(appRun.platform, () => work(appRun.platform.context()))
@@ -90,23 +125,29 @@ export async function handleDelivery(env: Env, delivery: Delivery, work: (contex
   catch (error) {
     appRun.platform.fail(error instanceof Error ? error.message : String(error))
   }
+  if (appRun.failures.length > 0) {
+    throw new Error(`${delivery.eventName} delivery ${delivery.id} failed; its errors are logged`)
+  }
 }
 
 export function receiverFor(env: Env, waitUntil: (work: Promise<void>) => void): WebhookReceiver {
   const settings = settingsFromEnv(env as unknown as Record<string, string | undefined>)
   return {
     settings,
-    tokens: appTokenSource(settings),
+    tokens: tokensFor(env, settings),
     deliveries: kvDeliveryStore(env.DELIVERIES),
     sink: sinkFor(),
-    // a pull request's events run one at a time inside its Durable Object, which builds its own platform
+    // a pull request's events run one at a time inside its Durable Object; any other event runs from the queue,
+    // which retries it. Either builds its own platform and mints its own token
     dispatch: async (_context, delivery) => {
       const key = pullRequestKey(delivery)
-      if (key === undefined) {
-        return handleDelivery(env, delivery)
+      if (key !== undefined) {
+        await env.PULL_REQUEST_LOCK.getByName(key).handle(delivery)
+        return
       }
-      await env.PULL_REQUEST_LOCK.getByName(key).handle(delivery)
+      await env.PROW_QUEUE.send({ kind: 'delivery', delivery })
     },
+    needsToken: () => false,
     background: waitUntil,
   }
 }
@@ -114,7 +155,6 @@ export function receiverFor(env: Env, waitUntil: (work: Promise<void>) => void):
 const app = new Hono<{ Bindings: Env }>()
 app.get('/healthz', c => c.text('ok'))
 app.post('/webhook', async (c) => {
-  installPlatformScope(asyncLocalScope())
   const { response } = await receiveWebhook(receiverFor(c.env, work => c.executionCtx.waitUntil(work)), c.req.raw)
   return response
 })
@@ -124,39 +164,32 @@ export default {
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
     const settings = settingsFromEnv(env as unknown as Record<string, string | undefined>)
-    const lister = appInstallationLister(settings, appTokenSource(settings), sinkFor())
-    const seen = new Set<number>()
-    for await (const target of lister.repositories()) {
-      if (!seen.has(target.installationId)) {
-        seen.add(target.installationId)
-        await env.PROW_QUEUE.send({ kind: 'schedule', installationId: target.installationId })
-      }
+    const lister = appInstallationLister(settings, tokensFor(env, settings), sinkFor())
+    for await (const installationId of lister.installations()) {
+      await env.PROW_QUEUE.send({ kind: 'schedule', installationId })
     }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
-    installPlatformScope(asyncLocalScope())
     const settings = settingsFromEnv(env as unknown as Record<string, string | undefined>)
     for (const message of batch.messages) {
       try {
-        if (message.body.kind === 'schedule') {
-          const { installationId } = message.body
-          const tokens = appTokenSource(settings)
-          const all = appInstallationLister(settings, tokens, sinkFor())
-          const one = {
-            async* repositories() {
-              for await (const target of all.repositories()) {
-                if (target.installationId === installationId) {
-                  yield target
-                }
-              }
-            },
-          }
-          await runScheduledJobs({ settings, tokens, installations: one, sink: sinkFor(), dispatch: handleCronJobs })
+        const body = message.body
+        if (body.kind === 'schedule') {
+          const tokens = tokensFor(env, settings)
+          const lister = appInstallationLister(settings, tokens, sinkFor())
+          const installation = { repositories: () => lister.repositoriesOf(body.installationId) }
+          await runScheduledJobs({ settings, tokens, installations: installation, sink: sinkFor(), dispatch: handleCronJobs })
+        }
+        else if (body.kind === 'delivery') {
+          await handleDelivery(env, body.delivery)
         }
         else {
-          const { delivery, deferred } = message.body
-          await handleDelivery(env, delivery, context => resumeDeferred({ ...deferred, context }))
+          // the deferred check resumes under its pull request's lock, so it does not race that pull request's events
+          const key = pullRequestKey(body.delivery)
+          await (key === undefined
+            ? handleDelivery(env, body.delivery, context => resumeDeferred({ ...body.deferred, context }))
+            : env.PULL_REQUEST_LOCK.getByName(key).resume(body.delivery, body.deferred))
         }
         message.ack()
       }

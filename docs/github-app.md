@@ -213,9 +213,10 @@ for what a container does in memory:
 | Concern | Container | Worker |
 |---|---|---|
 | Delivery dedupe | process memory | KV (`DELIVERIES`, 24 h) |
-| Ordering a pull request's events | one replica | a Durable Object per pull request (`PULL_REQUEST_LOCK`) |
-| Scheduled jobs | `cron` command / interval | Cron Trigger → one Queue message per installation |
-| The `require_matching_label` grace period | waits in place | a delayed Queue message resumes the check |
+| Ordering a pull request's events | one replica | a Durable Object per pull request (`PULL_REQUEST_LOCK`), which runs them one at a time |
+| Events about no issue or pull request | handled in the request | a Queue message, retried if its run fails |
+| Scheduled jobs | `cron` command / interval | Cron Trigger lists the installations → one Queue message per installation, which lists its own repositories |
+| The `require_matching_label` grace period | waits in place | a delayed Queue message resumes the check, inside the pull request's Durable Object |
 
 Set up once, from the repository (`wrangler.toml` is committed):
 
@@ -231,9 +232,10 @@ npx wrangler deploy
 
 The webhook URL is `https://<worker>.<account>.workers.dev/webhook`. `PROW_*`
 variables go under `[vars]`. Logs are JSON lines in Workers Logs. The Worker
-answers `202` and finishes the event in the background; an event that needs
-longer than the platform allows after the response is not a concern today
-(tide's mergeability retries total seven seconds).
+answers `202` once the event is handed to its pull request's Durable Object or
+to the queue. A queued run that fails is retried (`max_retries`), then
+goes to the `prow-jobs-dlq` dead-letter queue, which Cloudflare creates on
+first use; its failures are in the logs either way.
 
 ## How it fits the code
 

@@ -26,7 +26,7 @@ interface DeclaredBindings {
   bindings?: Record<string, unknown>
   kvNamespaces?: Record<string, unknown>
   queueProducers?: Record<string, { queueName: string }>
-  queueConsumers?: Record<string, unknown>
+  queueConsumers?: Record<string, { deadLetterQueue?: string }>
   durableObjects?: Record<string, string | { className: string }>
   cronTriggers?: string[]
 }
@@ -67,6 +67,12 @@ describe('wrangler.toml', () => {
     const produced = Object.values(workerOptions.queueProducers ?? {}).map(producer => producer.queueName).sort()
     expect(produced.length).toBeGreaterThan(0)
     expect(Object.keys(workerOptions.queueConsumers ?? {}).sort()).toEqual(produced)
+  })
+
+  it('sends a message its consumer keeps failing to a dead-letter queue, not to nowhere', () => {
+    const consumers = Object.values(workerOptions.queueConsumers ?? {})
+    expect(consumers.length).toBeGreaterThan(0)
+    expect(consumers.every(consumer => consumer.deadLetterQueue === 'prow-jobs-dlq')).toBe(true)
   })
 
   it('migrates every Durable Object class it binds', () => {
@@ -151,7 +157,7 @@ export default {
     while (Date.now() < deadline && (await githubSaw()).length === 0) {
       await new Promise(resolve => setTimeout(resolve, 50))
     }
-    // the receiver and the Durable Object each mint the token; nothing else is asked of GitHub
+    // the Durable Object mints the token (the receiver that hands the delivery over mints none); nothing else is asked of GitHub
     expect([...new Set(await githubSaw())]).toEqual(['/app/installations/7/access_tokens'])
 
     const again = await deliver('d-config')

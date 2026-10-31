@@ -37453,13 +37453,23 @@ function newRunState() {
 
 let current;
 /* v8 ignore start -- scoping is for adapters handling concurrent events; the action never reaches it from dist/index.js */
+/**
+ * The process-wide scope holds its platform only until `fn` returns, which for
+ * an async function is its first `await`: the rest would run under whatever
+ * platform is current then, or none. It refuses a promise rather than let that
+ * happen; async work needs an installed scope that follows it (`asyncLocalScope`).
+ */
 const globalPlatformScope = {
     get: () => current,
     run: (value, fn) => {
         const previous = current;
         current = value;
         try {
-            return fn();
+            const result = fn();
+            if (result instanceof Promise) {
+                throw new TypeError('runWithPlatform was given async work under the process-wide platform scope, which ends at its first await: install a scope that follows async work (asyncLocalScope) first');
+            }
+            return result;
         }
         finally {
             current = previous;
