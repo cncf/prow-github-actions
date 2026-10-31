@@ -1,0 +1,8 @@
+# the image builds from package*.json, tsconfig.json and src/ only; keep everything else out of the context
+node_modules
+dist*
+coverage*
+lib
+.git
+.omo
+.sisyphus
