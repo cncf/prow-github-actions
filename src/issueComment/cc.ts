@@ -75,7 +75,7 @@ export async function cc(context: Context = platform().context()): Promise<void>
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
- * @param issueNum - the  pr number this runtime is associated with
+ * @param pullNum - the pr number this runtime is associated with
  * @param user - the user to request a self review
  */
 async function selfReview(
