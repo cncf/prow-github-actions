@@ -3,7 +3,7 @@ import type { Context } from '../utils/context'
 
 import { platform } from '../platform'
 import { assertPolicy } from '../utils/auth'
-import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
+import { hasCommand, hasExactArgs } from '../utils/command'
 import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokitFromInputs } from '../utils/octokit'
@@ -40,7 +40,7 @@ export async function hold(context: Context = platform().context()): Promise<voi
 
   const cancel = hasCommand('/unhold', commentBody)
     || hasCommand('/remove-hold', commentBody)
-    || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'))
+    || hasExactArgs('/hold', commentBody, 'cancel')
 
   if (cancel) {
     await cancelHold(octokit, context, issueNumber, holdLabel)

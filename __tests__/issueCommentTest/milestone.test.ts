@@ -262,6 +262,71 @@ describe('/milestone', () => {
     )
   })
 
+  it('finds a milestone on a later page of the open milestones', async () => {
+    issueCommentEvent.comment.body = '/milestone v2'
+
+    const milestonesUrl = `${utils.api}/repos/Codertocat/Hello-World/milestones`
+    const queries: string[] = []
+    server.use(
+      http.get(milestonesUrl, ({ request }) => {
+        const url = new URL(request.url)
+        queries.push(url.search)
+        const page = url.searchParams.get('page')
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (page === null) {
+          headers.Link = `<${milestonesUrl}?state=open&per_page=100&page=2>; rel="next"`
+        }
+        const body = page === null ? [{ number: 1, title: 'v1' }] : [{ number: 2, title: 'v2' }]
+        return new Response(JSON.stringify(body), { status: 200, headers })
+      }),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({ milestone: 2 })
+    expect(queries).toEqual(['?state=open&per_page=100', '?state=open&per_page=100&page=2'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['/milestone clear', 'could not clear milestone: HttpError'],
+    ['/milestone some milestone', 'could not set milestone: HttpError'],
+  ])('reports a failed update for %s', async (body, wantErr) => {
+    issueCommentEvent.comment.body = body
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/milestones`,
+        utils.mockResponse(200, repoMilestones),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(500),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining(wantErr))
+  })
+
   it('fails when no milestone is provided', async () => {
     issueCommentEvent.comment.body = '/milestone'
 

@@ -150,11 +150,9 @@ export async function handleIssueComment(context: Context = platform().context()
     }),
   )
 
-  const failures: string[] = []
-  const commandError = results.find(result => result instanceof Error)
-  if (commandError !== undefined) {
-    failures.push(`${new TypeError(`error handling issue comment: ${commandError}`)}`)
-  }
+  const failures: string[] = results
+    .filter(result => result instanceof Error)
+    .map(commandError => `${new TypeError(`error handling issue comment: ${commandError}`)}`)
 
   if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
     const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody)

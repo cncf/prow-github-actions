@@ -9,7 +9,7 @@ These docs describe `main`; the latest release is `v3.4.0` ([releasing](./releas
 - **Label values** are matched case-insensitively against the prow configuration ([configuration](./configuration.md), [labeling](./labeling.md)) and applied with the casing written in the file: `/kind Bug` adds `kind/bug`.
 - Commands inside Markdown code (fenced ``` / ~~~ blocks, indented code, inline `code`) and blockquotes are ignored.
 - When a command appears on several lines of one comment every line is applied (`/kind bug` and `/kind cleanup` add both labels), except `/milestone` and `/retitle` where the last line wins.
-- A `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`.
+- A `cancel` on any line wins over a plain `/lgtm`, `/hold` or `/approve`. The line must be exactly `/lgtm cancel` (any case, surrounding spaces allowed): `/lgtm looks good, no need to cancel the hold` is a plain `/lgtm`.
 - Milestone titles are matched exactly.
 - Prow-style aliases (`/remove-lgtm`, `/unhold`, ...) are enabled together with their base command. Listing an alias in `prow-commands` enables the whole command family: configuring only `/remove-kind` also enables `/kind`, and only `/unhold` also enables `/hold`.
 - Any other lower-case `/<key>` listed in `prow-commands` is a [label command](./labeling.md#any-key-is-a-command) backed by the `<key>` label section of the prow configuration ([configuration](./configuration.md)).
@@ -53,7 +53,7 @@ Label Commands | Policy | Description
 `/hold` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | adds the `do-not-merge/hold` label (or [`hold.label`](./configuration.md#hold)) which prevents [automatic PR merging](./automatic-merging.md). Also see [lgtm removal on pr update](./pr-jobs.md)
 `/hold cancel` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | removes the `do-not-merge/hold` (or `hold.label`) label and the legacy `hold` label, whichever are present, and evaluates the [merge gate](./automatic-merging.md#event-driven-merging) right after
 `/unhold`, `/remove-hold` | anyone, or per [`authorization.hold`](./configuration.md#authorization) | same as `/hold cancel`
-`/priority [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels
+`/priority [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md)). Exclusive by default: replaces any existing `priority/*` labels, and more than one value fails the run
 `/remove-priority [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes a priority/<> label(s) if it's defined in the prow configuration ([configuration](./configuration.md))
 `/label [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the label(s) verbatim if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Label names containing spaces are not supported. Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
 `/remove-label [label1 label2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the label(s) if listed under `labels:` in the prow configuration ([configuration](./configuration.md)). Refuses `lgtm`, `hold`, `approved`, `do-not-merge/*` and `hold.label`
@@ -67,7 +67,7 @@ Label Commands | Policy | Description
 `/remove-help` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `help wanted` and `good first issue` labels
 `/good-first-issue` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds the `good first issue` and `help wanted` labels
 `/remove-good-first-issue` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes the `good first issue` label
-`/<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`
+`/<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | adds `<key>/<value>` label(s) for any other label section `<key>` of the prow configuration ([configuration](./configuration.md)) once `/<key>` is listed in `prow-commands`. Exclusive when the section sets `exclusive: true`: one value only, replacing any existing `<key>/*` label
 `/remove-<key> [value1 value2 ...]` | anyone, or per [`authorization.labels`](./configuration.md#authorization) | removes `<key>/<value>` label(s) listed under `<key>` in the prow configuration ([configuration](./configuration.md))
 `/remove [label1 label2 ...]` | Collaborators | removes a specified label(s) on an issue / PR
 

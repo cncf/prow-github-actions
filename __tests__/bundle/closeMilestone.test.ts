@@ -44,7 +44,7 @@ describe('dist/index.js /close and /milestone', () => {
   })
 
   describe('/milestone', () => {
-    const milestonesRead = `GET ${repo}/milestones`
+    const milestonesRead = `GET ${repo}/milestones?state=open&per_page=100`
 
     it('naming a milestone that does not exist fails listing the available titles and updates nothing', async () => {
       gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })

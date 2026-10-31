@@ -62,7 +62,7 @@ describe('dist/index.js fixed and built-in prefixed label commands', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['lifecycle/stale'] }])
-    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [issueRead, deleteRoute('lifecycle/frozen'), labelsRead, `POST ${repo}/issues/1/labels`])
+    expectRequests(configReads({ repo: '.prowlabels.yaml' }), [labelsRead, issueRead, deleteRoute('lifecycle/frozen'), `POST ${repo}/issues/1/labels`])
   })
 
   it('/lifecycle stale with no configuration file in any tier fails the run, as docs/labeling.md says it must', async () => {

@@ -56,6 +56,6 @@ describe('dist/index.js with an empty .github/prow.yaml', () => {
     expect(result.stdout).toContain('lifecycle: using built-in labels frozen,stale,rotten')
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['lifecycle/stale'] }])
     // the empty file is a found source: the loader reads no further repository path and never reports "no prow configuration found"
-    expectRequests(configReads({ repo: '.github/prow.yaml' }), [issueRead, labelsRead, labelWrite])
+    expectRequests(configReads({ repo: '.github/prow.yaml' }), [labelsRead, issueRead, labelWrite])
   })
 })

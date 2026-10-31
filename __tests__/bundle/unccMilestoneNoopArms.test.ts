@@ -9,7 +9,7 @@ vi.setConfig({ testTimeout: 30_000 })
 
 // the two quiet arms collaborationCommands.test.ts and closeMilestone.test.ts do not reach:
 // a bare /uncc by a non-collaborator (removeSelfReviewReq's false arm, uncc.ts:79) and a
-// /milestone on a repository with no milestones (the 'none' listing, milestone.ts:66) -
+// /milestone on a repository with no milestones (the 'none' listing, milestone.ts:70) -
 // driven through dist/index.js
 describe('dist/index.js /uncc and /milestone quiet arms', () => {
   const collaboratorRead = `GET ${repo}/collaborators/Codertocat`
@@ -50,7 +50,7 @@ describe('dist/index.js /uncc and /milestone quiet arms', () => {
 
     expect(result.status, result.stdout).toBe(1)
     expect(result.errors.some(e => e.includes('milestone "v1.0" not found. Available milestones: none'))).toBe(true)
-    expect(calls()).toEqual([collaboratorRead, `GET ${repo}/milestones`])
+    expect(calls()).toEqual([collaboratorRead, `GET ${repo}/milestones?state=open&per_page=100`])
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])
   })
 })
