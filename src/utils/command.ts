@@ -53,6 +53,20 @@ export function hasKeyword(args: string[], keyword: string): boolean {
   return args.some(arg => arg.toLowerCase() === keyword)
 }
 
+/**
+ * hasExactArgs reports whether a line carrying the command has exactly the
+ * given argument text after it, ignoring case and surrounding whitespace like
+ * Prow's `^/lgtm cancel\s*$`, so that a sentence after the command that only
+ * mentions the word (`/lgtm no need to cancel`) does not match
+ *
+ * @param command - the command to look for. Ex: '/lgtm'
+ * @param body - the full body of the comment
+ * @param args - the lowercase argument text, ex: 'cancel'
+ */
+export function hasExactArgs(command: string, body: string, args: string): boolean {
+  return findCommandArgs(command, body).some(rest => rest.toLowerCase() === args)
+}
+
 function findCommandArgs(command: string, body: string): string[] {
   const pattern = commandPattern(command)
   const found: string[] = []

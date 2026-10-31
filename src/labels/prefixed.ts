@@ -7,7 +7,7 @@ import { platform } from '../platform'
 import { assertPolicy } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
 import { loadProwConfig, resolveAuthorization, resolveHoldLabel } from '../utils/config'
-import { addPrefix, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
+import { addPrefix, assertLabelsExist, getCurrentLabels, getLabelConfig, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokitFromInputs } from '../utils/octokit'
 
 export interface PrefixedLabelCommand {
@@ -78,8 +78,8 @@ export function removeCommandFor(command: string): string {
 /**
  * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
  * that is both in the comment and in the configured allowlist.
- * When the command is exclusive, existing '<prefix>/*' labels that were not
- * requested are removed first.
+ * When the command is exclusive it takes a single value, and existing
+ * '<prefix>/*' labels that were not requested are removed first.
  *
  * @param context - the github actions event context
  * @param cmd - the command definition
@@ -95,6 +95,12 @@ export async function addPrefixedLabels(context: Context, cmd: PrefixedLabelComm
   const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels)
 
   if (section.exclusive) {
+    if (labels.length > 1) {
+      throw new Error(`${cmd.command.slice(1)}: ${cmd.command} takes one value; got ${labels.join(', ')}`)
+    }
+
+    // refuse a label the repository lacks before the old value is taken off
+    await assertLabelsExist(octokit, context, labels)
     const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command)
 
     const stale = currentLabels.filter((label) => {

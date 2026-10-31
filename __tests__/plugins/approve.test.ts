@@ -236,6 +236,7 @@ describe('approvalEvents', () => {
       { id: 4, body: '/approve no-issue', user: user('dan'), created_at: '2024-01-01T00:00:04Z' },
       { id: 5, body: 'looks fine, /approve mid-sentence does not count', user: user('eve'), created_at: '2024-01-01T00:00:05Z' },
       { id: 6, body: '/approve\n/approve cancel', user: user('fay'), created_at: '2024-01-01T00:00:06Z' },
+      { id: 7, body: '/approve no need to cancel anything', user: user('gus'), created_at: '2024-01-01T00:00:07Z' },
     ], [])
 
     expect(events).toEqual([
@@ -244,6 +245,7 @@ describe('approvalEvents', () => {
       { user: 'carol', kind: 'cancel', at: new Date('2024-01-01T00:00:03Z') },
       { user: 'dan', kind: 'approve', at: new Date('2024-01-01T00:00:04Z') },
       { user: 'fay', kind: 'cancel', at: new Date('2024-01-01T00:00:06Z') },
+      { user: 'gus', kind: 'approve', at: new Date('2024-01-01T00:00:07Z') },
     ])
   })
 
@@ -252,7 +254,8 @@ describe('approvalEvents', () => {
       { id: 1, body: '/lgtm', user: user('alice'), created_at: '2024-01-01T00:00:01Z' },
       { id: 2, body: '/lgtm cancel', user: user('alice'), created_at: '2024-01-01T00:00:02Z' },
       { id: 3, body: '/remove-lgtm', user: user('bob'), created_at: '2024-01-01T00:00:03Z' },
-    ], []).map(e => e.kind)).toEqual(['lgtm', 'lgtm-cancel', 'lgtm-cancel'])
+      { id: 4, body: '/lgtm looks good, no need to cancel the hold', user: user('bob'), created_at: '2024-01-01T00:00:04Z' },
+    ], []).map(e => e.kind)).toEqual(['lgtm', 'lgtm-cancel', 'lgtm-cancel', 'lgtm'])
   })
 
   it('skips bot comments and comments without a body or user', () => {

@@ -43056,6 +43056,19 @@ function getCommandArgs(command, body) {
 function hasKeyword(args, keyword) {
     return args.some(arg => arg.toLowerCase() === keyword);
 }
+/**
+ * hasExactArgs reports whether a line carrying the command has exactly the
+ * given argument text after it, ignoring case and surrounding whitespace like
+ * Prow's `^/lgtm cancel\s*$`, so that a sentence after the command that only
+ * mentions the word (`/lgtm no need to cancel`) does not match
+ *
+ * @param command - the command to look for. Ex: '/lgtm'
+ * @param body - the full body of the comment
+ * @param args - the lowercase argument text, ex: 'cancel'
+ */
+function hasExactArgs(command, body, args) {
+    return findCommandArgs(command, body).some(rest => rest.toLowerCase() === args);
+}
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
     const found = [];
@@ -43479,8 +43492,8 @@ function removeCommandFor(command) {
 /**
  * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
  * that is both in the comment and in the configured allowlist.
- * When the command is exclusive, existing '<prefix>/*' labels that were not
- * requested are removed first.
+ * When the command is exclusive it takes a single value, and existing
+ * '<prefix>/*' labels that were not requested are removed first.
  *
  * @param context - the github actions event context
  * @param cmd - the command definition
@@ -43493,6 +43506,11 @@ async function addPrefixedLabels(context, cmd) {
     await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), cmd.command);
     const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
     if (section.exclusive) {
+        if (labels.length > 1) {
+            throw new Error(`${cmd.command.slice(1)}: ${cmd.command} takes one value; got ${labels.join(', ')}`);
+        }
+        // refuse a label the repository lacks before the old value is taken off
+        await assertLabelsExist(octokit, context, labels);
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
             return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
@@ -43655,7 +43673,7 @@ async function hold(context = platform_platform().context()) {
     await assertPolicy(octokit, context, resolveAuthorization(config.authorization), 'hold', commenter(context), '/hold');
     const cancel = hasCommand('/unhold', commentBody)
         || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+        || hasExactArgs('/hold', commentBody, 'cancel');
     if (cancel) {
         await cancelHold(octokit, context, issueNumber, holdLabel);
         return;
@@ -44923,7 +44941,7 @@ function commandKind(body, command, removeAlias) {
     if (!hasCommand(command, body)) {
         return undefined;
     }
-    return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add';
+    return hasExactArgs(command, body, 'cancel') ? 'cancel' : 'add';
 }
 function humanLogin(user) {
     if (user?.login === undefined || user.login === '' || user.type === 'Bot' || user.login === 'github-actions[bot]') {
@@ -46032,6 +46050,7 @@ function fixed_requireIssueNumber(context) {
 
 
 
+
 /**
  * /lgtm will add the lgtm label. On a pull request the label is first bound
  * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
@@ -46055,7 +46074,7 @@ async function lgtm(context = platform_platform().context()) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const cancel = hasCommand('/remove-lgtm', commentBody)
-        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
+        || hasExactArgs('/lgtm', commentBody, 'cancel');
     if (cancel) {
         if (!isAuthor) {
             await assertReviewer(octokit, context, issueNumber, commenterId);
@@ -46090,12 +46109,13 @@ async function cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequ
     catch (e) {
         throw new Error(`could not remove latest review: could not get labels from issue: ${e}`);
     }
-    if (!currentLabels.includes(lgtmLabel)) {
+    const present = currentLabels.filter(label => sameLabel(label, lgtmLabel));
+    if (present.length === 0) {
         platform_platform().log.debug(`could not find ${lgtmLabel} to remove`);
         return;
     }
     try {
-        await removeLabels(octokit, context, issueNumber, [lgtmLabel]);
+        await removeLabels(octokit, context, issueNumber, present);
     }
     catch (e) {
         throw new Error(`could not remove latest review: ${e}`);
@@ -46203,7 +46223,7 @@ async function approve(context = platform_platform().context()) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
-        || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
+        || hasExactArgs('/approve', commentBody, 'cancel');
     if (context.payload.issue?.pull_request !== undefined) {
         const owners = await loadPullRequestOwners(octokit, context, issueNumber);
         if (owners.tree.hasOwners) {
@@ -46751,27 +46771,39 @@ async function milestone(context = platform_platform().context()) {
         throw new Error(`please provide a milestone to add`);
     }
     if (milestoneToAdd.toLowerCase() === 'clear') {
-        await octokit.issues.update({
-            ...context.repo,
-            issue_number: issueNumber,
-            milestone: null,
-        });
+        try {
+            await octokit.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                milestone: null,
+            });
+        }
+        catch (e) {
+            throw new Error(`could not clear milestone: ${e}`);
+        }
         return;
     }
-    const ms = await octokit.issues.listMilestones({
+    const ms = await octokit.paginate(octokit.issues.listMilestones, {
         ...context.repo,
+        state: 'open',
+        per_page: 100,
     });
-    const match = ms.data.find(m => m.title === milestoneToAdd);
+    const match = ms.find(m => m.title === milestoneToAdd);
     if (match === undefined) {
-        const titles = ms.data.map(m => m.title);
+        const titles = ms.map(m => m.title);
         const available = titles.length === 0 ? 'none' : titles.join(', ');
         throw new Error(`milestone "${milestoneToAdd}" not found. Available milestones: ${available}`);
     }
-    await octokit.issues.update({
-        ...context.repo,
-        issue_number: issueNumber,
-        milestone: match.number,
-    });
+    try {
+        await octokit.issues.update({
+            ...context.repo,
+            issue_number: issueNumber,
+            milestone: match.number,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not set milestone: ${e}`);
+    }
 }
 
 ;// CONCATENATED MODULE: ./lib/issueComment/reopen.js
@@ -47084,11 +47116,9 @@ async function handleIssueComment(context = platform_platform().context()) {
         }
         return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
     }));
-    const failures = [];
-    const commandError = results.find(result => result instanceof Error);
-    if (commandError !== undefined) {
-        failures.push(`${new TypeError(`error handling issue comment: ${commandError}`)}`);
-    }
+    const failures = results
+        .filter(result => result instanceof Error)
+        .map(commandError => `${new TypeError(`error handling issue comment: ${commandError}`)}`);
     if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
         const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody);
         failures.push(...await handleIssueComment_sweep(context, alreadyChecked));

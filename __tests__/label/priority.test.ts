@@ -52,20 +52,23 @@ describe('priority', () => {
     })
   })
 
-  it('handles multiple priority labels', async () => {
-    issueCommentEvent.comment.body = '/priority low high'
+  it.each(['/priority low high', '/priority low mid high'])('refuses more than one value for the exclusive family with %s', async (body) => {
+    issueCommentEvent.comment.body = body
     const commentContext = new utils.MockContext(issueCommentEvent)
 
-    const observeReq = new utils.ObserveRequest()
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/low' })
+
+    const observeDelete = new utils.ObserveRequest()
+    const observePost = new utils.ObserveRequest()
     server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
       http.post(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
-        utils.mockResponse(200, null, observeReq),
-      ),
-      utils.repoHasLabels(['priority/low', 'priority/high']),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issuePayload),
+        utils.mockResponse(200, null, observePost),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
@@ -74,27 +77,37 @@ describe('priority', () => {
       ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      labels: ['priority/low', 'priority/high'],
-    })
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('priority: /priority takes one value; got priority/low, priority/high'),
+    )
   })
 
-  it('only adds priority labels for files in .prowlabels.yaml', async () => {
-    issueCommentEvent.comment.body = '/priority low mid high'
+  it('keeps the existing priority label when the requested one is missing from the repository', async () => {
+    issueCommentEvent.comment.body = '/priority high'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
-    const observeReq = new utils.ObserveRequest()
+    const payload = structuredClone(issuePayload)
+    payload.labels.push({ ...payload.labels[0], name: 'priority/low' })
+
+    const observeDelete = new utils.ObserveRequest()
+    const observePost = new utils.ObserveRequest()
     server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        utils.mockResponse(200, null, observeDelete),
+      ),
       http.post(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels`,
-        utils.mockResponse(200, null, observeReq),
+        utils.mockResponse(200, null, observePost),
       ),
-      utils.repoHasLabels(['priority/low', 'priority/high']),
+      utils.repoHasLabels(['priority/low']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
-        utils.mockResponse(200, issuePayload),
+        utils.mockResponse(200, payload),
       ),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/.prowlabels.yaml`,
@@ -103,11 +116,13 @@ describe('priority', () => {
       ...utils.noOrgOrRepoConfigExcept('.prowlabels.yaml'),
     )
 
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      labels: ['priority/low', 'priority/high'],
-    })
+    await expect(observeDelete.notCalled()).resolves.toBe('not called')
+    await expect(observePost.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('the label(s) priority/high cannot be applied because the repository doesn\'t have them'),
+    )
   })
 
   it('replaces an existing priority label with the new one', async () => {
@@ -222,6 +237,7 @@ describe('priority', () => {
         `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/priority%2Flow`,
         utils.mockResponse(500),
       ),
+      utils.repoHasLabels(['priority/low', 'priority/high']),
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
         utils.mockResponse(200, payload),
@@ -402,8 +418,8 @@ describe('priority', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('removes then re-adds when /priority high low and /remove-priority high share a comment', async () => {
-    issueCommentEvent.comment.body = '/priority high low\n/remove-priority high'
+  it('removes then re-adds when /priority high and /remove-priority high share a comment', async () => {
+    issueCommentEvent.comment.body = '/priority high\n/remove-priority high'
     const commentContext = new utils.MockContext(issueCommentEvent)
 
     const payload = structuredClone(issuePayload)
@@ -442,7 +458,7 @@ describe('priority', () => {
     await handleIssueComment(commentContext)
     expect(mutations).toEqual([
       'DELETE priority%2Fhigh',
-      'POST priority/high,priority/low',
+      'POST priority/high',
     ])
     expect(setFailed).not.toHaveBeenCalled()
   })

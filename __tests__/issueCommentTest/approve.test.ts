@@ -824,6 +824,40 @@ reviewers:
     })
   })
 
+  it('treats a sentence that only mentions cancel as a plain /approve', async () => {
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(404),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/approve no need to cancel anything'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(await observeReq.body()).toMatchObject({
+      event: 'APPROVE',
+    })
+  })
+
   it.each(['/approve cancel', '/Approve CANCEL'])('removes approval with %s if commenter is collaborator', async (body) => {
     server.use(
       http.get(

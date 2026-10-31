@@ -345,9 +345,9 @@ describe('dist/index.js', () => {
     expect(posts).toHaveLength(1)
     expect(posts[0].body).toEqual({ labels: ['level/incubation'] })
     expectRequests(configReads({ repo: '.prowlabels.yaml' }), [
+      labelsRead,
       `GET ${repo}/issues/1`,
       `DELETE ${repo}/issues/1/labels/level%2Fsandbox`,
-      labelsRead,
       `POST ${repo}/issues/1/labels`,
     ])
   })
@@ -870,7 +870,7 @@ describe('dist/index.js', () => {
     expect(result.errors).toEqual([])
     expect(gh.requests.map(r => `${r.method} ${r.path}`)).toEqual([
       `GET ${repo}/collaborators/Codertocat`,
-      `GET ${repo}/milestones`,
+      `GET ${repo}/milestones?state=open&per_page=100`,
       `PATCH ${repo}/issues/1`,
     ])
     expect(gh.requestsMatching('PATCH', /\/issues\/1$/)[0].body).toEqual({ milestone: 7 })

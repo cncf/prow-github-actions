@@ -44,31 +44,43 @@ export async function milestone(
   }
 
   if (milestoneToAdd.toLowerCase() === 'clear') {
-    await octokit.issues.update({
-      ...context.repo,
-      issue_number: issueNumber,
-      milestone: null,
-    })
+    try {
+      await octokit.issues.update({
+        ...context.repo,
+        issue_number: issueNumber,
+        milestone: null,
+      })
+    }
+    catch (e) {
+      throw new Error(`could not clear milestone: ${e}`)
+    }
     return
   }
 
-  const ms = await octokit.issues.listMilestones({
+  const ms = await octokit.paginate(octokit.issues.listMilestones, {
     ...context.repo,
+    state: 'open',
+    per_page: 100,
   })
 
-  const match = ms.data.find(m => m.title === milestoneToAdd)
+  const match = ms.find(m => m.title === milestoneToAdd)
 
   if (match === undefined) {
-    const titles = ms.data.map(m => m.title)
+    const titles = ms.map(m => m.title)
     const available = titles.length === 0 ? 'none' : titles.join(', ')
     throw new Error(
       `milestone "${milestoneToAdd}" not found. Available milestones: ${available}`,
     )
   }
 
-  await octokit.issues.update({
-    ...context.repo,
-    issue_number: issueNumber,
-    milestone: match.number,
-  })
+  try {
+    await octokit.issues.update({
+      ...context.repo,
+      issue_number: issueNumber,
+      milestone: match.number,
+    })
+  }
+  catch (e) {
+    throw new Error(`could not set milestone: ${e}`)
+  }
 }

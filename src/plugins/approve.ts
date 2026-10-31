@@ -4,7 +4,7 @@ import type { Context } from '../utils/context'
 import type { PullRequestOwners } from '../utils/pullRequestOwners'
 
 import { platform } from '../platform'
-import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
+import { hasCommand, hasExactArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { labelIssue, removeLabels } from '../utils/labeling'
@@ -135,7 +135,7 @@ function commandKind(body: string, command: string, removeAlias: string): 'add' 
   if (!hasCommand(command, body)) {
     return undefined
   }
-  return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add'
+  return hasExactArgs(command, body, 'cancel') ? 'cancel' : 'add'
 }
 
 function humanLogin(user: IssueComment['user']): string | undefined {

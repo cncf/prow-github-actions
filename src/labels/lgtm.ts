@@ -4,12 +4,13 @@ import type { Context } from '../utils/context'
 import { platform } from '../platform'
 import { bindLgtm, lgtmLabel, lgtmSettings, unbindLgtm } from '../plugins/lgtmBinding'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
-import { getCommandArgs, hasCommand, hasKeyword } from '../utils/command'
+import { hasCommand, hasExactArgs } from '../utils/command'
 import { createComment } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { getCurrentLabels, labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
+import { sameLabel } from './prefixed'
 
 /**
  * /lgtm will add the lgtm label. On a pull request the label is first bound
@@ -39,7 +40,7 @@ export async function lgtm(context: Context = platform().context()): Promise<voi
   }
 
   const cancel = hasCommand('/remove-lgtm', commentBody)
-    || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'))
+    || hasExactArgs('/lgtm', commentBody, 'cancel')
 
   if (cancel) {
     if (!isAuthor) {
@@ -89,13 +90,15 @@ async function cancelLgtm(
     throw new Error(`could not remove latest review: could not get labels from issue: ${e}`)
   }
 
-  if (!currentLabels.includes(lgtmLabel)) {
+  const present = currentLabels.filter(label => sameLabel(label, lgtmLabel))
+
+  if (present.length === 0) {
     platform().log.debug(`could not find ${lgtmLabel} to remove`)
     return
   }
 
   try {
-    await removeLabels(octokit, context, issueNumber, [lgtmLabel])
+    await removeLabels(octokit, context, issueNumber, present)
   }
   catch (e) {
     throw new Error(`could not remove latest review: ${e}`)

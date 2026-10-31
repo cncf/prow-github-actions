@@ -137,7 +137,7 @@ A mapping of label sections. Every key becomes a `/<key>` command once listed in
 Section form | Meaning
 --- | ---
 `key: [a, b]` | allowed values; labels stack
-`key: { values: [a, b], exclusive: bool }` | `exclusive: true` replaces existing `key/*` labels
+`key: { values: [a, b], exclusive: bool }` | `exclusive: true` takes one value and replaces existing `key/*` labels
 
 Value form | Meaning
 --- | ---

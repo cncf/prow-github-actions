@@ -73,7 +73,7 @@ describe('dist/index.js when an api call rejects with a non-Error value', () => 
       ])
       expect(result.stderr).not.toMatch(/Unhandled|unhandledRejection/)
       // the milestone is never set once the list is lost
-      expect(calls()).toEqual([`GET ${repo}/collaborators/Codertocat`, `GET ${repo}/milestones`])
+      expect(calls()).toEqual([`GET ${repo}/collaborators/Codertocat`, `GET ${repo}/milestones?state=open&per_page=100`])
     })
   })
 
