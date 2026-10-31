@@ -312,7 +312,7 @@ section is optional; with no OWNERS files in the repository the plugin is a no-o
 Field | Default | Meaning
 --- | --- | ---
 `request_count` | `2` | reviewers to request; integer ≥ 1
-`max_request_count` | unset | never leave the pull request with more requested reviewers than this in total; ≥ `request_count`
+`max_request_count` | unset | never leave the pull request with more requested reviewers than this in total, a requested team counting as one; ≥ `request_count`
 `exclude_approvers` | `false` | only `reviewers` are candidates, not `approvers`
 `ignore_drafts` | `true` | a draft waits for `ready_for_review`; `false` requests on `opened` and skips `ready_for_review`
 `ignore_authors` | `[]` | pull requests by these authors get no automatic request (case-insensitive)
@@ -326,10 +326,11 @@ Event | Action
 
 Candidates are the union of `reviewers` (plus `approvers` unless `exclude_approvers`) of
 every OWNERS file covering a changed file, minus the author, the already requested
-reviewers and the assignees. Like Prow, each candidate is weighted by the number of changed
+reviewers, the assignees and anyone who has already submitted a review (GitHub drops a
+reviewer from the requested list once they review). Like Prow, each candidate is weighted by the number of changed
 files they cover: the request is filled from the best-covering candidates first and drawn at
 random among equals. With `max_request_count`, `request_count` is reduced so that the
-already requested reviewers plus the new ones do not exceed it. Nobody left to request is a
+already requested reviewers and teams plus the new ones do not exceed it. Nobody left to request is a
 debug-logged no-op. When GitHub refuses the request with a `422` (one login cannot be asked, for
 example a reviewer who is not a collaborator), each reviewer is requested on their own: the ones
 GitHub refuses are logged as warnings and the run fails only when it refuses every one. Any

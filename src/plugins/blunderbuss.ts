@@ -191,11 +191,22 @@ export async function requestOwnersReviewers(
 
   let count = settings.request_count
   if (settings.max_request_count !== undefined) {
-    count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length)
+    // a requested team is one request against the cap, as a requested user is
+    const requested = pull.requestedReviewers.length + pull.requestedTeams.length
+    count = Math.min(count, settings.max_request_count - requested)
     if (count <= 0) {
-      platform().log.debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`)
+      platform().log.debug(`blunderbuss: #${pullNumber} already has ${requested} requested reviewers, max_request_count is ${settings.max_request_count}`)
       return
     }
+  }
+
+  // GitHub drops a reviewer from requested_reviewers once they review: they are not candidates either
+  for (const login of await reviewedBy(octokit, context, pullNumber)) {
+    coverage.delete(login)
+  }
+  if (coverage.size === 0) {
+    platform().log.debug(`blunderbuss: every reviewer candidate for #${pullNumber} has already reviewed it`)
+    return
   }
 
   const picked = pickReviewers(coverage, count, rng)
@@ -234,4 +245,14 @@ async function requestEach(octokit: Octokit, context: Context, pullNumber: numbe
 
 function isUnprocessable(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'status' in error && error.status === 422
+}
+
+async function reviewedBy(octokit: Octokit, context: Context, pullNumber: number): Promise<string[]> {
+  try {
+    const reviews = await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: pullNumber, per_page: 100 })
+    return reviews.filter(review => review.state !== 'PENDING').flatMap(review => review.user?.login === undefined ? [] : [review.user.login.toLowerCase()])
+  }
+  catch (e) {
+    throw new Error(`could not list reviews: ${e}`)
+  }
 }
