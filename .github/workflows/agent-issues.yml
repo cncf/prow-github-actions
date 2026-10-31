@@ -1,0 +1,57 @@
+# Issues filed by the Hive quality agent (hivecommons-hive[bot]) are all cleanup — test
+# and harness findings — but the agent adds no kind label, so every one of them sat under
+# `needs-kind` with the bot's reminder comment (86 of the 103 issues closed in October).
+# Until the agent labels its own issues, this adds `kind/cleanup` to each one it opens.
+#
+# The Prow bot run for the same `opened` event is queued at the same moment and applies
+# `needs-kind` with github.token, which raises no `labeled` event anything could react to,
+# so this job waits for that run to finish and then undoes it: removes `needs-kind` and
+# deletes the bot's marker comment, as the bot would on a `labeled` event it never sees.
+name: Agent-filed issues
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  actions: read
+
+jobs:
+  kind:
+    if: github.event.issue.user.login == 'hivecommons-hive[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for the Prow bot's run on this event
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          sleep 15
+          for _ in $(seq 1 30); do
+            active=$(gh run list -R "$REPO" --workflow prow-bot.yml --event issues --json status \
+              --jq '[.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting")] | length')
+            [ "$active" = 0 ] && exit 0
+            sleep 10
+          done
+          echo "::warning::the Prow bot's run did not finish in time; applying the label anyway"
+      - name: Add kind/cleanup and clear needs-kind
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          labels=$(gh issue view "$NUMBER" -R "$REPO" --json labels --jq '.labels[].name')
+          if printf '%s\n' "$labels" | grep -q '^kind/'; then
+            echo "a kind label is already present"
+            exit 0
+          fi
+          gh issue edit "$NUMBER" -R "$REPO" --add-label kind/cleanup
+          if printf '%s\n' "$labels" | grep -qx 'needs-kind'; then
+            gh issue edit "$NUMBER" -R "$REPO" --remove-label needs-kind
+          fi
+          # the bot's reminder, found by the marker require_matching_label leaves in its own comment
+          marker='<!-- prow-github-actions/require-matching-label: needs-kind -->'
+          gh api --paginate "repos/$REPO/issues/$NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id" \
+            | while read -r id; do gh api -X DELETE "repos/$REPO/issues/comments/$id"; done
