@@ -556,10 +556,20 @@ async function evaluate(
     return
   }
 
-  const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)))
-  const failed = candidates.filter((_, i) => results[i] === 'failed')
+  // settled, so one candidate whose evaluation throws neither stops nor hides the others
+  const results = await Promise.allSettled(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)))
+  const failed: string[] = []
+  results.forEach((settled, i) => {
+    if (settled.status === 'rejected') {
+      platform().log.error(`could not evaluate pr #${candidates[i]}: ${settled.reason}`)
+      failed.push(`#${candidates[i]} (could not evaluate: ${settled.reason})`)
+    }
+    else if (settled.value === 'failed') {
+      failed.push(`#${candidates[i]}`)
+    }
+  })
   if (failed.length > 0) {
-    throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`)
+    throw new Error(`could not merge pull request(s) ${failed.join(', ')}`)
   }
 }
 

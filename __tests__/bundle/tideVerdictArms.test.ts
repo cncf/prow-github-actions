@@ -211,7 +211,7 @@ describe('dist/index.js tide verdicts', () => {
 
     it('naming no pull request, for a commit no open pull request has as its head, evaluates nothing', async () => {
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-        const page = new URL(req.path, gh.url).searchParams.get('page')
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
         return { status: 200, body: page === '1' ? [{ number: 2, head: { sha: 'other' } }] : [] }
       })
 
@@ -279,7 +279,7 @@ describe('dist/index.js schedule with both the sweep and the lgtm jobs', () => {
     }
     gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
     gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-      const page = new URL(req.path, gh.url).searchParams.get('page')
+      const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
       return { status: 200, body: page === '1' ? [pr] : [] }
     })
     gh.route('GET', `${repo}/pulls/1`, { status: 200, body: pr })
@@ -301,6 +301,6 @@ describe('dist/index.js schedule with both the sweep and the lgtm jobs', () => {
     expect(gh.requestsMatching('PUT', /./)[0].body).toEqual({ merge_method: 'merge', sha: head })
     // the jobs run concurrently, so only the listings' presence is fixed, not their order
     expect(gh.requestsMatching('GET', /\/pulls\?state=open&sort=updated&direction=desc&per_page=100&page=1$/)).toHaveLength(1)
-    expect(gh.requestsMatching('GET', /\/pulls\?state=open&page=1$/)).toHaveLength(1)
+    expect(gh.requestsMatching('GET', /\/pulls\?state=open&per_page=100$/)).toHaveLength(1)
   })
 })

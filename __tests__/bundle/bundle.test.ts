@@ -1227,7 +1227,7 @@ describe('dist/index.js', () => {
         const sha = 'def0123456789abcdef0123456789abcdef01234'
         gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
         gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-          const page = new URL(req.path, gh.url).searchParams.get('page')
+          const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
           return { status: 200, body: page === '1' ? [openPr(['lgtm'], { number: 1, head: { sha } })] : [] }
         })
         gh.route('GET', `${repo}/pulls/1`, { status: 200, body: openPr(['lgtm'], { number: 1, mergeable: true, mergeable_state: 'clean', head: { sha } }) })
@@ -1241,7 +1241,7 @@ describe('dist/index.js', () => {
         expect(result.stdout).toContain(`skipping pr #1: lgtm not bound to ${sha.slice(0, 7)}`)
         expectStripped(sha)
         expectRequests(configReads(), [
-          `GET ${repo}/pulls?state=open&page=1`,
+          `GET ${repo}/pulls?state=open&per_page=100`,
           ownersProbe,
           pullRead,
           `GET ${repo}/commits/${sha}/status?per_page=100`,
@@ -1249,7 +1249,6 @@ describe('dist/index.js', () => {
           `POST ${repo}/statuses/${sha}`,
           `GET ${repo}/issues/1/comments?per_page=100`,
           `POST ${repo}/issues/1/comments`,
-          `GET ${repo}/pulls?state=open&page=2`,
         ])
       })
 
@@ -1257,7 +1256,7 @@ describe('dist/index.js', () => {
         gh.commitStatuses(repo, head, bound)
         gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
         gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-          const page = new URL(req.path, gh.url).searchParams.get('page')
+          const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
           return { status: 200, body: page === '1' ? [mergeablePr('clean')] : [] }
         })
         gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
@@ -1272,7 +1271,7 @@ describe('dist/index.js', () => {
         const cron = await runBundle({ eventName: 'schedule', payload: {}, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
         expect(cron.status, cron.stdout).toBe(0)
         expect(cron.stdout).toContain('merged pr #1')
-        expectRequests(configReads(), [`GET ${repo}/pulls?state=open&page=1`, ownersProbe, pullRead, bindingRead, queueRead, merge, `GET ${repo}/pulls?state=open&page=2`])
+        expectRequests(configReads(), [`GET ${repo}/pulls?state=open&per_page=100`, ownersProbe, pullRead, bindingRead, queueRead, merge])
         expect(gh.requestsMatching('DELETE', /./)).toEqual([])
       })
     })
@@ -1565,7 +1564,7 @@ describe('dist/index.js', () => {
       it('schedule jobs: lgtm enqueues a queue-branch pr and never dequeues a gate-failing one', async () => {
         gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
         gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-          const page = new URL(req.path, gh.url).searchParams.get('page')
+          const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
           return { status: 200, body: page === '1' ? [mergeablePr('clean'), openPr(['kind/bug'], { number: 2 })] : [] }
         })
         gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean') })
@@ -1622,7 +1621,7 @@ describe('dist/index.js', () => {
       const sha = checkSuiteCompletedEvent.check_suite.head_sha
       gh.commitStatuses(repo, sha, bound)
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-        const page = new URL(req.path, gh.url).searchParams.get('page')
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
         return { status: 200, body: page === '1' ? [{ number: 1, head: { sha } }, { number: 2, head: { sha: 'other' } }] : [] }
       })
       gh.route('GET', `${repo}/pulls/1`, { status: 200, body: { ...mergeablePr('clean'), head: { sha } } })
@@ -1785,7 +1784,7 @@ describe('dist/index.js', () => {
 
   describe('schedule lgtm job', () => {
     // the gate's default follows each listed pull request's base branch, so the tree is probed once the page is listed
-    const gateReads = [`GET ${repo}/pulls?state=open&page=1`, ownersProbe]
+    const gateReads = [`GET ${repo}/pulls?state=open&per_page=100`, ownersProbe]
     const head = pullReqListPulls[0].head.sha
     // a listed pr that passes the gate is re-read through the shared merge path: its mergeability, then its lgtm binding
     const evaluation = [`GET ${repo}/pulls/2`, `GET ${repo}/commits/${head}/status?per_page=100`, queueRead]
@@ -1793,7 +1792,7 @@ describe('dist/index.js', () => {
     function routePulls(pr: Record<string, unknown>, merge: { status: number, body: unknown } = { status: 200, body: { merged: true } }, state = 'clean') {
       gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-        const page = new URL(req.path, gh.url).searchParams.get('page')
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
         return { status: 200, body: page === '1' ? [pr] : [] }
       })
       gh.route('GET', `${repo}/pulls/2`, { status: 200, body: { ...pr, mergeable: true, mergeable_state: state } })
@@ -1825,7 +1824,6 @@ describe('dist/index.js', () => {
         ...gateReads,
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -1844,7 +1842,6 @@ describe('dist/index.js', () => {
         ...gateReads,
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -1859,7 +1856,6 @@ describe('dist/index.js', () => {
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       expectRequests(configReads(), [
         ...gateReads,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -1872,8 +1868,7 @@ describe('dist/index.js', () => {
       expect(result.errors).toEqual([])
       expect(gh.requestsMatching('PUT', /./)).toEqual([])
       expectRequests(configReads(), [
-        `GET ${repo}/pulls?state=open&page=1`,
-        `GET ${repo}/pulls?state=open&page=2`,
+        `GET ${repo}/pulls?state=open&per_page=100`,
       ])
     })
 
@@ -1892,7 +1887,6 @@ describe('dist/index.js', () => {
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls/2`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -1932,7 +1926,6 @@ describe('dist/index.js', () => {
         `GET ${repo}/pulls/2/files?per_page=100`,
         `GET ${repo}/issues/2/comments?per_page=100`,
         `POST ${repo}/issues/2/comments`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
   })
@@ -1966,7 +1959,7 @@ describe('dist/index.js', () => {
     function routeList(prs: unknown[]) {
       gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-        const page = new URL(req.path, gh.url).searchParams.get('page')
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
         return { status: 200, body: page === '1' ? prs : [] }
       })
     }

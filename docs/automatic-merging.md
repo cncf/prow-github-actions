@@ -105,7 +105,9 @@ Two events for one pull request can run at the same time (a label and a check co
 seconds). Both may send the merge; GitHub refuses the loser with `405`. The handler then re-reads
 the pull request: `merged: true` is logged as `pr #<n> was merged concurrently` and is not a
 failure. Any other refusal is logged as an error annotation and fails the run with
-`could not merge pull request(s) #<n>`, so the operator sees it.
+`could not merge pull request(s) #<n>`, so the operator sees it. When one event names several pull
+requests (`check_suite`, `status`), a pull request whose evaluation throws is listed as
+`#<n> (could not evaluate: <error>)` and does not stop the others.
 
 ### `merge_on_events`
 
@@ -174,7 +176,7 @@ GitHub refuses; its failure list only contains merges GitHub actually refused.
 
 The cron is the backstop for missed events (a workflow run that was skipped, a webhook that was
 lost, a PR whose state was still `unknown` when the last event ran), not for comment commands:
-those evaluate the PR themselves. It pages through every open pull request, applies the merge
+those evaluate the PR themselves. It lists every open pull request first, then, three at a time, applies the merge
 gate to the listed labels and sends every PR that passes through the same evaluation as the
 events: the [`lgtm` binding](#lgtm-is-bound-to-a-commit), then `mergeable_state`, then the merge.
 A PR that fails the gate on its listed labels costs no further call.
@@ -558,7 +560,7 @@ Merge by hand | a maintainer
 Pass a token with the `workflows` scope (a PAT or a GitHub App with *Workflows: write*) as the `token` secret ([installing](./installing.md#inputs-and-secrets)) | the repository
 
 ## Known limitations
-The cron job pages through the repository's open PRs, following pages until one comes back empty,
+The cron job lists all of the repository's open PRs (one request per 100),
 and reads each PR that passes the label gate (plus its head's status). This _may_ trigger a state
 where github rate limits Prow github actions.
 This may only happen with very large projects.

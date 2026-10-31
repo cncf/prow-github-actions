@@ -323,6 +323,41 @@ describe('blunderbuss handler', () => {
     await expect(blunderbuss(prEvent('opened'))).rejects.toThrow(/could not request reviewers: .*boom/)
   })
 
+  it('when GitHub refuses the batch with a 422, requests each reviewer alone and keeps the ones it accepts', async () => {
+    serveConfig()
+    servePr(owners, ['sdk/x.go'])
+    const calls: string[][] = []
+    server.use(http.post(`${repo}/pulls/1/requested_reviewers`, async ({ request }) => {
+      const { reviewers } = await request.json() as { reviewers: string[] }
+      calls.push(reviewers)
+      const refused = reviewers.length > 1 || reviewers[0] === 'alice'
+      return new Response(JSON.stringify(refused ? { message: 'Reviews may only be requested from collaborators.' } : {}), { status: refused ? 422 : 201, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    await blunderbuss(prEvent('opened'), first)
+
+    expect(calls).toEqual([['alice', 'bob'], ['alice'], ['bob']])
+    expect(warning).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^blunderbuss: could not request review from alice on #1: .*collaborators/))
+    expect(info).toHaveBeenCalledWith('blunderbuss: requested review from bob on #1')
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('fails when GitHub refuses the batch with a 422 and every reviewer alone', async () => {
+    serveConfig()
+    servePr(owners, ['sdk/x.go'])
+    const calls: string[][] = []
+    server.use(http.post(`${repo}/pulls/1/requested_reviewers`, async ({ request }) => {
+      calls.push((await request.json() as { reviewers: string[] }).reviewers)
+      return new Response(JSON.stringify({ message: 'boom' }), { status: 422, headers: { 'Content-Type': 'application/json' } })
+    }))
+    vi.spyOn(core, 'warning').mockImplementation(() => {})
+
+    await expect(blunderbuss(prEvent('opened'), first)).rejects.toThrow(/could not request reviewers: .*boom/)
+    expect(calls).toEqual([['alice', 'bob'], ['alice'], ['bob']])
+  })
+
   it('fails without a pull request in the payload', async () => {
     await expect(blunderbuss(new utils.MockContext({ action: 'opened' }))).rejects.toThrow(
       'github context payload missing pull request',
