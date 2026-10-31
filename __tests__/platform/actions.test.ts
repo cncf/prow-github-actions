@@ -1,15 +1,19 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { actionsPlatform } from '../../src/adapters/actions'
 
 describe('actionsPlatform', () => {
-  afterEach(() => {
+  // a GitHub Actions runner sets GITHUB_WORKFLOW and GITHUB_API_URL for the test
+  // process itself, so clear them before each test, not only after
+  const clearRunnerEnv = () => {
     delete process.env.GITHUB_API_URL
     delete process.env.GITHUB_WORKFLOW
     delete process.env['INPUT_MERGE-METHOD']
-  })
+  }
+  beforeEach(clearRunnerEnv)
+  afterEach(clearRunnerEnv)
 
   it.each(['debug', 'info', 'notice', 'warning', 'error', 'setSecret'] as const)('forwards log.%s to @actions/core', (method) => {
     const spy = vi.spyOn(core, method).mockImplementation(() => {})

@@ -35,6 +35,25 @@ function section(...values: string[]) {
   return { values, definitions: values.map(name => ({ name })) }
 }
 
+// loadProwConfig probes the organization and repository tiers at once and
+// rejects as soon as one of them does, so the other tier's chain of 404 probes
+// would keep going after the test's await returns and be reported against
+// whichever test runs next (see configFoundAt in testUtils). A test whose tier
+// under exercise rejects ends the other tier on its first probe and awaits it.
+function endRepoTier(...others: string[]) {
+  const repo = new utils.ObserveRequest()
+  serve('.github/prow.yaml', 'labels:\n  kind: [repo]\n', repo)
+  server.use(...utils.noOrgOrRepoConfigExcept('.github/prow.yaml', ...others))
+  return repo
+}
+
+function endOrgTier(...others: string[]) {
+  const org = new utils.ObserveRequest()
+  serve(project, 'labels:\n  kind: [org]\n', org)
+  server.use(...utils.noOrgOrRepoConfigExcept(project, ...others))
+  return org
+}
+
 describe('loadProwConfig', () => {
   const context = new utils.MockContext(issueCommentEvent)
   let octokit: Octokit
@@ -67,14 +86,8 @@ describe('loadProwConfig', () => {
     })
 
     it('fails closed when an org repo answers with something other than 404', async () => {
-      // the repo tier is probed in parallel with the org tier; answer its first
-      // probe so none of its requests outlive this test and reach the next one
-      const repo = new utils.ObserveRequest()
-      serve('.github/prow.yaml', 'labels:\n  kind: [repo]\n', repo)
-      server.use(
-        http.get(utils.contentsUrl(project), utils.mockResponse(500, { message: 'boom' })),
-        ...utils.noOrgOrRepoConfigExcept(project, '.github/prow.yaml'),
-      )
+      const repo = endRepoTier(project)
+      server.use(http.get(utils.contentsUrl(project), utils.mockResponse(500, { message: 'boom' })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load organization prow config from Codertocat/.project:prow.yaml:',
@@ -106,14 +119,13 @@ describe('loadProwConfig', () => {
     })
 
     it('fails closed when a repo probe answers with something other than 404', async () => {
-      server.use(
-        http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })),
-        ...utils.noOrgOrRepoConfigExcept('prow.yaml'),
-      )
+      const org = endOrgTier('prow.yaml')
+      server.use(http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from Codertocat/Hello-World:prow.yaml:',
       )
+      await org.called()
     })
   })
 
@@ -256,81 +268,80 @@ describe('loadProwConfig', () => {
       await expect(org.notCalled()).resolves.toBe('not called')
     })
 
-    it('rejects an http:// url without making any request', async () => {
+    it('rejects an http:// url without fetching it', async () => {
       process.env.INPUT_CONFIG = 'http://config.example.com/prow.yaml'
+      const repo = endRepoTier()
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'config: http:// sources are not allowed, use https://',
       )
+      await repo.called()
     })
 
     it('rejects an input that is neither owner/repo:path nor a url', async () => {
       process.env.INPUT_CONFIG = 'just-a-file.yaml'
+      const repo = endRepoTier()
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         `config: expected owner/repo:path[@ref] or an https:// url, got 'just-a-file.yaml'`,
       )
+      await repo.called()
     })
 
     it('fails when the explicit repo file does not exist', async () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
-      server.use(
-        http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(404, { message: 'Not Found' })),
-        ...utils.noOrgOrRepoConfigExcept(),
-      )
+      const repo = endRepoTier()
+      server.use(http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(404, { message: 'Not Found' })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from cncf/prow-config:prow.yaml:',
       )
+      await repo.called()
     })
 
     it('fails when the explicit repo answers with something other than 404', async () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
-      server.use(
-        http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(500, { message: 'boom' })),
-        ...utils.noOrgOrRepoConfigExcept(),
-      )
+      const repo = endRepoTier()
+      server.use(http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(500, { message: 'boom' })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from cncf/prow-config:prow.yaml:',
       )
+      await repo.called()
     })
 
     it('fails when the explicit repo path is a directory rather than a file', async () => {
       process.env.INPUT_CONFIG = 'cncf/prow-config:configs'
-      server.use(
-        http.get(`${utils.api}/repos/cncf/prow-config/contents/configs`, utils.mockResponse(200, [{ name: 'prow.yaml', type: 'file' }])),
-        ...utils.noOrgOrRepoConfigExcept(),
-      )
+      const repo = endRepoTier()
+      server.use(http.get(`${utils.api}/repos/cncf/prow-config/contents/configs`, utils.mockResponse(200, [{ name: 'prow.yaml', type: 'file' }])))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from cncf/prow-config:configs: TypeError: configs is not a file',
       )
+      await repo.called()
     })
 
     it('fails when the url cannot be fetched at all', async () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
-      server.use(
-        http.get('https://config.example.com/prow.yaml', () => HttpResponse.error()),
-        ...utils.noOrgOrRepoConfigExcept(),
-      )
+      const repo = endRepoTier()
+      server.use(http.get('https://config.example.com/prow.yaml', () => HttpResponse.error()))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         // msw 2 surfaces HttpResponse.error() as "Failed to fetch", msw 3 as undici's "fetch failed"
         /^could not load prow config from https:\/\/config\.example\.com\/prow\.yaml: TypeError: (?:Failed to fetch|fetch failed)$/,
       )
+      await repo.called()
     })
 
     it('fails when the url does not answer 2xx', async () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
-      server.use(
-        http.get('https://config.example.com/prow.yaml', () => new Response('gone', { status: 410 })),
-        ...utils.noOrgOrRepoConfigExcept(),
-      )
+      const repo = endRepoTier()
+      server.use(http.get('https://config.example.com/prow.yaml', () => new Response('gone', { status: 410 })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from https://config.example.com/prow.yaml: HTTP 410',
       )
+      await repo.called()
     })
   })
 
