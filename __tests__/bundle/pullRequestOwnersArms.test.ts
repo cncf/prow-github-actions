@@ -109,7 +109,7 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
   })
 
   describe('schedule lgtm job: a fork pull request GitHub refuses with 403', () => {
-    const gateReads = [`GET ${repo}/pulls?state=open&page=1`, ownersProbe]
+    const gateReads = [`GET ${repo}/pulls?state=open&per_page=100`, ownersProbe]
     const head = pullReqListPulls[0].head.sha
     const evaluation = [`GET ${repo}/pulls/2`, `GET ${repo}/commits/${head}/status?per_page=100`, queueRead]
     const marker = `<!-- prow-github-actions/fork-workflows: ${head.slice(0, 7)} -->`
@@ -123,7 +123,7 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
       }
       gh.route('GET', repo, { status: 200, body: { default_branch: 'master' } })
       gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
-        const page = new URL(req.path, gh.url).searchParams.get('page')
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
         return { status: 200, body: page === '1' ? [pr] : [] }
       })
       gh.route('GET', `${repo}/pulls/2`, { status: 200, body: { ...pr, mergeable: true, mergeable_state: 'clean' } })
@@ -166,7 +166,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
         `GET ${repo}/compare/${head}...master`,
         `GET ${repo}/pulls/2/files?per_page=100`,
         `GET ${repo}/issues/2/comments?per_page=100`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -221,7 +220,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
         `GET ${repo}/pulls/2/files?per_page=100`,
         `GET ${repo}/issues/2/comments?per_page=100`,
         `POST ${repo}/issues/2/comments`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -245,7 +243,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
         `GET ${repo}/pulls/2`,
         `GET ${repo}/compare/${head}...master`,
         `GET ${repo}/pulls/2/files?per_page=100`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
 
@@ -266,7 +263,6 @@ describe('dist/index.js pull request owners and fork-workflows arms', () => {
         `PUT ${repo}/pulls/2/merge`,
         `GET ${repo}/pulls/2`,
         `GET ${repo}/compare/${head}...master`,
-        `GET ${repo}/pulls?state=open&page=2`,
       ])
     })
   })

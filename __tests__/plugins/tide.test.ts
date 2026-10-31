@@ -1167,6 +1167,20 @@ describe('tideOnCheckSuite', () => {
     await expect(tideOnCheckSuite(suiteEvent({ pull_requests: [{ number: 1 }, { number: 2 }] }))).rejects.toThrow('could not merge pull request(s) #1, #2')
   })
 
+  it('a candidate whose evaluation throws is listed and the others still merge', async () => {
+    const mergeTwo = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/pulls/1`, utils.mockResponse(500, { message: 'Server Error' })),
+      http.get(`${repo}/pulls/2`, utils.mockResponse(200, pull(['lgtm'], { number: 2 }))),
+      http.put(`${repo}/pulls/2/merge`, utils.mockResponse(200, { merged: true }, mergeTwo)),
+    )
+    const error = vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    await expect(tideOnCheckSuite(suiteEvent({ pull_requests: [{ number: 1 }, { number: 2 }] }))).rejects.toThrow('could not merge pull request(s) #1 (could not evaluate: HttpError: Server Error)')
+    await expect(mergeTwo.called()).resolves.toBe('called')
+    expect(error).toHaveBeenCalledWith('could not evaluate pr #1: HttpError: Server Error')
+  })
+
   it('throws when the payload has no sha', async () => {
     const context = new utils.MockContext({ action: 'completed' })
     context.eventName = 'check_suite'

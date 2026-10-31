@@ -198,12 +198,40 @@ export async function requestOwnersReviewers(
     }
   }
 
-  const reviewers = pickReviewers(coverage, count, rng)
+  const picked = pickReviewers(coverage, count, rng)
+  let reviewers = picked
   try {
     await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers })
   }
   catch (e) {
-    throw new Error(`could not request reviewers: ${e}`)
+    if (!isUnprocessable(e)) {
+      throw new Error(`could not request reviewers: ${e}`)
+    }
+    // GitHub refuses the whole batch when one login cannot be requested (not a collaborator, the author);
+    // request each alone so the others still get the request
+    reviewers = await requestEach(octokit, context, pullNumber, picked)
+    if (reviewers.length === 0) {
+      throw new Error(`could not request reviewers: ${e}`)
+    }
   }
   platform().log.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`)
+}
+
+/** requests each reviewer on its own and returns the ones GitHub accepted, warning about the others */
+async function requestEach(octokit: Octokit, context: Context, pullNumber: number, reviewers: string[]): Promise<string[]> {
+  const accepted: string[] = []
+  for (const reviewer of reviewers) {
+    try {
+      await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers: [reviewer] })
+      accepted.push(reviewer)
+    }
+    catch (e) {
+      platform().log.warning(`blunderbuss: could not request review from ${reviewer} on #${pullNumber}: ${e}`)
+    }
+  }
+  return accepted
+}
+
+function isUnprocessable(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'status' in error && error.status === 422
 }

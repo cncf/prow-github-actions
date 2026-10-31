@@ -44543,10 +44543,20 @@ async function evaluate(context, numbers, lookup) {
         platform_platform().log.debug('tide: no open pull request to evaluate');
         return;
     }
-    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
-    const failed = candidates.filter((_, i) => results[i] === 'failed');
+    // settled, so one candidate whose evaluation throws neither stops nor hides the others
+    const results = await Promise.allSettled(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
+    const failed = [];
+    results.forEach((settled, i) => {
+        if (settled.status === 'rejected') {
+            platform_platform().log.error(`could not evaluate pr #${candidates[i]}: ${settled.reason}`);
+            failed.push(`#${candidates[i]} (could not evaluate: ${settled.reason})`);
+        }
+        else if (settled.value === 'failed') {
+            failed.push(`#${candidates[i]}`);
+        }
+    });
     if (failed.length > 0) {
-        throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`);
+        throw new Error(`could not merge pull request(s) ${failed.join(', ')}`);
     }
 }
 function pullNumber(context) {
@@ -44555,118 +44565,6 @@ function pullNumber(context) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
     return number;
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
-
-
-
-
-
-
-/**
- * Inspired by https://github.com/actions/stale
- * this will recurse through the pages of PRs for a repo
- * and evaluate every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
- * through the shared merge path: the lgtm binding, GitHub's mergeability,
- * then the merge. It is the backstop of the event-driven tide handlers.
- * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused or any evaluation threw, listing the affected PRs.
- * Only a listing that cannot be read stops the run early.
- *
- * @param currentPage - the page to return from the github api
- * @param context - The github actions event context
- * @param progress - merges done and failures collected on earlier pages
- */
-async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
-    platform_platform().log.info(`starting lgtm merger page: ${currentPage}`);
-    const octokit = newOctokitFromInputs();
-    const policy = {
-        tide: base => loadTide(octokit, context, base),
-        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
-    };
-    // Get next batch
-    let prs;
-    try {
-        prs = await getOpenPrs(octokit, context, currentPage);
-    }
-    catch (e) {
-        throw new Error(`could not get PRs: ${e}`);
-    }
-    if (prs.length <= 0) {
-        // All done!
-        if (progress.failures.length > 0) {
-            const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
-            throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
-        }
-        return progress.jobsDone;
-    }
-    await Promise.all(prs.map(async (pr) => {
-        platform_platform().log.info(`processing pr: ${pr.number}`);
-        if (pr.state === 'closed') {
-            return;
-        }
-        if (pr.locked) {
-            return;
-        }
-        try {
-            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
-                progress.jobsDone++;
-            }
-        }
-        catch (error) {
-            // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
-            platform_platform().log.error(`could not evaluate pr #${pr.number}: ${error}`);
-            progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
-        }
-    }));
-    // Recurse, continue to next page
-    return await cronLgtm(currentPage + 1, context, progress);
-}
-/**
- * grabs pulls from github in baches of 100
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions workflow context
- * @param page - the page number to get from the api
- */
-async function getOpenPrs(octokit, context = platform_platform().context(), page) {
-    platform_platform().log.debug(`getting prs page ${page}...`);
-    const prResults = await octokit.pulls.list({
-        ...context.repo,
-        state: 'open',
-        page,
-    });
-    platform_platform().log.debug(`got: ${prResults.data}`);
-    return prResults.data;
-}
-/**
- * Evaluates a PR that passes the tide merge gate on its listed labels
- * through the shared merge path; a PR that does not is skipped with the
- * reason logged and costs no further call. A refused merge is recorded in
- * failures instead of aborting the run. On a branch that requires a merge
- * queue the PR is enqueued instead; that counts as done.
- *
- * @param pr - the PR to try and merge
- * @param octokit - a hydrated github api client
- * @param context - the github actions event context
- * @param policy - the resolved tide and lgtm configuration
- * @param failures - collects PRs whose merge the api refused
- * @returns whether the PR was merged or enqueued
- */
-async function tryMergePr(pr, octokit, context = platform_platform().context(), policy, failures) {
-    const tide = await policy.tide(pr.base.ref);
-    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
-    if (!gate.ok) {
-        platform_platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`);
-        return false;
-    }
-    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
-    if (verdict.result === 'failed') {
-        failures.push({ number: pr.number, message: verdict.message });
-    }
-    return successfulResults.has(verdict.result);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approveReview.js
@@ -45414,14 +45312,40 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
             return;
         }
     }
-    const reviewers = pickReviewers(coverage, count, rng);
+    const picked = pickReviewers(coverage, count, rng);
+    let reviewers = picked;
     try {
         await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
     }
     catch (e) {
-        throw new Error(`could not request reviewers: ${e}`);
+        if (!isUnprocessable(e)) {
+            throw new Error(`could not request reviewers: ${e}`);
+        }
+        // GitHub refuses the whole batch when one login cannot be requested (not a collaborator, the author);
+        // request each alone so the others still get the request
+        reviewers = await requestEach(octokit, context, pullNumber, picked);
+        if (reviewers.length === 0) {
+            throw new Error(`could not request reviewers: ${e}`);
+        }
     }
     platform_platform().log.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+}
+/** requests each reviewer on its own and returns the ones GitHub accepted, warning about the others */
+async function requestEach(octokit, context, pullNumber, reviewers) {
+    const accepted = [];
+    for (const reviewer of reviewers) {
+        try {
+            await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers: [reviewer] });
+            accepted.push(reviewer);
+        }
+        catch (e) {
+            platform_platform().log.warning(`blunderbuss: could not request review from ${reviewer} on #${pullNumber}: ${e}`);
+        }
+    }
+    return accepted;
+}
+function isUnprocessable(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 422;
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
@@ -45791,8 +45715,18 @@ async function sweep(context = platform_platform().context(), now = new Date()) 
 async function sweepPullRequest(octokit, context, pr, plugins) {
     const outcome = { result: 'evaluated', errors: [] };
     // both memoized per base branch: one tree listing however many pull requests share it
-    const hasOwners = await branchHasOwners(octokit, context, pr.base.ref);
-    const tide = await loadTide(octokit, context, pr.base.ref);
+    let hasOwners;
+    let tide;
+    try {
+        hasOwners = await branchHasOwners(octokit, context, pr.base.ref);
+        tide = await loadTide(octokit, context, pr.base.ref);
+    }
+    catch (e) {
+        // collected like a failed step, so a base branch whose OWNERS or configuration cannot be read does not stop the other pull requests
+        outcome.errors.push(`setup: ${e instanceof Error ? e.message : String(e)}`);
+        platform_platform().log.info(`sweep: #${pr.number} ${outcome.result} with ${outcome.errors.length} error(s)`);
+        return outcome;
+    }
     const ownersSteps = [
         ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
         ['blunderbuss', () => plugins.reviewers.delay > 0
@@ -45916,6 +45850,7 @@ async function recentlyUpdatedPulls(octokit, context, since) {
         }
     }
 }
+/** runs fn over items, at most `limit` at once, in order */
 async function forEachLimited(items, limit, fn) {
     let next = 0;
     const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -45924,6 +45859,113 @@ async function forEachLimited(items, limit, fn) {
         }
     });
     await Promise.all(workers);
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
+
+
+
+
+
+
+
+/**
+ * Inspired by https://github.com/actions/stale
+ * this lists every open PR of a repo first, then evaluates every one
+ * that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
+ * through the shared merge path: the lgtm binding, GitHub's mergeability,
+ * then the merge. It is the backstop of the event-driven tide handlers.
+ * Listing before merging keeps a merge from shifting a later PR onto a
+ * page already read. A few PRs are evaluated at a time; every PR is
+ * attempted, and the run then fails if any merge was refused or any
+ * evaluation threw, listing the affected PRs.
+ * Only a listing that cannot be read stops the run early.
+ *
+ * @param context - The github actions event context
+ */
+async function cronLgtm(context) {
+    platform_platform().log.info('starting lgtm merger');
+    const octokit = newOctokitFromInputs();
+    const policy = {
+        tide: base => loadTide(octokit, context, base),
+        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
+    };
+    let prs;
+    try {
+        prs = await getOpenPrs(octokit, context);
+    }
+    catch (e) {
+        throw new Error(`could not get PRs: ${e}`);
+    }
+    const progress = { jobsDone: 0, failures: [] };
+    await forEachLimited(prs, sweepConcurrency, async (pr) => {
+        platform_platform().log.info(`processing pr: ${pr.number}`);
+        if (pr.state === 'closed') {
+            return;
+        }
+        if (pr.locked) {
+            return;
+        }
+        try {
+            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
+                progress.jobsDone++;
+            }
+        }
+        catch (error) {
+            // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
+            platform_platform().log.error(`could not evaluate pr #${pr.number}: ${error}`);
+            progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
+        }
+    });
+    if (progress.failures.length > 0) {
+        const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+        throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
+    }
+    return progress.jobsDone;
+}
+/**
+ * lists every open pull request, following the api's pages
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions workflow context
+ */
+async function getOpenPrs(octokit, context) {
+    platform_platform().log.debug('getting open prs...');
+    const prs = await octokit.paginate(octokit.pulls.list, {
+        ...context.repo,
+        state: 'open',
+        per_page: 100,
+    });
+    platform_platform().log.debug(`got: ${prs.length} open prs`);
+    return prs;
+}
+/**
+ * Evaluates a PR that passes the tide merge gate on its listed labels
+ * through the shared merge path; a PR that does not is skipped with the
+ * reason logged and costs no further call. A refused merge is recorded in
+ * failures instead of aborting the run. On a branch that requires a merge
+ * queue the PR is enqueued instead; that counts as done.
+ *
+ * @param pr - the PR to try and merge
+ * @param octokit - a hydrated github api client
+ * @param context - the github actions event context
+ * @param policy - the resolved tide and lgtm configuration
+ * @param failures - collects PRs whose merge the api refused
+ * @returns whether the PR was merged or enqueued
+ */
+async function tryMergePr(pr, octokit, context = platform_platform().context(), policy, failures) {
+    const tide = await policy.tide(pr.base.ref);
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+    if (!gate.ok) {
+        platform_platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`);
+        return false;
+    }
+    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
+    if (verdict.result === 'failed') {
+        failures.push({ number: pr.number, message: verdict.message });
+    }
+    return successfulResults.has(verdict.result);
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
@@ -45946,7 +45988,7 @@ async function handleCronJobs(context = platform_platform().context()) {
         switch (command) {
             case 'lgtm':
                 platform_platform().log.debug('running cronLgtm job');
-                return await cronLgtm(1, context).catch(async (e) => {
+                return await cronLgtm(context).catch(async (e) => {
                     return e;
                 });
             case 'label-sync':

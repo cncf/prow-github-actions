@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handleCronJobs } from '../../src/cronJobs/handleCronJob'
 import { sweep, sweepConcurrency } from '../../src/cronJobs/sweep'
 import * as requireMatchingLabel from '../../src/plugins/requireMatchingLabel'
+import * as tidePlugin from '../../src/plugins/tide'
 import { maxSweepLookbackMs, parseProwConfig, resolveSweepLookback } from '../../src/utils/config'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
@@ -38,6 +39,7 @@ interface PullSpec {
   head?: string
   mergeable_state?: string
   user?: string
+  base?: string
 }
 
 function pull(spec: PullSpec) {
@@ -57,7 +59,7 @@ function pull(spec: PullSpec) {
     assignees: [],
     user: { login: spec.user ?? 'some-author' },
     head: { sha: spec.head ?? `sha${spec.number}` },
-    base: { ref: 'master', sha: 'basesha' },
+    base: { ref: spec.base ?? 'master', sha: 'basesha' },
   }
 }
 
@@ -215,6 +217,13 @@ describe('sweep candidates', () => {
     await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (require-matching-label: plain string failure)')
   })
 
+  it('records a base branch setup that rejects with a non-Error value as its string form', async () => {
+    servePulls([{ number: 1 }])
+    vi.spyOn(tidePlugin, 'loadTide').mockRejectedValueOnce('plain string failure')
+
+    await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (setup: plain string failure)')
+  })
+
   it('fails when the list cannot be read', async () => {
     server.use(http.get(`${repo}/pulls`, () => json({ message: 'boom' }, 500)))
 
@@ -320,6 +329,24 @@ describe('sweep on a repository without OWNERS files', () => {
 
     await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (tide: Pull Request is not mergeable)')
     await expect(mergeTwo.called()).resolves.toBe('called')
+    expect(info).toHaveBeenCalledWith('sweep: #1 evaluated with 1 error(s)')
+    expect(info).toHaveBeenCalledWith('sweep: #2 merged')
+  })
+
+  it('a pull request whose base branch cannot be read is reported and the others still run', async () => {
+    servePulls([{ number: 1, labels: ['lgtm'], base: 'broken' }, { number: 2, labels: ['lgtm'] }])
+    const mergeOne = new utils.ObserveRequest()
+    const mergeTwo = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/git/trees/broken`, utils.mockResponse(500, { message: 'Server Error' })),
+      http.put(`${repo}/pulls/1/merge`, utils.mockResponse(200, { merged: true }, mergeOne)),
+      http.put(`${repo}/pulls/2/merge`, utils.mockResponse(200, { merged: true }, mergeTwo)),
+    )
+    const info = vi.spyOn(core, 'info')
+
+    await expect(sweep(context)).rejects.toThrow('sweep: 1 pull request(s) failed: #1 (setup: error listing the tree of broken: HttpError: Server Error')
+    await expect(mergeTwo.called()).resolves.toBe('called')
+    await expect(mergeOne.notCalled()).resolves.toBe('not called')
     expect(info).toHaveBeenCalledWith('sweep: #1 evaluated with 1 error(s)')
     expect(info).toHaveBeenCalledWith('sweep: #2 merged')
   })

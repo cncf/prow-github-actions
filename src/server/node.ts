@@ -94,7 +94,7 @@ export function buildScheduler(receiver: WebhookReceiver): Scheduler {
   return {
     settings: receiver.settings,
     tokens: receiver.tokens,
-    installations: appInstallationLister(receiver.settings, receiver.tokens),
+    installations: appInstallationLister(receiver.settings, receiver.tokens, receiver.sink),
     sink: receiver.sink,
     dispatch: handleCronJobs,
   }
