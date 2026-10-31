@@ -41302,12 +41302,21 @@ function loadProwConfig(octokit, context) {
     return pending;
 }
 async function config_load(octokit, context) {
-    const explicit = platform_platform().inputs.get('config', { required: false }).trim();
-    // the org and repo tiers do not depend on each other, so probe both at once
-    const [base, repo] = await Promise.all([
-        explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+    const input = platform_platform().inputs.get('config', { required: false }).trim();
+    // an input that names no source is refused before any request is made
+    const explicit = input === '' ? undefined : parseExplicitSource(input);
+    // the org and repo tiers do not depend on each other, so probe both at once; a failure is raised only
+    // once both have settled, so that no probe is still in flight when loading returns
+    const settled = await Promise.allSettled([
+        explicit === undefined ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
         loadRepoTier(octokit, context),
     ]);
+    const [base, repo] = settled.map((result) => {
+        if (result.status === 'rejected') {
+            throw result.reason;
+        }
+        return result.value;
+    });
     const tiers = [base, repo].filter((tier) => tier !== undefined);
     const merged = tiers.reduce((acc, tier) => mergeProwConfig(acc, tier.config), {});
     const sources = tiers.map(tier => tier.source);
@@ -41331,42 +41340,43 @@ async function loadRepoTier(octokit, context) {
     })), octokit);
 }
 // probes every candidate at once and settles in precedence order: the first that exists wins, and an
-// error stops the walk only when no candidate before it exists, as probing one after another would
+// error stops the walk only when no candidate before it exists, as probing one after another would.
+// It returns only once every probe has answered, so that none is still in flight afterwards.
 async function firstFound(probes, octokit) {
-    const fetched = probes.map(probe => fetchRepoFile(octokit, probe.file));
-    // the walk below may stop before reading every probe; a later rejection is not an unhandled one
-    for (const pending of fetched) {
-        pending.catch(() => undefined);
-    }
+    const settled = await Promise.allSettled(probes.map(probe => fetchRepoFile(octokit, probe.file)));
     for (const [i, probe] of probes.entries()) {
-        let text;
-        try {
-            text = await fetched[i];
+        const result = settled[i];
+        if (result.status === 'rejected') {
+            throw new Error(`${probe.failure} ${probe.source}: ${result.reason}`);
         }
-        catch (e) {
-            throw new Error(`${probe.failure} ${probe.source}: ${e}`);
-        }
-        if (text !== undefined) {
-            return { source: probe.source, config: parseProwConfig(probe.source, text) };
+        if (result.value !== undefined) {
+            return { source: probe.source, config: parseProwConfig(probe.source, result.value) };
         }
     }
     return undefined;
 }
-async function loadExplicitTier(octokit, input) {
+function parseExplicitSource(input) {
     if (input.startsWith('http://')) {
         throw new Error('config: http:// sources are not allowed, use https://');
     }
     if (input.startsWith('https://')) {
-        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+        return { kind: 'url', input };
     }
     const match = explicitSourcePattern.exec(input);
     if (match === null) {
         throw new Error(`config: expected owner/repo:path[@ref] or an https:// url, got '${input}'`);
     }
     const [, owner, repo, path, ref] = match;
+    return { kind: 'repo', input, file: { owner, repo, path, ref } };
+}
+async function loadExplicitTier(octokit, source) {
+    const { input } = source;
+    if (source.kind === 'url') {
+        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+    }
     let text;
     try {
-        text = await fetchRepoFile(octokit, { owner, repo, path, ref });
+        text = await fetchRepoFile(octokit, source.file);
     }
     catch (e) {
         throw new Error(`could not load prow config from ${input}: ${e}`);

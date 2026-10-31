@@ -158,6 +158,24 @@ describe('loadProwConfig', () => {
       await expect(loadProwConfig(octokit, context)).resolves.toMatchObject({ sources: [] })
       expect(started).toBe(utils.configProbes.length)
     })
+
+    it('fails only once every probe of both tiers has answered', async () => {
+      let answered = 0
+      server.use(
+        http.get(utils.contentsUrl('prow.yaml'), () => {
+          answered++
+          return new Response(JSON.stringify({ message: 'forbidden' }), { status: 403 })
+        }),
+        ...utils.configProbes.filter(source => source !== 'Codertocat/Hello-World:prow.yaml').map(source => http.get(utils.contentsUrl(source), async () => {
+          await new Promise(resolve => setTimeout(resolve, 20))
+          answered++
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+        })),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow('could not load prow config from Codertocat/Hello-World:prow.yaml:')
+      expect(answered).toBe(utils.configProbes.length)
+    })
   })
 
   describe('merging', () => {
@@ -310,12 +328,19 @@ describe('loadProwConfig', () => {
       )
     })
 
-    it('rejects an input that is neither owner/repo:path nor a url', async () => {
+    it('rejects an input that is neither owner/repo:path nor a url, without probing the repository tier', async () => {
       process.env.INPUT_CONFIG = 'just-a-file.yaml'
+      let started = 0
+      server.use(...utils.configProbes.map(source => http.get(utils.contentsUrl(source), () => {
+        started++
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+      })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         `config: expected owner/repo:path[@ref] or an https:// url, got 'just-a-file.yaml'`,
       )
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(started).toBe(0)
     })
 
     it('fails when the explicit repo file does not exist', async () => {
