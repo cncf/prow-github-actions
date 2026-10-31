@@ -125,7 +125,7 @@ range of its own, is counted correctly.
 Vitest runs the tests of a file in source order, so a test that leaves state
 behind is only noticed by the tests that happen to follow it. `npm run
 test:shuffle` runs every file's tests in a random order (the seed is printed
-with the failure; `--sequence.seed=<n>` repeats it). The three ways a test has
+with the failure; `--sequence.seed=<n>` repeats it). The four ways a test has
 leaked into its neighbour here, and how each file now avoids them:
 
 - **A mutated fixture.** The JSON fixtures are imported once per file, so
@@ -151,6 +151,16 @@ leaked into its neighbour here, and how each file now avoids them:
   `utils.newRun()`. A file that uses `vi.resetModules()` must import
   `@actions/core` and the module under test fresh together, or the assertion
   spies on a different `core` instance than the one the module warns through.
+- **An installation-token request that never settles.** `@octokit/auth-app`
+  deduplicates concurrent token requests for one installation in a map that is
+  shared by every `createAppAuth` in the process, not one per App. An msw
+  handler for `POST /app/installations/{id}/access_tokens` that returns a
+  promise which never resolves therefore parks every later mint for that
+  installation in the same file, however many receivers the tests build — the
+  next test that mints a token hangs until its timeout without issuing a
+  request. Hold the handler on a promise the test settles in its `finally`
+  (a 500 ends the delivery with no further requests), and wait for the parked
+  delivery's failure line before restoring the spies it logs through.
 
 ### Mutation checks
 
