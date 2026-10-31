@@ -39,4 +39,18 @@ describe('skipReadOnlyForkRun on a payload missing the fields it compares', () =
     expect(skipReadOnlyForkRun(context('pull_request', { action: 'opened', pull_request: forkHead, repository: pullReqOpenedEvent.repository }))).toBe(true)
     expect(notice).toHaveBeenCalledTimes(1)
   })
+
+  it('skips when the head repository is null, as GitHub reports a deleted fork', () => {
+    const deletedFork = { ...pullReqOpenedEvent.pull_request, head: { ...pullReqOpenedEvent.pull_request.head, repo: null } }
+    for (const eventName of ['pull_request', 'pull_request_review']) {
+      expect(skipReadOnlyForkRun(context(eventName, { action: 'opened', pull_request: deletedFork, repository: pullReqOpenedEvent.repository }))).toBe(true)
+    }
+    expect(notice).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not skip a null head repository when the base repository name is missing', () => {
+    const deletedFork = { ...pullReqOpenedEvent.pull_request, head: { ...pullReqOpenedEvent.pull_request.head, repo: null } }
+    expect(skipReadOnlyForkRun(context('pull_request', { action: 'opened', pull_request: deletedFork }))).toBe(false)
+    expect(notice).not.toHaveBeenCalled()
+  })
 })
