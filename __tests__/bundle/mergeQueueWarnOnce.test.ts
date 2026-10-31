@@ -76,13 +76,14 @@ describe('dist/index.js schedule sweep job when the merge queue state read fails
     expect(result.stdout).toContain('merged pr #2')
     expect(result.stdout).toContain('sweep: #1 merged')
     expect(result.stdout).toContain('sweep: #2 merged')
-    // both state reads were attempted and both failed, but only the first is reported
+    // both state reads were attempted and both failed, but only the first to fail is reported; the candidates are
+    // evaluated concurrently, so which one that is varies from run to run
     expect(gh.graphqlCalls('isMergeQueueEnabled')).toHaveLength(2)
     const warnings = result.stdout.split('\n').filter(line => line.startsWith('::warning::') && line.includes(fallback))
     expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('could not read the merge queue state of pr #1')
+    expect(warnings[0]).toMatch(/could not read the merge queue state of pr #[12]; falling back to a direct merge/)
     expect(gh.graphqlCalls('enqueuePullRequest')).toEqual([])
-    expect(gh.requestsMatching('PUT', /\/merge$/).map(r => r.path)).toEqual([`${repo}/pulls/1/merge`, `${repo}/pulls/2/merge`])
+    expect(gh.requestsMatching('PUT', /\/merge$/).map(r => r.path).sort()).toEqual([`${repo}/pulls/1/merge`, `${repo}/pulls/2/merge`])
     // the configuration, the window's page, the OWNERS probe once for the shared base, then per candidate: the pr,
     // its binding, the failed queue read and the direct merge — the candidates are evaluated concurrently, so the
     // two tails interleave in no fixed order
