@@ -365,6 +365,13 @@ Field | Default | Meaning
 `lgtm_acts_as_approve` | `false` | `true`: `/lgtm` counts as `/approve` and `/lgtm cancel` as `/approve cancel` when computing approval; the `lgtm` label is unaffected
 `github_review` | `false` | `true`: while the PR carries `approved`, the token keeps an `APPROVE` review on the PR's head commit, and dismisses it when `approved` goes away, so that a required approving review is met by the Prow decision ([mirrored review](./commands.md#mirroring-approved-as-a-github-review)). Needs "Allow GitHub Actions to create and approve pull requests" with `GITHUB_TOKEN`; that setting is repo-wide and lets **any** workflow approve PRs with `GITHUB_TOKEN`, so a dedicated GitHub App or machine-user `token` is the safer setup ([repository setting](./automatic-merging.md#required-reviews-and-openssf-scorecard)). `false`: no review is written and no extra API call is made
 
+> [!IMPORTANT]
+> **`require_self_approval: true` is stricter than upstream Prow.** Here the PR author never
+> counts toward approval, not even through an explicit `/approve`: someone else must approve
+> every file. In Prow the same setting only turns off the *implicit* author approval, so the
+> author can still approve by commenting `/approve`. Leave it `false` if you want Prow's
+> behaviour of the author counting once they ask.
+
 ### `lgtm`
 
 Field | Default | Meaning
