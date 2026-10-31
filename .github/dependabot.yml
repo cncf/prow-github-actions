@@ -22,3 +22,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # the Dockerfile's node:24-slim, pinned by digest
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # the major tracks action.yml's runs.using (node24); bump them together
+      - dependency-name: node
+        update-types: [version-update:semver-major]
