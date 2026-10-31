@@ -26,3 +26,23 @@ tests:
       redis.url: rediss://r
     asserts:
       - hasDocuments: {count: 1}
+  - it: accepts a short cron macro schedule
+    set:
+      cronjob.schedule: '@hourly'
+    asserts:
+      - hasDocuments: {count: 1}
+  - it: refuses an empty schedule
+    set:
+      cronjob.schedule: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled top-level value
+    set:
+      replicas: 2
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled nested value
+    set:
+      cronjob.schedul: '0 * * * *'
+    asserts:
+      - failedTemplate: {}

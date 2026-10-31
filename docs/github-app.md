@@ -108,6 +108,24 @@ The chart ships no Redis: any Redis 6+ or Valkey will do, and for development
 gives one at `redis://redis:6379`. Upgrade with `helm upgrade prow … --version X.Y.Z`;
 the pods roll when configuration or inline credentials change.
 
+> **One-time step when upgrading from a chart before 3.5.0.** The Deployment,
+> the Service and the PodDisruptionBudget now select
+> `app.kubernetes.io/component: server`, so a CronJob run (labelled
+> `app.kubernetes.io/component: jobs`) is never sent webhook traffic or counted
+> by the PDB. A Deployment's selector cannot change in place, so delete the
+> Deployment once before the upgrade and let Helm recreate it (expect a short
+> gap in webhook handling; GitHub's redelivery covers it):
+>
+> ```sh
+> kubectl delete deployment prow-prow-github-app   # <release>-prow-github-app
+> helm upgrade prow oci://ghcr.io/cncf/prow-github-actions/charts/prow-github-app --version X.Y.Z …
+> ```
+
+The values schema refuses keys the chart does not know, so a misspelled value
+fails the install instead of being ignored. A CronJob run is killed after
+`cronjob.activeDeadlineSeconds` (3000, under the hourly default schedule), so a
+hung run cannot hold back the next one.
+
 Verify what you install:
 
 ```sh
