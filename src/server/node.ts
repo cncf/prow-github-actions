@@ -7,6 +7,7 @@ import process from 'node:process'
 import { serve } from '@hono/node-server'
 
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { createClient } from 'redis'
 import { appInstallationLister, runScheduledJobs } from '../adapters/app/cron'
 import { memoryDeliveryStore } from '../adapters/app/dedupe'
@@ -26,23 +27,27 @@ export interface Stores {
   locks: PullRequestLocks
   /** resolves once the backing service answers; readiness waits on it */
   ready: Promise<void>
+  /** whether the backing service answers right now; readiness is 503 while it does not */
+  connected: () => boolean
   close: () => Promise<void>
 }
 
 export function memoryStores(): Stores {
-  return { deliveries: memoryDeliveryStore(), locks: memoryLocks(), ready: Promise.resolve(), close: async () => {} }
+  return { deliveries: memoryDeliveryStore(), locks: memoryLocks(), ready: Promise.resolve(), connected: () => true, close: async () => {} }
 }
 
 export function redisStores(url: string, sink: LogSink): Stores {
-  const client = createClient({ url })
+  // without the offline queue a command fails at once while redis is down, instead of waiting for it to return
+  const client = createClient({ url, disableOfflineQueue: true })
   client.on('error', (error: unknown) => sink({ level: 'error', message: `redis: ${error instanceof Error ? error.message : String(error)}` }))
   const ready = client.connect().then(() => {
     sink({ level: 'info', message: 'redis: connected' })
   })
   return {
     deliveries: redisDeliveryStore(client),
-    locks: redisLocks(client),
+    locks: redisLocks(client, { sink }),
     ready,
+    connected: () => client.isReady,
     close: async () => {
       await client.close()
     },
@@ -82,7 +87,11 @@ export function buildReceiver(env: Record<string, string | undefined>, stores: S
     deliveries: stores.deliveries,
     sink,
     inFlight,
-    dispatch: (context, delivery) => stores.locks.withLock(pullRequestKey(delivery) ?? `delivery:${delivery.id}`, () => run(context)),
+    // an event about no issue or pull request has nothing to serialize against, as in the Worker
+    dispatch: (context, delivery) => {
+      const key = pullRequestKey(delivery)
+      return key === undefined ? run(context) : stores.locks.withLock(key, () => run(context))
+    },
     background: (work) => {
       inFlight.add(work)
       void work.finally(() => inFlight.delete(work))
@@ -107,15 +116,23 @@ export async function runCronOnce(env: Record<string, string | undefined> = proc
   return report.failed.length === 0 ? 0 : 1
 }
 
-export function buildApp(receiver: WebhookReceiver, stores: Stores = memoryStores()): Hono {
+/** GitHub caps a webhook payload at 25 MB and drops anything larger, so nothing above it is a real delivery */
+export const maxWebhookBytes = 25 * 1024 * 1024
+
+export function buildApp(receiver: WebhookReceiver, stores: Stores = memoryStores(), draining: () => boolean = () => false): Hono {
   const app = new Hono()
   let storesReady = false
   stores.ready.then(() => {
     storesReady = true
   }, () => {})
   app.get('/healthz', c => c.text('ok'))
-  app.get('/readyz', c => (storesReady ? c.text('ok') : c.text('stores not ready', 503)))
-  app.post('/webhook', async (c) => {
+  app.get('/readyz', (c) => {
+    if (draining()) {
+      return c.text('shutting down', 503)
+    }
+    return storesReady && stores.connected() ? c.text('ok') : c.text('stores not ready', 503)
+  })
+  app.post('/webhook', bodyLimit({ maxSize: maxWebhookBytes, onError: c => c.text('payload too large', 413) }), async (c) => {
     const { response } = await receiveWebhook(receiver, c.req.raw)
     return response
   })
@@ -138,17 +155,27 @@ export function main(env: Record<string, string | undefined> = process.env, sign
   const ready = new Promise<void>((resolve) => {
     resolveReady = resolve
   })
-  const server = serve({ fetch: buildApp(receiver, stores).fetch, port }, () => {
+  let draining = false
+  const server = serve({ fetch: buildApp(receiver, stores, () => draining).fetch, port }, () => {
     sink({ level: 'info', message: `listening on :${port}` })
     resolveReady()
   })
   // PROW_CRON_INTERVAL: run the scheduled jobs in-process every N minutes, for a single-container deployment
   const minutes = Number(env.PROW_CRON_INTERVAL ?? 0)
   const scheduler = buildScheduler(receiver)
+  // a run that outlasts the interval is not started again on top of itself
+  let running = false
   const timer = minutes > 0
     ? setInterval(() => {
+        if (running) {
+          sink({ level: 'info', event: 'schedule', message: 'the previous scheduled run is still going; skipping this one' })
+          return
+        }
+        running = true
         runScheduledJobs(scheduler).catch((error) => {
           sink({ level: 'error', event: 'schedule', message: error instanceof Error ? error.message : String(error) })
+        }).finally(() => {
+          running = false
         })
       }, minutes * 60_000)
     : undefined
@@ -168,8 +195,15 @@ export function main(env: Record<string, string | undefined> = process.env, sign
     })()
     return closing
   }
+  // after SIGTERM the server keeps serving for PROW_SHUTDOWN_DRAIN_MS with /readyz at 503,
+  // so the endpoints drop the pod before it stops accepting what is still routed to it
+  const drainMs = Number(env.PROW_SHUTDOWN_DRAIN_MS ?? 5_000)
   const onSignal = (): void => {
-    close().then(() => signals.exit(0), () => signals.exit(1))
+    draining = true
+    sink({ level: 'info', message: `shutting down: not ready, serving for ${drainMs}ms more` })
+    setTimeout(() => {
+      close().then(() => signals.exit(0), () => signals.exit(1))
+    }, drainMs)
   }
   signals.once('SIGTERM', onSignal)
   signals.once('SIGINT', onSignal)

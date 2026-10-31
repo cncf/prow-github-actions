@@ -83,8 +83,9 @@ app.kubernetes.io/component: server
 {{- end }}
 - name: PROW_REPLICAS
   value: {{ .Values.replicaCount | quote }}
+{{- /* the pod's grace less the 5 s preStop sleep, the 5 s drain and 5 s to close the stores */}}
 - name: PROW_SHUTDOWN_GRACE_MS
-  value: {{ sub (mul .Values.terminationGracePeriodSeconds 1000) 5000 | quote }}
+  value: {{ sub (mul .Values.terminationGracePeriodSeconds 1000) 15000 | quote }}
 {{- range .Values.extraEnv }}
 - {{ toYaml . | nindent 2 | trim }}
 {{- end }}
