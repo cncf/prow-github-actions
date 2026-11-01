@@ -390,6 +390,8 @@ describe('dequeue when the gate breaks', () => {
     await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
     expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(0)
     expect(debug).toHaveBeenCalledWith('pr #1 was enqueued by an unknown actor; leaving it in the queue')
+    // only the queue read: with nobody to compare against, the token's login is not looked up
+    expect(calls).toHaveLength(1)
   })
 
   it('not in the queue: one query, no mutation', async () => {

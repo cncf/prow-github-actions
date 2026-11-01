@@ -169,5 +169,6 @@ describe('on a merge queue branch', () => {
     await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
     expect(debug).toHaveBeenCalledWith('pr #1 was enqueued by an unknown actor; leaving it in the queue')
     expect(utils.graphqlMutations(calls, 'dequeuePullRequest')).toHaveLength(0)
+    expect(calls).toHaveLength(1)
   })
 })
