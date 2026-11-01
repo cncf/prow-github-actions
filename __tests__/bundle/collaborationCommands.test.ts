@@ -268,6 +268,14 @@ describe('dist/index.js collaboration commands', () => {
       expect(calls()).toEqual([collaboratorRead])
     })
 
+    it('with a title over 256 characters calls the api not at all and fails the run', async () => {
+      const result = await run(`/retitle ${'x'.repeat(257)}`, '/retitle')
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('the new title is 257 characters long, at most 256 are allowed'))).toBe(true)
+      expect(calls()).toEqual([])
+    })
+
     it('without a title calls the api not at all and fails the run', async () => {
       const result = await run('/retitle', '/retitle')
 

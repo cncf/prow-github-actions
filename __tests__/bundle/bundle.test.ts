@@ -92,6 +92,30 @@ describe('dist/index.js', () => {
     expect(gh.requests).toEqual([])
   })
 
+  it('pull_request labeled lgtm whose head repository was deleted is treated as a fork: a notice and no api call', async () => {
+    const payload = { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }
+    const gone = { ...payload, pull_request: { ...payload.pull_request, head: { ...payload.pull_request.head, repo: null } } }
+
+    const result = await runBundle({ eventName: 'pull_request', payload: gone, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain('::notice::fork pull request under pull_request: the token is read-only; the sweep job handles it')
+    expect(gh.requests).toEqual([])
+  })
+
+  it('pull_request_review on a fork head without a repository in the payload is not skipped as a fork: no notice, no api call', async () => {
+    const { repository: _repository, ...rest } = { ...pullReqReviewSubmittedEvent, action: 'edited' }
+    const payload = { ...rest, pull_request: { ...rest.pull_request, head: { ...rest.pull_request.head, repo: { full_name: 'octocat/Hello-World' } } } }
+
+    const result = await runBundle({ eventName: 'pull_request_review', payload, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).not.toContain('fork pull request under')
+    expect(gh.requests).toEqual([])
+  })
+
   it('issues labeled with no require_matching_label configured only reads the configuration', async () => {
     const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
 
@@ -1798,11 +1822,11 @@ describe('dist/index.js', () => {
       gh.route('PUT', `${repo}/pulls/2/merge`, merge)
     }
 
-    function runCron() {
+    function runCron(inputs: Record<string, string> = {}) {
       return runBundle({
         eventName: 'schedule',
         payload: {},
-        inputs: { ...token, 'jobs': 'lgtm', 'merge-method': 'squash' },
+        inputs: { ...token, 'jobs': 'lgtm', 'merge-method': 'squash', ...inputs },
         apiUrl: gh.url,
       })
     }
@@ -1823,6 +1847,19 @@ describe('dist/index.js', () => {
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
       ])
+    })
+
+    it('an unknown merge-method input is warned about and the pr is merged with merge', async () => {
+      routePulls(openPr(['lgtm']))
+
+      const result = await runCron({ 'merge-method': 'fast-forward' })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`::warning::merge-method: ignoring 'fast-forward', not one of merge, squash, rebase; merging with 'merge'`)
+      const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
+      expect(merges).toHaveLength(1)
+      expect(merges[0].body).toEqual({ merge_method: 'merge', sha: head })
     })
 
     it('tide.merge_method in prow.yaml wins over the merge-method input', async () => {
