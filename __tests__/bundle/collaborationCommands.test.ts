@@ -179,7 +179,8 @@ describe('dist/index.js collaboration commands', () => {
 
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
+      // membership admits the commenter: no collaborator or comment-thread read
+      expect(calls()).toEqual([...memberReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
     })
 
