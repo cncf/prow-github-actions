@@ -13,6 +13,11 @@ export default antfu({
     // Go templates, not yaml
     'charts/*/templates/**',
   ],
+  rules: {
+    // new in @antfu/eslint-config 10: it would re-wrap ~3700 one-line objects
+    // and calls across src/ and __tests__/; the existing layout stays
+    'antfu/reasonable-newline': 'off',
+  },
 }, {
   files: ['__tests__/**/*.test.ts'],
   rules: {

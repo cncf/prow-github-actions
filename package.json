@@ -55,7 +55,7 @@
     "redis": "^6.3.1"
   },
   "devDependencies": {
-    "@antfu/eslint-config": "^9.5.1",
+    "@antfu/eslint-config": "^10.0.0",
     "@cloudflare/workers-types": "^5.20261029.1",
     "@stryker-mutator/core": "^10.1.1",
     "@stryker-mutator/vitest-runner": "^10.1.1",

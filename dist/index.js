@@ -46947,7 +46947,9 @@ function parseCatImage(value) {
     if (!Array.isArray(images) || images.length === 0)
         throw new Error('cat api returned no images');
     const url = images[0]?.url;
+    // a plain Error on purpose: fetchCatImage retries a TypeError as a network failure, and a malformed 2xx must not be retried
     if (typeof url !== 'string')
+        // eslint-disable-next-line unicorn/prefer-type-error
         throw new Error('cat api returned an invalid image record');
     if (url.length > 4096)
         throw new Error('cat api returned an excessively long image url');
