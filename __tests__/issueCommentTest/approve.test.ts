@@ -188,6 +188,47 @@ describe('/approve', () => {
     )
   })
 
+  it('skips a review whose user is null (deleted account) and still dismisses the bot\'s own approval', async () => {
+    const reviews = structuredClone(pullReqListReviews) as Array<Record<string, unknown>>
+    reviews.unshift({ ...reviews[0], id: 79, user: null })
+
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/orgs/Codertocat/members/some-user`,
+        utils.mockResponse(404),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/some-user`,
+        utils.mockResponse(204),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
+        utils.mockResponse(200, reviews),
+      ),
+    )
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.put(
+        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    issueCommentEventAssign.comment.body = '/approve cancel'
+    issueCommentEventAssign.comment.user.login = 'some-user'
+    const commentContext = new utils.MockContext(issueCommentEventAssign)
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await observeReq.called()
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it('removes approval with /remove-approve if commenter is collaborator', async () => {
     server.use(
       http.get(
