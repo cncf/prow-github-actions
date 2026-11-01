@@ -121,6 +121,34 @@ describe('the node server end to end', () => {
     }
   })
 
+  // the App reads PROW_DRY_RUN straight from the environment (settingsFromEnv does not trim it, unlike
+  // core.getInput on Actions), so a value a ConfigMap or Secret hands over with surrounding whitespace or
+  // in another case must still be honoured: a POST /labels here would be an unhandled request and fail
+  it('runCronOnce honours PROW_DRY_RUN carrying surrounding whitespace and upper case, writing no label', async () => {
+    const env = { GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_WEBHOOK_SECRET: webhookSecret, GITHUB_API_URL: api, PROW_JOBS: 'label-sync', PROW_DRY_RUN: ' True\n' }
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      server.use(
+        http.get(`${api}/app/installations`, utils.mockResponse(200, [{ id: 7, suspended_at: null }])),
+        http.post(`${api}/app/installations/7/access_tokens`, utils.mockResponse(201, { token: 'ghs_cron', expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: {}, repository_selection: 'all' })),
+        http.get(`${api}/installation/repositories`, utils.mockResponse(200, { total_count: 1, repositories: [{ name: 'Hello-World', full_name: 'Codertocat/Hello-World', owner: { login: 'Codertocat' }, archived: false }] })),
+        ...utils.configProbes.map((source) => {
+          const [r, path] = source.split(':')
+          return http.get(`${api}/repos/${r}/contents/${encodeURIComponent(path!)}`, utils.mockResponse(404, { message: 'Not Found' }))
+        }),
+        http.get(`${api}/repos/Codertocat/Hello-World/labels`, utils.mockResponse(200, [])),
+      )
+
+      await expect(runCronOnce(env)).resolves.toBe(0)
+
+      const lines = write.mock.calls.map(([chunk]) => String(chunk))
+      expect(lines.some(line => line.includes('(dry-run): would create'))).toBe(true)
+    }
+    finally {
+      write.mockRestore()
+    }
+  })
+
   it('buildScheduler dispatches to handleCronJobs with the receiver\'s settings', () => {
     const receiver = buildReceiver({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_WEBHOOK_SECRET: 's' })
 
