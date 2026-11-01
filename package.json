@@ -69,5 +69,12 @@
     "typescript": "^6.0.3",
     "vitest": "^5.0.0",
     "wrangler": "^4.155.0"
+  },
+  "overrides": {
+    "katex": "^0.19.1",
+    "minimatch@10": "^11.0.1",
+    "qs": "^6.17.1",
+    "sharp": "^0.35.5",
+    "undici@7": "^7.30.1"
   }
 }
