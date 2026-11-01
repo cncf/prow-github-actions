@@ -116,6 +116,19 @@ describe('dist/index.js collaboration commands', () => {
       expect(result.errors.some(e => e.includes('no authorized users found'))).toBe(true)
       expect(gh.requestsMatching('POST', /./)).toEqual([])
     })
+
+    it('warns and requests nobody when the comment-thread read fails unexpectedly', async () => {
+      gh.route('GET', '/orgs/Codertocat/members/stranger', { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/collaborators/stranger`, { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/issues/1/comments`, { status: 500, body: { message: 'boom' } })
+
+      const result = await run('/cc @stranger', '/cc')
+
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.stdout).toContain('::warning::encountered unexpected error checking issue comments: status=500')
+      expect(result.errors.some(e => e.includes('no authorized users found'))).toBe(true)
+      expect(calls()).toEqual(membershipOrCommentReads('stranger'))
+    })
   })
 
   describe('/uncc', () => {
@@ -143,6 +156,19 @@ describe('dist/index.js collaboration commands', () => {
       // membership admits the commenter: no collaborator or comment-thread read
       expect(calls()).toEqual([...memberReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('DELETE', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat', 'hubot'] })
+    })
+
+    it('removes the argument users\' review requests when the commenter is a collaborator but not an org member', async () => {
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+      gh.route('DELETE', `${repo}/pulls/1/requested_reviewers`, { status: 200, body: {} })
+
+      const result = await run('/uncc @octocat', '/uncc')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/pulls/1/requested_reviewers`])
+      expect(gh.requestsMatching('DELETE', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
 
     it('by a commenter who is neither org member nor collaborator removes nothing, even after commenting on the pull request', async () => {
@@ -181,6 +207,19 @@ describe('dist/index.js collaboration commands', () => {
       expect(result.errors).toEqual([])
       // membership admits the commenter: no collaborator or comment-thread read
       expect(calls()).toEqual([...memberReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
+      expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
+    })
+
+    it('unassigns the argument users when the commenter is a collaborator but not an org member', async () => {
+      gh.route('GET', '/orgs/Codertocat/members/Codertocat', { status: 404, body: { message: 'Not Found' } })
+      gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 204 })
+      gh.route('DELETE', `${repo}/issues/1/assignees`, { status: 200, body: {} })
+
+      const result = await run('/unassign @octocat', '/unassign')
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
     })
 
