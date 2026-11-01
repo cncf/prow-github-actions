@@ -8,7 +8,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { approveOnPullRequest, approveOnReview } from '../../src/plugins/approve'
-import { forbiddenWarning, isOwnReview, notPermittedWarning, reviewBody, reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from '../../src/plugins/approveReview'
+import { forbiddenWarning, isOwnReview, notPermittedWarning, reviewBody, reviewMarker, syncApprovalReview, tokenIdentity, tokenLogin, withdrawalReason } from '../../src/plugins/approveReview'
 import { handlePullReq } from '../../src/pullReq/handlePullReq'
 import { handlePullReqReview } from '../../src/pullReq/handlePullReqReview'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -546,6 +546,20 @@ describe('tokenIdentity', () => {
     const octokit = { users: { getAuthenticated: vi.fn().mockRejectedValue('boom') } } as unknown as Parameters<typeof tokenIdentity>[0]
 
     await expect(tokenIdentity(octokit)).rejects.toThrow('could not identify the token for approve.github_review: boom')
+  })
+})
+
+describe('tokenLogin', () => {
+  it('asks the GraphQL viewer once per API base URL and hands later callers the same promise', async () => {
+    const graphql = vi.fn().mockResolvedValue({ viewer: { login: 'Prow-Bot' } })
+    const octokit = { graphql } as unknown as Parameters<typeof tokenLogin>[0]
+
+    const first = tokenLogin(octokit)
+    const second = tokenLogin(octokit)
+
+    expect(second).toBe(first)
+    await expect(first).resolves.toBe('prow-bot')
+    expect(graphql).toHaveBeenCalledTimes(1)
   })
 })
 

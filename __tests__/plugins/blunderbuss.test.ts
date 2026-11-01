@@ -239,6 +239,17 @@ describe('blunderbuss handler', () => {
     expect(await requested(observe)).toEqual(['carol', 'dave', 'rita'])
   })
 
+  it('a review whose user is gone counts for nobody: every candidate is still eligible', async () => {
+    serveConfig()
+    servePr(owners, ['sdk/x.go'])
+    server.use(http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [{ id: 1, user: null, state: 'COMMENTED' }])))
+    const observe = observeRequestReviewers()
+
+    await blunderbuss(prEvent('opened'), first)
+
+    expect(await requested(observe)).toEqual(['alice', 'bob'])
+  })
+
   it('does nothing when every candidate has already reviewed', async () => {
     serveConfig()
     servePr(owners, ['sdk/x.go'], { reviews: { alice: 'APPROVED', bob: 'APPROVED', carol: 'CHANGES_REQUESTED', dave: 'COMMENTED', rita: 'DISMISSED' } })
