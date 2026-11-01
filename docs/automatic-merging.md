@@ -45,7 +45,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.4.0
+      - uses: cncf/prow-github-actions@v3.5.0
         with:
           prow-commands: /lgtm /approve /hold /kind /area /priority /check-required-labels /auto-cc
           jobs: lgtm
@@ -196,7 +196,7 @@ jobs:
   execute:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.4.0
+      - uses: cncf/prow-github-actions@v3.5.0
         with:
           jobs: lgtm
           github-token: '${{ secrets.GITHUB_TOKEN }}'

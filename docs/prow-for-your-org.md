@@ -129,7 +129,7 @@ concurrency:
 jobs:
   prow:
     if: github.event_name != 'workflow_dispatch' && github.event_name != 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.4.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.5.0
     # optional; the defaults enable every built-in command and the lgtm job
     # with:
     #   prow-commands: /lgtm /approve /hold /kind /area /priority
@@ -141,12 +141,12 @@ jobs:
 
   label-sync:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
-    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.4.0
+    uses: cncf/prow-github-actions/.github/workflows/prow.yml@v3.5.0
     with:
       jobs: label-sync
 ```
 
-The templates pin the release `@v3.4.0`; [upgrading](./installing.md#upgrading) covers moving to
+The templates pin the release `@v3.5.0`; [upgrading](./installing.md#upgrading) covers moving to
 newer releases, the floating `v3` tag and hash pinning. The `permissions` block is the
 ceiling: the reusable workflow can only downgrade what the caller grants
 ([installing](./installing.md#one-repository)). Inputs, secrets and upgrading are covered
