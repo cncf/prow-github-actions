@@ -76,6 +76,43 @@ describe('main() and PROW_CRON_INTERVAL', () => {
     }
   })
 
+  it('skips a tick while the previous scheduled run is still going, and runs again once it has finished', async () => {
+    vi.useFakeTimers()
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    const port = 20000 + Math.floor(Math.random() * 1000)
+    server.use(http.all(`http://127.0.0.1:${port}/*`, () => passthrough()))
+    let polls = 0
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(http.get(`${api}/app/installations`, async () => {
+      polls++
+      await held
+      return new Response('[]', { headers: { 'Content-Type': 'application/json' } })
+    }))
+    const listening = main({ ...env, PORT: String(port), PROW_CRON_INTERVAL: '1' })
+    try {
+      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.waitFor(() => expect(polls).toBe(1))
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(polls).toBe(1)
+      expect(stdoutLines(write)).toContainEqual(expect.objectContaining({ level: 'info', event: 'schedule', message: 'the previous scheduled run is still going; skipping this one' }))
+
+      release()
+      await vi.waitFor(() => expect(stdoutLines(write)).toContainEqual(expect.objectContaining({ message: expect.stringContaining('scheduled jobs ran') })))
+      await vi.advanceTimersByTimeAsync(60_000)
+      await vi.waitFor(() => expect(polls).toBe(2))
+    }
+    finally {
+      release()
+      await listening.close()
+      vi.useRealTimers()
+      write.mockRestore()
+    }
+  })
+
   it('does not schedule anything when PROW_CRON_INTERVAL is unset', async () => {
     vi.useFakeTimers()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)

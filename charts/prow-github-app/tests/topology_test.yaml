@@ -100,7 +100,7 @@ tests:
     template: cronjob.yaml
     asserts:
       - hasDocuments: {count: 0}
-  - it: the shutdown grace is five seconds under the pod's
+  - it: the shutdown grace is fifteen seconds under the pod's, after the preStop sleep and the drain
     set:
       terminationGracePeriodSeconds: 45
     template: deployment.yaml
@@ -108,7 +108,23 @@ tests:
       - equal: {path: spec.template.spec.terminationGracePeriodSeconds, value: 45}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: PROW_SHUTDOWN_GRACE_MS, value: '40000'}
+          content: {name: PROW_SHUTDOWN_GRACE_MS, value: '30000'}
+      - equal:
+          path: spec.template.spec.containers[0].lifecycle.preStop.exec.command
+          value: [sleep, '5']
+  - it: by default the pod has 75 s to stop and the server waits 60 s for in-flight events
+    template: deployment.yaml
+    asserts:
+      - equal: {path: spec.template.spec.terminationGracePeriodSeconds, value: 75}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: PROW_SHUTDOWN_GRACE_MS, value: '60000'}
+  - it: refuses a grace too short for the preStop sleep, the drain and closing the stores
+    set:
+      terminationGracePeriodSeconds: 15
+    template: deployment.yaml
+    asserts:
+      - failedTemplate: {}
   - it: a cron run is killed after cronjob.activeDeadlineSeconds
     template: cronjob.yaml
     asserts:

@@ -107,7 +107,7 @@
       }
     },
     "resources": { "type": "object" },
-    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 10 },
+    "terminationGracePeriodSeconds": { "type": "integer", "minimum": 20 },
     "podAnnotations": { "type": "object" },
     "podLabels": { "type": "object" },
     "nodeSelector": { "type": "object" },

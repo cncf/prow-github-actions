@@ -48,7 +48,8 @@ the organization (all repositories, or the ones Prow should manage).
 | `GITHUB_API_URL` | no | the REST root for GitHub Enterprise Server, e.g. `https://ghes.example/api/v3` |
 | `PORT` | no | listening port, default `8080` |
 | `REDIS_URL` | for several replicas | shared dedupe and locks, see [One replica or several](#one-replica-or-several) |
-| `PROW_SHUTDOWN_GRACE_MS` | no | how long `SIGTERM` waits for in-flight events, default `25000` |
+| `PROW_SHUTDOWN_DRAIN_MS` | no | how long the server keeps serving after `SIGTERM`, with `/readyz` at 503, default `5000` |
+| `PROW_SHUTDOWN_GRACE_MS` | no | how long it then waits for in-flight events, default `25000` |
 | `PROW_COMMANDS` | no | same as the action's `prow-commands` input |
 | `PROW_JOBS` | no | same as `jobs`; what the scheduler runs. Default `lgtm` |
 | `PROW_CRON_INTERVAL` | no | minutes between scheduled runs inside the server; unset means none (use the `cron` command) |
@@ -146,13 +147,20 @@ docker run -p 8080:8080 \
 ```
 
 (or `docker build -t prow-app .` from the repository.) `GET /healthz` answers
-`ok` (liveness); `GET /readyz` answers `ok` once the stores below are reachable
-(readiness). `POST /webhook` verifies `X-Hub-Signature-256`, answers `202` at
-once and handles the event afterwards. A pull request's events run one at a
-time, in order, as the action's `concurrency:` group arranges; a redelivered
-`X-GitHub-Delivery` id is handled once. On `SIGTERM` the server stops accepting,
-lets in-flight events finish (`PROW_SHUTDOWN_GRACE_MS`, default 25 000) and
-exits. For local testing, relay deliveries with [smee.io](https://smee.io) or
+`ok` (liveness); `GET /readyz` answers `ok` while the stores below are reachable,
+and `503` when they are not or the server is shutting down (readiness).
+`POST /webhook` verifies `X-Hub-Signature-256`, answers `202` at once and
+handles the event afterwards; a body above GitHub's 25 MB cap gets `413`, and an
+event about no repository or installation (`installation`,
+`github_app_authorization` and the like) gets `202 ignored`. A pull request's
+events run one at a time, in order, as the action's `concurrency:` group
+arranges; other events run at once. A redelivered `X-GitHub-Delivery` id is
+handled once it has succeeded; one whose handling failed runs again. On
+`SIGTERM` the server answers `/readyz` with `503` and keeps serving for
+`PROW_SHUTDOWN_DRAIN_MS` (default 5 000), then stops accepting, lets in-flight
+events finish (`PROW_SHUTDOWN_GRACE_MS`, default 25 000) and exits. The chart
+gives the pod 75 s (`terminationGracePeriodSeconds`): a 5 s `preStop` sleep,
+the drain, and 15 s less than the pod's grace for in-flight events. For local testing, relay deliveries with [smee.io](https://smee.io) or
 `gh webhook forward`.
 
 ### One replica or several
@@ -165,8 +173,10 @@ exits. For local testing, relay deliveries with [smee.io](https://smee.io) or
 Without `REDIS_URL`, two replicas would each handle a redelivery and could race
 on one pull request; the server warns at startup when `PROW_REPLICAS` is above
 1 and `REDIS_URL` is unset. Any Redis 6+ or Valkey works; the server uses two
-keys per event (`prow:delivery:<id>`, a day; `prow:lock:<owner/repo#n>`, a
-minute at most) and nothing else.
+keys per event and nothing else: `prow:delivery:<id>` (ten minutes while the
+event runs, a day once it has succeeded, removed if it failed) and
+`prow:lock:<owner/repo#n>` (a minute, renewed while its holder runs; another
+event on the pull request waits up to five minutes for it).
 
 ## Scheduled jobs
 
@@ -180,7 +190,8 @@ node dist-server/index.js cron
 
 The chart's CronJob does exactly this (`cronjob.schedule`, hourly by default).
 For a single container with no scheduler, `PROW_CRON_INTERVAL=60` runs the jobs
-inside the server every hour instead.
+inside the server every hour instead; a tick that comes while the previous run
+is still going is skipped and logged.
 
 Each repository runs under its own installation token and state, four at a time;
 a repository that fails is logged and reported, and never stops the others.

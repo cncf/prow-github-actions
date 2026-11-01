@@ -58,6 +58,11 @@ spec:
             - configMapRef:
                 name: {{ include "prow-github-app.fullname" . }}
           env: {{- include "prow-github-app.env" . | nindent 12 }}
+          lifecycle:
+            # endpoints controllers see the terminating pod a moment after the kubelet does: keep serving until they have
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 10

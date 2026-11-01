@@ -1,9 +1,11 @@
+import type { DeliveryStore } from '../../../src/adapters/app/dedupe'
 import type { staticTokens } from './testApp'
 
 import { describe, expect, it } from 'vitest'
+import { memoryDeliveryStore } from '../../../src/adapters/app/dedupe'
 import { receiveWebhook } from '../../../src/adapters/app/webhook'
 import issueCommentEvent from '../../fixtures/issues/issueCommentEvent.json'
-import { receiver, signedRequest, withInstallation } from './testApp'
+import { receiver, recordingSink, signedRequest, withInstallation } from './testApp'
 
 const payload = withInstallation(issueCommentEvent)
 
@@ -79,22 +81,110 @@ describe('receiveWebhook', () => {
     expect(r.dispatched).toHaveLength(1)
   })
 
-  it('refuses a delivery without an installation with 400', async () => {
+  it('answers 401 "bad signature" to an empty body that carries a signature, instead of throwing', async () => {
     const r = receiver()
 
-    const { response } = await receiveWebhook(r, await signedRequest('issue_comment', issueCommentEvent))
+    const { response, handled } = await receiveWebhook(r, await signedRequest('issue_comment', null, { body: '', signature: 'sha256=00' }))
 
-    expect(response.status).toBe(400)
-    expect(r.dispatched).toEqual([])
+    expect(response.status).toBe(401)
+    await expect(response.text()).resolves.toBe('bad signature')
+    expect(handled).toBeUndefined()
   })
 
-  it('refuses a delivery without a repository with 400', async () => {
+  it.each([
+    ['without an installation', issueCommentEvent],
+    ['without a repository', (({ repository: _repository, ...noRepo }) => noRepo)(payload)],
+    ['whose body is json null', null],
+  ])('answers 202 "ignored" to a delivery %s, logs it at info and never claims the id', async (_name, body) => {
+    const { lines, sink } = recordingSink()
+    const r = receiver({
+      sink,
+      deliveries: { seen: async () => {
+        throw new Error('store must not be consulted')
+      } },
+    })
+
+    const { response, handled } = await receiveWebhook(r, await signedRequest('installation', body, { id: 'app-event' }))
+
+    expect(response.status).toBe(202)
+    await expect(response.text()).resolves.toBe('ignored')
+    expect(handled).toBeUndefined()
+    expect(r.dispatched).toEqual([])
+    expect(lines).toEqual([{ level: 'info', delivery: 'app-event', event: 'installation', message: 'ignored: no repository or installation' }])
+  })
+
+  it('refuses an unusable installation with 400 and frees the id it claimed, so a corrected redelivery is handled', async () => {
     const r = receiver()
-    const { repository: _repository, ...noRepo } = payload
 
-    const { response } = await receiveWebhook(r, await signedRequest('issue_comment', noRepo))
+    const broken = await receiveWebhook(r, await signedRequest('issue_comment', { ...payload, installation: { id: '7' } }, { id: 'fixable' }))
+    expect(broken.response.status).toBe(400)
 
-    expect(response.status).toBe(400)
+    const corrected = await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'fixable' }))
+    expect(corrected.response.status).toBe(202)
+    await corrected.handled
+    expect(r.dispatched).toHaveLength(1)
+  })
+
+  it('records a handled delivery as done and a failed one as forgotten, so only the failed one runs again on redelivery', async () => {
+    const steps: string[] = []
+    const store = memoryDeliveryStore()
+    const deliveries: DeliveryStore = {
+      seen: store.seen,
+      done: async (id) => {
+        steps.push(`done ${id}`)
+      },
+      forget: async (id) => {
+        steps.push(`forget ${id}`)
+        await store.forget!(id)
+      },
+    }
+    const r = receiver({
+      deliveries,
+      dispatch: async (context) => {
+        if (context.payload.comment?.body === 'fail') {
+          throw new Error('handler blew up')
+        }
+      },
+    })
+    const failing = structuredClone(payload)
+    failing.comment.body = 'fail'
+
+    await (await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'ok' }))).handled
+    await (await receiveWebhook(r, await signedRequest('issue_comment', failing, { id: 'bad' }))).handled
+
+    expect(steps).toEqual(['done ok', 'forget bad'])
+    expect((await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'ok' }))).response.status).toBe(200)
+    expect((await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'bad' }))).response.status).toBe(202)
+  })
+
+  it('handles a delivery with a store that records neither outcome', async () => {
+    const r = receiver({ deliveries: { seen: async () => false } })
+
+    const { handled } = await receiveWebhook(r, await signedRequest('issue_comment', payload))
+
+    await expect(handled).resolves.toBeUndefined()
+    expect(r.dispatched).toHaveLength(1)
+  })
+
+  it('logs a store that cannot record the outcome, and never rejects the handled promise', async () => {
+    const { lines, sink } = recordingSink()
+    const r = receiver({
+      sink,
+      deliveries: {
+        seen: async () => false,
+        done: async () => {
+          throw new Error('redis is down')
+        },
+        // eslint-disable-next-line prefer-promise-reject-errors
+        forget: () => Promise.reject('offline'),
+      },
+    })
+
+    await expect((await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'a' }))).handled).resolves.toBeUndefined()
+    await receiveWebhook(r, await signedRequest('issue_comment', { ...payload, installation: { id: '7' } }, { id: 'b' }))
+
+    expect(lines).toContainEqual({ level: 'error', delivery: 'a', message: 'delivery store: done failed: redis is down' })
+    expect(lines).toContainEqual({ level: 'error', delivery: 'b', message: 'delivery store: forget failed: offline' })
   })
 
   it('turns a handler rejection into fail() and a logged error, not an unhandled rejection', async () => {

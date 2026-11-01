@@ -80,8 +80,10 @@ resources:
   limits:
     memory: 256Mi
 
-# seconds SIGTERM waits for in-flight events before the pod is killed; the server itself waits PROW_SHUTDOWN_GRACE_MS (25 s)
-terminationGracePeriodSeconds: 30
+# seconds from SIGTERM until the pod is killed. They go to a 5 s preStop sleep, 5 s more serving with /readyz at 503
+# (PROW_SHUTDOWN_DRAIN_MS), then up to PROW_SHUTDOWN_GRACE_MS (this minus 15 s: 60 s) waiting for in-flight events,
+# leaving 5 s to close the stores. A delivery can wait up to 5 minutes for a pull request's lock, so keep this generous
+terminationGracePeriodSeconds: 75
 
 podAnnotations: {}
 podLabels: {}

@@ -36,7 +36,8 @@ export async function receiveWebhook(receiver: WebhookReceiver, request: Request
     return { response: new Response('missing delivery headers', { status: 400 }) }
   }
   const body = await request.text()
-  if (!signature || !(await verify(receiver.settings.webhookSecret, body, signature))) {
+  // verify() throws on an empty body rather than answering false
+  if (!signature || !body || !(await verify(receiver.settings.webhookSecret, body, signature))) {
     receiver.sink({ level: 'warning', delivery: id, event: eventName, message: 'rejected: bad signature' })
     return { response: new Response('bad signature', { status: 401 }) }
   }
@@ -51,6 +52,11 @@ export async function receiveWebhook(receiver: WebhookReceiver, request: Request
   if (eventName === 'ping') {
     return { response: new Response('pong', { status: 200 }) }
   }
+  // installation, github_app_authorization and the like are about the App, not a repository: nothing here handles them
+  if (!payload?.repository || payload.installation?.id === undefined) {
+    receiver.sink({ level: 'info', delivery: id, event: eventName, message: 'ignored: no repository or installation' })
+    return { response: new Response('ignored', { status: 202 }) }
+  }
   if (await receiver.deliveries.seen(id)) {
     receiver.sink({ level: 'info', delivery: id, event: eventName, message: 'duplicate delivery ignored' })
     return { response: new Response('already handled', { status: 200 }) }
@@ -63,6 +69,7 @@ export async function receiveWebhook(receiver: WebhookReceiver, request: Request
   }
   catch (error) {
     receiver.sink({ level: 'warning', delivery: id, event: eventName, message: error instanceof Error ? error.message : String(error) })
+    await forget(receiver, id)
     return { response: new Response('unusable delivery', { status: 400 }) }
   }
 
@@ -74,7 +81,28 @@ export async function receiveWebhook(receiver: WebhookReceiver, request: Request
     catch (error) {
       run.platform.fail(error instanceof Error ? error.message : String(error))
     }
+    // a delivery that failed is forgotten, so GitHub's redelivery runs it again; one that succeeded is remembered
+    if (run.failures.length > 0) {
+      await forget(receiver, id)
+    }
+    else {
+      await settle(receiver, id, 'done', store => store.done?.(id))
+    }
   })()
   receiver.background(handled)
   return { response: new Response('accepted', { status: 202 }), handled }
+}
+
+function forget(receiver: WebhookReceiver, id: string): Promise<void> {
+  return settle(receiver, id, 'forget', store => store.forget?.(id))
+}
+
+/** records how a claimed delivery ended; a store that cannot is logged, never thrown, since the response is already sent */
+async function settle(receiver: WebhookReceiver, id: string, step: string, record: (store: DeliveryStore) => Promise<void> | undefined): Promise<void> {
+  try {
+    await record(receiver.deliveries)
+  }
+  catch (error) {
+    receiver.sink({ level: 'error', delivery: id, message: `delivery store: ${step} failed: ${error instanceof Error ? error.message : String(error)}` })
+  }
 }
