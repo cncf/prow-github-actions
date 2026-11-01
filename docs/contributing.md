@@ -216,21 +216,23 @@ changes an observable effect (a request made or not made, a label applied, a
 thrown message a caller reads); record it here instead when it is equivalent
 or only changes text nobody asserts on.
 
-Reviewed survivors of the files the nightly run adds (`npm run test:mutation
--- --mutate src/plugins/tide.ts --mutate src/utils/mergeQueue.ts` at 424fb95:
-596 killed, 24 survived, none in `mergeQueue.ts`):
+Reviewed survivors of the files the nightly run adds (the scheduled `mutation`
+job at a192ee1, v3.5.0: `tide.ts` 497 killed, 25 survived; `mergeQueue.ts`
+125 killed, 1 survived; the `tide.ts:352` survivor of that run is now killed
+by the `calls).toHaveLength(1)` assertions of the two enqueuer-less tests):
 
 | Mutant | Why it is left |
 |--------|----------------|
-| `tide.ts:98`, `:308`, `:312`, `:444-445`, `:461-462`, `:504-505`, `:547` — `platform().log.debug` text and the conditions that only select a debug line (`!mergeableStates.has(pr.state)`, the `merge-method-ignored` warn-once condition, `action === undefined` before a `Set.has(action)` that is false for `undefined` anyway, `conclusion !== undefined` likewise) | Debug output is not asserted; the `warned` entry the `merge-method-ignored` condition adds is read nowhere else |
-| `tide.ts:337` `could not enqueue pr` error text | Only the log line changes; the returned `{ result: 'failed', message }` carries `outcome.message` unchanged |
-| `tide.ts:246` `compared.data.files ?? []` → a non-empty placeholder | `workflowFiles` keeps only paths under `.github/workflows/`, so the placeholder is filtered out |
-| `tide.ts:261` `' and '` and `:267` `' '` joiners of the fork-workflows comment | Text of a comment nobody asserts on; both lists still name every file |
-| `tide.ts:421` `data.base.repo?.full_name` → `.repo.full_name` | A pull request's base repository is always present; the two differ only on a payload GitHub never sends |
-| `tide.ts:429-431` `catch { return false }` → `catch {}` | An empty catch returns `undefined`, which every caller tests for truthiness, so `isMerged` still reads as false |
-| `tide.ts:532` `let hasOwners = false` → `true` | `hasOwners` is only read by `resolveTide` when `tide.labels` is unset, and that branch assigns it before use; with `labels` set, `??` never looks at it |
-| `tide.ts:536` `inputs.get('merge-method', { required: false })` → `{}` | `required` defaults to false |
-| `tide.ts:553` `numbers.length === 0 && lookup !== undefined` → `lookup` always taken | Every caller that can pass an empty list (`tideOnCheckSuite`) also passes `lookup`; the others pass one number |
+| `tide.ts:99`, `:309`, `:313`, `:445`, `:462-463`, `:505-506`, `:548` — `platform().log.debug` text and the conditions that only select a debug line (`!mergeableStates.has(pr.state)`, the `merge-method-ignored` warn-once condition, `action === undefined` before a `Set.has(action)` that is false for `undefined` anyway, `conclusion !== undefined` likewise) | Debug output is not asserted; the `warned` entry the `merge-method-ignored` condition adds is read nowhere else |
+| `tide.ts:338` `could not enqueue pr` error text | Only the log line changes; the returned `{ result: 'failed', message }` carries `outcome.message` unchanged |
+| `tide.ts:247` `compared.data.files ?? []` → a non-empty placeholder | `workflowFiles` keeps only paths under `.github/workflows/`, so the placeholder is filtered out |
+| `tide.ts:262` `' and '` and `:268` `' '` joiners of the fork-workflows comment | Text of a comment nobody asserts on; both lists still name every file |
+| `tide.ts:422` `data.base.repo?.full_name` → `.repo.full_name` | A pull request's base repository is always present; the two differ only on a payload GitHub never sends |
+| `tide.ts:430` `catch { return false }` → `catch {}` | An empty catch returns `undefined`, which every caller tests for truthiness, so `isMerged` still reads as false |
+| `tide.ts:533` `let hasOwners = false` → `true` | `hasOwners` is only read by `resolveTide` when `tide.labels` is unset, and that branch assigns it before use; with `labels` set, `??` never looks at it |
+| `tide.ts:537` `inputs.get('merge-method', { required: false })` → `{}` | `required` defaults to false |
+| `tide.ts:554` `numbers.length === 0 && lookup !== undefined` → `lookup` always taken | Every caller that can pass an empty list (`tideOnCheckSuite`) also passes `lookup`; the others pass one number |
+| `mergeQueue.ts:102` `entry.enqueuer.__typename === undefined ? {} : { enqueuerType }` → the `enqueuerType` key always spread | The spread then sets `enqueuerType: undefined`, which `enqueuedByBot` (`=== 'Bot'`) and `toEqual` cannot tell from an absent key |
 
 Reviewed survivors of the default set:
 
