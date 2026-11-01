@@ -58,6 +58,11 @@ export function kvDeliveryStore(kv: KVNamespace): DeliveryStore {
       await kv.put(key, '1', { expirationTtl: 86_400 })
       return false
     },
+    // a claim and a handled id are the same KV entry, so finishing changes nothing and failing drops the claim
+    async done() {},
+    async forget(id) {
+      await kv.delete(`delivery:${id}`)
+    },
   }
 }
 

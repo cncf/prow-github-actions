@@ -142,6 +142,8 @@ export default {
   async function deliver(id: string) {
     const payload = structuredClone(issueCommentEvent) as typeof issueCommentEvent & { installation?: { id: number } }
     payload.installation = { id: 7 }
+    // edited comments succeed without commands configured in wrangler.toml; failed deliveries are forgotten
+    payload.action = 'edited'
     payload.comment.body = 'no command here'
     const body = JSON.stringify(payload)
     return mf.dispatchFetch('https://prow.test/webhook', {
