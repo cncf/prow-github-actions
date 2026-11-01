@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { appInstallationLister, runScheduledJobs } from '../../../src/adapters/app/cron'
 import { appTokenSource } from '../../../src/adapters/app/platform'
 import { asyncLocalScope } from '../../../src/adapters/app/scope'
+import { handleCronJobs } from '../../../src/cronJobs/handleCronJob'
 import { globalPlatformScope, installPlatformScope, platform } from '../../../src/platform'
 import * as utils from '../../testUtils'
 import { recordingSink, settings, staticTokens } from './testApp'
@@ -138,6 +139,42 @@ describe('runScheduledJobs', () => {
     })
 
     expect(report.failed.sort()).toEqual(['globex/core', 'globex/docs'])
+  })
+})
+
+describe('runScheduledJobs dispatching handleCronJobs', () => {
+  const server = setupServer()
+  utils.failTestOnUnhandledRequests(server)
+  beforeAll(() => {
+    installPlatformScope(asyncLocalScope())
+    server.listen(utils.failOnUnhandledRequest)
+  })
+  afterEach(() => server.resetHandlers())
+  afterAll(() => {
+    server.close()
+    installPlatformScope(globalPlatformScope)
+  })
+
+  // the App hands PROW_JOBS over as the environment carries it (settingsFromEnv does not trim, unlike
+  // core.getInput on Actions), and a ConfigMap block scalar ends in a newline; the empty token that
+  // splitting such a value leaves behind must not reach the "no jobs" arm and fail every repository
+  it('runs the jobs named by a PROW_JOBS value carrying a trailing newline, failing no repository', async () => {
+    const { lines, sink } = recordingSink()
+    server.use(
+      ...utils.noOrgOrRepoConfigExcept(),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/pulls`, utils.mockResponse(200, [])),
+    )
+
+    const report = await runScheduledJobs({
+      settings: { ...settings, inputs: { jobs: 'lgtm\n' } },
+      tokens: staticTokens(),
+      installations: listing({ installationId: 7, repository: repo('Codertocat', 'Hello-World') }),
+      sink,
+      dispatch: context => handleCronJobs(context),
+    })
+
+    expect(report).toEqual({ repositories: 1, failed: [] })
+    expect(lines.filter(line => line.level === 'error')).toEqual([])
   })
 })
 
