@@ -178,13 +178,19 @@ describe('receiveWebhook', () => {
     expect((await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'bad' }))).response.status).toBe(202)
   })
 
-  it('handles a delivery with a store that records neither outcome', async () => {
-    const r = receiver({ deliveries: { seen: async () => false } })
+  it('handles a delivery with a store that records neither outcome, and logs no store error for either outcome', async () => {
+    const { lines, sink } = recordingSink()
+    const r = receiver({ sink, deliveries: { seen: async () => false } })
 
-    const { handled } = await receiveWebhook(r, await signedRequest('issue_comment', payload))
-
+    const { handled } = await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'ok' }))
     await expect(handled).resolves.toBeUndefined()
+    // the unusable installation takes the forget arm, which the store cannot record either
+    const broken = await receiveWebhook(r, await signedRequest('issue_comment', { ...payload, installation: { id: '7' } }, { id: 'bad' }))
+
+    expect(broken.response.status).toBe(400)
     expect(r.dispatched).toHaveLength(1)
+    expect(lines.filter(line => line.level === 'error')).toEqual([])
+    expect(lines.map(line => line.delivery)).toEqual(['bad'])
   })
 
   it('logs a store that cannot record the outcome, and never rejects the handled promise', async () => {
