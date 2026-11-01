@@ -25,6 +25,9 @@ queue = "prow-jobs"
 queue = "prow-jobs"
 max_batch_size = 1
 max_retries = 3
+# a message that failed every retry (a deferred check, a delivery, a scheduled run) lands here instead of
+# being dropped; nothing consumes it, so it keeps four days for `wrangler queues` to inspect or replay
+dead_letter_queue = "prow-jobs-dlq"
 
 # one object per pull request runs its events in order
 [[durable_objects.bindings]]

@@ -5,6 +5,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { actionsPlatform } from '../../src/adapters/actions'
+import { asyncLocalScope } from '../../src/adapters/app/scope'
 import { globalPlatformScope, installPlatformScope, newRunState, platform, runWithPlatform, setPlatform } from '../../src/platform'
 import { loadProwConfig } from '../../src/utils/config'
 import { newOctokit } from '../../src/utils/octokit'
@@ -47,14 +48,40 @@ describe('runState', () => {
 
     const first = withState()
     const second = withState()
-    await runWithPlatform(first, () => loadProwConfig(octokit, context))
-    await runWithPlatform(first, () => loadProwConfig(octokit, context))
-    expect(reads).toBe(1)
-    expect(first.state().configs.size).toBe(1)
+    installPlatformScope(asyncLocalScope())
+    try {
+      await runWithPlatform(first, () => loadProwConfig(octokit, context))
+      await runWithPlatform(first, () => loadProwConfig(octokit, context))
+      expect(reads).toBe(1)
+      expect(first.state().configs.size).toBe(1)
 
-    await runWithPlatform(second, () => loadProwConfig(octokit, context))
-    expect(reads).toBe(2)
-    expect(second.state().configs.size).toBe(1)
+      await runWithPlatform(second, () => loadProwConfig(octokit, context))
+      expect(reads).toBe(2)
+      expect(second.state().configs.size).toBe(1)
+    }
+    finally {
+      installPlatformScope(globalPlatformScope)
+    }
+  })
+
+  it('the process-wide scope refuses async work, whose awaits would resume under no platform, and restores the outer one', async () => {
+    const outer = withState()
+    const inner = withState()
+    setPlatform(outer)
+    let resumedUnder: Platform | undefined
+    let resumed!: () => void
+    const done = new Promise<void>((resolve) => {
+      resumed = resolve
+    })
+
+    expect(() => runWithPlatform(inner, async () => {
+      await Promise.resolve()
+      resumedUnder = platform()
+      resumed()
+    })).toThrow(new TypeError('runWithPlatform was given async work under the process-wide platform scope, which ends at its first await: install a scope that follows async work (asyncLocalScope) first'))
+    expect(platform()).toBe(outer)
+    await done
+    expect(resumedUnder).toBe(outer)
   })
 
   it('runWithPlatform restores the outer platform, including after a throw', () => {

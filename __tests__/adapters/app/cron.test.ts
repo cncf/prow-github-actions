@@ -225,4 +225,38 @@ describe('appInstallationLister', () => {
     expect(out).toEqual([])
     expect(lines).toEqual([expect.objectContaining({ installationId: 1, message: 'could not list the repositories of installation 1: plain string failure' })])
   })
+
+  it('installations() mints no token and lists no repository; repositoriesOf() reaches only the installation it is given', async () => {
+    const seen: string[] = []
+    server.use(
+      http.get(`${api}/app/installations`, () => {
+        seen.push('list installations')
+        return Response.json([{ id: 1, suspended_at: null }, { id: 9, suspended_at: '2026-01-01T00:00:00Z' }, { id: 2, suspended_at: null }])
+      }),
+      http.post(`${api}/app/installations/:id/access_tokens`, ({ params }) => {
+        seen.push(`mint ${String(params.id)}`)
+        return Response.json({ token: `tok-${String(params.id)}`, expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: {}, repository_selection: 'all' }, { status: 201 })
+      }),
+      http.get(`${api}/installation/repositories`, ({ request }) => {
+        seen.push(`list repositories as ${String(request.headers.get('authorization'))}`)
+        return Response.json({ total_count: 2, repositories: [{ name: 'core', full_name: 'globex/core', owner: { login: 'globex' }, archived: false }, { name: 'old', full_name: 'globex/old', owner: { login: 'globex' }, archived: true }] })
+      }),
+    )
+    const lister = appInstallationLister({ ...settings, privateKey, apiBaseUrl: api }, appTokenSource({ ...settings, privateKey, apiBaseUrl: api }), recordingSink().sink)
+
+    const ids: number[] = []
+    for await (const id of lister.installations()) {
+      ids.push(id)
+    }
+    expect(ids).toEqual([1, 2])
+    expect(seen).toEqual(['list installations'])
+
+    seen.length = 0
+    const out: ScheduledRepository[] = []
+    for await (const target of lister.repositoriesOf(2)) {
+      out.push(target)
+    }
+    expect(out.map(t => `${t.installationId}:${t.repository.full_name}`)).toEqual(['2:globex/core'])
+    expect(seen).toEqual(['mint 2', 'list repositories as token tok-2'])
+  })
 })

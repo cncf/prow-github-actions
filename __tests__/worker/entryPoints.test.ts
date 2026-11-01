@@ -43,6 +43,7 @@ const drivers: Record<string, string> = {
   'deferViaQueue': 'grace_period_duration',
   'handleDelivery': 'dispatchFetch(\'https://prow.test/webhook\'',
   'receiverFor': 'dispatchFetch(\'https://prow.test/webhook\'',
+  'tokensFor': 'mints an installation token once per isolate',
 }
 
 function entryPointsOf(source: string): string[] {

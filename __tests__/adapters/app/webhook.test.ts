@@ -1,15 +1,21 @@
 import type { DeliveryStore } from '../../../src/adapters/app/dedupe'
 import type { staticTokens } from './testApp'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { memoryDeliveryStore } from '../../../src/adapters/app/dedupe'
+import { asyncLocalScope } from '../../../src/adapters/app/scope'
 import { receiveWebhook } from '../../../src/adapters/app/webhook'
+import { globalPlatformScope, installPlatformScope } from '../../../src/platform'
 import issueCommentEvent from '../../fixtures/issues/issueCommentEvent.json'
 import { receiver, recordingSink, signedRequest, withInstallation } from './testApp'
 
 const payload = withInstallation(issueCommentEvent)
 
 describe('receiveWebhook', () => {
+  // as node.ts and worker.ts do: the process-wide scope refuses async dispatch
+  beforeAll(() => installPlatformScope(asyncLocalScope()))
+  afterAll(() => installPlatformScope(globalPlatformScope))
+
   it('accepts a signed delivery, responds before the handler runs, and dispatches a Context for it', async () => {
     const r = receiver()
 
@@ -22,6 +28,21 @@ describe('receiveWebhook', () => {
     expect(r.dispatched[0]).toMatchObject({ eventName: 'issue_comment', repo: { owner: 'Codertocat', repo: 'Hello-World' } })
     expect(r.dispatched[0]!.payload.installation).toEqual({ id: 7 })
     expect((r.tokens as ReturnType<typeof staticTokens>).requested).toEqual([7])
+  })
+
+  it('mints no token for a delivery whose dispatch says it does not read one', async () => {
+    const asked: string[] = []
+    const r = receiver({ needsToken: (delivery) => {
+      asked.push(delivery.id)
+      return false
+    } })
+
+    const { handled } = await receiveWebhook(r, await signedRequest('issue_comment', payload, { id: 'no-token' }))
+    await handled
+
+    expect(asked).toEqual(['no-token'])
+    expect(r.dispatched).toHaveLength(1)
+    expect((r.tokens as ReturnType<typeof staticTokens>).requested).toEqual([])
   })
 
   it('rejects a bad signature with 401 and dispatches nothing', async () => {

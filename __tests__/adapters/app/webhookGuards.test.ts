@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { memoryDeliveryStore } from '../../../src/adapters/app/dedupe'
+import { asyncLocalScope } from '../../../src/adapters/app/scope'
 import { settingsFromEnv } from '../../../src/adapters/app/settings'
 import { receiveWebhook } from '../../../src/adapters/app/webhook'
+import { globalPlatformScope, installPlatformScope } from '../../../src/platform'
 import issueCommentEvent from '../../fixtures/issues/issueCommentEvent.json'
 import { receiver, signedRequest, withInstallation } from './testApp'
 
@@ -13,6 +15,10 @@ const payload = withInstallation(issueCommentEvent)
 // where `||` and `&&` behave the same once both headers are gone, and the two
 // boundaries in dedupe.ts and settings.ts.
 describe('receiveWebhook refusals name their reason', () => {
+  // as node.ts and worker.ts do: the process-wide scope refuses async dispatch
+  beforeAll(() => installPlatformScope(asyncLocalScope()))
+  afterAll(() => installPlatformScope(globalPlatformScope))
+
   it.each([
     ['x-github-delivery', 'the event header alone'],
     ['x-github-event', 'the delivery id alone'],
