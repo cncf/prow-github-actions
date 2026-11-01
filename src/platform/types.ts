@@ -105,6 +105,8 @@ export interface RunState {
   /** the github clients built from the token input */
   clients: Map<string, unknown>
   tideEvaluated: Set<number>
+  /** the token's own login, keyed by API root: one token per event */
+  tokenLogins: Map<string, Promise<string | undefined>>
   warned: Set<'merge-queue-unavailable' | 'merge-method-ignored'>
 }
 
@@ -123,6 +125,7 @@ export function newRunState(): RunState {
     rootOwners: new Map(),
     clients: new Map(),
     tideEvaluated: new Set(),
+    tokenLogins: new Map(),
     warned: new Set(),
   }
 }

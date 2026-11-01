@@ -215,6 +215,27 @@ describe('approveOnPullRequest', () => {
     await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
   })
 
+  // under a GitHub App the label this plugin wrote raises its own event, sent by `<slug>[bot]`
+  it.each(['labeled', 'unlabeled'])('%s approved by the token\'s own login evaluates nothing', async (action) => {
+    server.use(utils.mergeQueueGraphql({ enabled: false, viewer: 'my-app' }).handler)
+    const observeTree = new utils.ObserveRequest()
+    server.use(utils.defaultBranchTree(['OWNERS'], observeTree))
+
+    await approveOnPullRequest(prEvent(action, { label: { name: 'approved' }, sender: { login: 'my-app[bot]', type: 'Bot' } }))
+
+    await expect(observeTree.notCalled()).resolves.toBe('not called')
+    expect(debug).toHaveBeenCalledWith(`approve: ${action} approved by this bot's own token; nothing to re-evaluate`)
+  })
+
+  it('labeled approved by another login while the token\'s login is unreadable is evaluated', async () => {
+    server.use(utils.mergeQueueGraphql({ enabled: false, viewer: null }).handler)
+    const writes = serve({ labels: ['approved'], comments: [{ body: '/approve', user: { login: 'bob' } }] })
+
+    await approveOnPullRequest(prEvent('labeled', { label: { name: 'approved' } }))
+
+    await expect(writes.removeLabel.called()).resolves.toBe('called')
+  })
+
   it('labeled with another label makes no api call at all', async () => {
     const observeTree = new utils.ObserveRequest()
     server.use(utils.defaultBranchTree(['OWNERS'], observeTree))

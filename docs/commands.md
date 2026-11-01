@@ -22,8 +22,8 @@ Commands | Policy | Description
 `/remove-approve` | same as `/approve` | same as `/approve cancel`
 `/assign [@userA @userB @etc]` | anyone | Assign other users (or yourself if no one is specified). Target user must be Org Member, Collaborator, or have previously commented
 `/unassign [@userA @userB @etc]` | anyone | Unassigns specified people (or yourself if no one is specified). With targets, the commenter must be Org Member or Collaborator; having commented before is not enough. Target must have been already assigned.
-`/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Self-cc requires Collaborator; targets must be an Org Member, Collaborator, or have previously commented.
-`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member or Collaborator; having commented before is not enough. Target must already have had a review requested.
+`/cc [@userA @userB @etc]` | anyone | Request review from specified people (or yourself if no one is specified). Self-cc requires Collaborator; targets must be an Org Member, Collaborator, or have previously commented. On an issue it replies `` `/cc` only applies to pull requests. ``
+`/uncc [@userA @userB @etc]` | anyone | Dismiss review request for specified people (or yourself if no one is specified). Self-uncc requires Collaborator; with targets, the commenter must be Org Member or Collaborator; having commented before is not enough. Target must already have had a review requested. On an issue it replies `` `/uncc` only applies to pull requests. ``
 `/close` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR
 `/close not-planned` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | closes the issue / PR with the `not planned` state reason
 `/reopen` | Collaborators **or the issue/PR author**, or per [`authorization.close`](./configuration.md#authorization) | reopens a closed issue / PR
@@ -263,7 +263,8 @@ nothing; it just recomputes. A repository that wants a required review to follow
 opts in with [`approve.github_review`](#mirroring-approved-as-a-github-review).
 
 Events that evaluate: `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review`,
-`labeled`/`unlabeled` of `approved`; `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
+`labeled`/`unlabeled` of `approved` (not when the sender is the token's own login: that is this
+plugin's own write); `pull_request_review` `submitted`, `dismissed`; and the `/approve` family of comments.
 See [events](./events.md).
 
 #### Mirroring `approved` as a GitHub review
@@ -315,10 +316,10 @@ With the setting off nothing changes: no `GET /user`, no review read beyond what
 ### Repositories without OWNERS files
 
 Zero behaviour change. `/approve` by an org member or collaborator makes the bot submit an
-`APPROVE` review; `/approve cancel` and `/remove-approve` dismiss its latest one; no `approved`
-label, no notifier. The same legacy path applies to `/approve` on an **issue** even when the
-repository has OWNERS files (the root OWNERS file authorizes it), since an issue has no changed
-files to cover.
+`APPROVE` review; `/approve cancel` and `/remove-approve` dismiss its latest one (the latest
+`APPROVED` review by the token's own login: `github-actions[bot]`, a GitHub App's `<slug>[bot]`
+or a PAT's user); no `approved` label, no notifier. On an **issue** `/approve`, `/approve cancel`
+and `/remove-approve` reply `` `/approve` only applies to pull requests. `` and do nothing.
 
 The pull request plugins resolve the same set of OWNERS files per changed file. `owners-label` applies the union of their `labels`; `blunderbuss` draws reviewers from the union of their `reviewers` (and `approvers`), weighting each by how many changed files they cover. Prow's owners-label takes only the deepest OWNERS file's labels; here labels inherit from parent directories like approvers do, and `options.no_parent_owners` stops that inheritance too.
 

@@ -6,9 +6,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
 import issueListComments from '../fixtures/issues/assign/issueListComments.json'
 
-import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import issueCommentEventFixture from '../fixtures/issues/issueCommentEvent.json'
 import pullReviewRequested from '../fixtures/pullReq/pullReviewRequested.json'
 import * as utils from '../testUtils'
+
+// the command only applies to pull requests; `comment` stays the fixture's object, which the tests rewrite
+const issueCommentEvent = { ...issueCommentEventFixture, issue: { ...issueCommentEventFixture.issue, pull_request: { url: `${utils.api}/repos/Codertocat/Hello-World/pulls/1` } } }
 
 const server = setupServer()
 utils.failTestOnUnhandledRequests(server)
@@ -21,6 +24,18 @@ afterAll(() => server.close())
 describe('/cc', () => {
   beforeEach(() => {
     utils.setupActionsEnv('/cc')
+  })
+
+  it('on an issue only replies that it applies to pull requests', async () => {
+    const onIssue = structuredClone(issueCommentEventFixture)
+    onIssue.comment.body = '/cc @some-user'
+    const observeReply = new utils.ObserveRequest()
+    server.use(http.post(`${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`, utils.mockResponse(200, null, observeReply)))
+
+    await handleIssueComment(new utils.MockContext(onIssue))
+
+    await observeReply.called()
+    expect(await observeReply.body()).toEqual({ body: '`/cc` only applies to pull requests.' })
   })
 
   it('handles self cc-ing with comment /cc', async () => {

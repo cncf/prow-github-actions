@@ -756,7 +756,8 @@ describe('dist/index.js', () => {
       expectCommandThenConfig([
         ...ownersReads,
         ...memberReads('bob'),
-        `GET ${repo}/pulls/1/reviews`,
+        `GET ${repo}/pulls/1/reviews?per_page=100`,
+        queueRead,
         `PUT ${repo}/pulls/1/reviews/12/dismissals`,
       ], [`GET ${repo}/pulls/1`, ownersProbe, queueRead])
     })
@@ -1526,7 +1527,7 @@ describe('dist/index.js', () => {
         const dequeues = gh.graphqlCalls('dequeuePullRequest')
         expect(dequeues).toHaveLength(1)
         expect((dequeues[0].body as { variables: unknown }).variables).toEqual({ id: nodeId })
-        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql, graphql])
       })
 
       it('pull_request unlabeled lgtm on a pr a human enqueued: left in the queue', async () => {
@@ -1537,7 +1538,59 @@ describe('dist/index.js', () => {
 
         expect(result.status, result.stdout).toBe(0)
         expect(gh.graphqlCalls('dequeuePullRequest')).toEqual([])
-        expectRequests(configReads(), [pullRead, ownersProbe, graphql])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+      })
+
+      // the token's login unreadable: any automation's entry counts as the bot's, as before tokenLogin
+      it('pull_request unlabeled lgtm with the token\'s login unreadable: a Bot enqueuer counts as the bot and is dequeued', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, viewer: null, entry: { state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'Bot' } })
+
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'unlabeled', label: { name: 'lgtm' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('dequeued pr #1: missing lgtm')
+        expect(gh.graphqlCalls('dequeuePullRequest')).toHaveLength(1)
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql, graphql])
+      })
+
+      it('pull_request unlabeled lgtm with the token\'s login unreadable: a human enqueuer is left in the queue', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, viewer: null, entry: { state: 'QUEUED', position: 1, enqueuer: 'alice' } })
+
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'unlabeled', label: { name: 'lgtm' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(gh.graphqlCalls('dequeuePullRequest')).toEqual([])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+      })
+
+      it('a GitHub App token: its own entry, enqueued as the bare slug, is dequeued while the login is read once per event', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, viewer: 'my-app[bot]', entry: { state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'Bot' } })
+
+        // a human's approved label: approve asks who the token is (not its own write), then tide's dequeue asks again
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'approved' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('dequeued pr #1: missing lgtm')
+        expect(gh.graphqlCalls('viewer')).toHaveLength(1)
+        expect(gh.graphqlCalls('dequeuePullRequest')).toHaveLength(1)
+      })
+
+      it('another automation\'s entry (Mergify) is left alone when the token\'s login is known', async () => {
+        gh.route('GET', `${repo}/pulls/1`, { status: 200, body: mergeablePr('clean', []) })
+        gh.mergeQueue({ pullRequestId: nodeId, headOid: head, enabled: true, inQueue: true, viewer: 'my-app[bot]', entry: { state: 'QUEUED', position: 1, enqueuer: 'mergify', enqueuerType: 'Bot' } })
+
+        const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'unlabeled', label: { name: 'lgtm' } }, inputs: token, apiUrl: gh.url })
+
+        expect(result.status, result.stdout).toBe(0)
+        expect(result.errors).toEqual([])
+        expect(result.stdout).toContain('pr #1 was enqueued by mergify; leaving it in the queue')
+        expect(gh.graphqlCalls('dequeuePullRequest')).toEqual([])
       })
 
       it('a GraphQL error on the state read (a GHES without the queue fields) warns once and falls back to the direct merge', async () => {
@@ -1581,7 +1634,7 @@ describe('dist/index.js', () => {
         expect(result.stdout).toContain('::warning::could not dequeue pr #1: Resource not accessible by integration')
         expect(result.stdout).not.toContain('(dequeued)')
         expect(gh.graphqlCalls('dequeuePullRequest')).toHaveLength(1)
-        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql])
+        expectRequests(configReads(), [pullRead, ownersProbe, graphql, graphql, graphql])
       })
 
       it('schedule jobs: lgtm enqueues a queue-branch pr and never dequeues a gate-failing one', async () => {

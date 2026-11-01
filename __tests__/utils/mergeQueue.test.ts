@@ -62,6 +62,19 @@ describe('queueState', () => {
     expect(calls[0].variables).toEqual({ ...context.repo, number: 7 })
   })
 
+  it('maps the enqueuer\'s __typename: Bot for a GitHub App', async () => {
+    graphql({ repository: { pullRequest: {
+      id: 'PR_1',
+      headRefOid: 'abc123',
+      isMergeQueueEnabled: true,
+      isInMergeQueue: true,
+      mergeQueueEntry: { state: 'QUEUED', position: 2, enqueuer: { __typename: 'Bot', login: 'my-app' } },
+    } } })
+
+    const result = await queueState(octokit, context, 7)
+    expect(result?.entry).toEqual({ state: 'QUEUED', position: 2, enqueuer: 'my-app', enqueuerType: 'Bot' })
+  })
+
   it('omits the enqueuer when GitHub reports none', async () => {
     graphql({ repository: { pullRequest: {
       id: 'PR_1',
@@ -247,5 +260,20 @@ describe('enqueuedByBot', () => {
   it('is false without an entry or an enqueuer', () => {
     expect(enqueuedByBot(undefined)).toBe(false)
     expect(enqueuedByBot({ state: 'QUEUED', position: 1 })).toBe(false)
+  })
+
+  it('a Bot enqueuer counts without a [bot] suffix: GraphQL names an App by its slug', () => {
+    expect(enqueuedByBot({ state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'Bot' })).toBe(true)
+    expect(enqueuedByBot({ state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'User' })).toBe(false)
+  })
+
+  it.each([
+    ['my-app', 'my-app', true],
+    ['My-App[bot]', 'my-app', true],
+    ['github-actions', 'github-actions', true],
+    ['mergify', 'my-app', false],
+    ['github-actions', 'my-app', false],
+  ])('with the token\'s login known only its own entry counts: %s by %s -> %s', (enqueuer, self, expected) => {
+    expect(enqueuedByBot({ state: 'QUEUED', position: 1, enqueuer, enqueuerType: 'Bot' }, self)).toBe(expected)
   })
 })

@@ -41,6 +41,13 @@ function comment(body: string, commenter = author) {
   return new utils.MockContext(payload)
 }
 
+// /cc and /uncc only apply to pull requests
+function prComment(body: string) {
+  const payload = structuredClone(issueCommentEvent)
+  payload.comment.body = body
+  return new utils.MockContext({ ...payload, issue: { ...payload.issue, pull_request: { url: pull } } })
+}
+
 function commentWithoutIssue(body: string) {
   const context = comment(body)
   delete context.payload.issue
@@ -110,14 +117,14 @@ describe('/cc error paths', () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
     failing('post', `${pull}/requested_reviewers`)
 
-    await expect(cc(comment('/cc'))).rejects.toThrow(`could not self cc: ${cause}`)
+    await expect(cc(prComment('/cc'))).rejects.toThrow(`could not self cc: ${cause}`)
   })
 
   it('wraps a failed review request for authorized users', async () => {
     vi.mocked(auth.getOrgCollabCommentUsers).mockResolvedValueOnce(['some-user'])
     failing('post', `${pull}/requested_reviewers`)
 
-    await expect(cc(comment('/cc @some-user'))).rejects.toThrow(`could not request reviewers: ${cause}`)
+    await expect(cc(prComment('/cc @some-user'))).rejects.toThrow(`could not request reviewers: ${cause}`)
   })
 })
 
@@ -130,7 +137,7 @@ describe('/uncc error paths', () => {
     vi.mocked(auth.checkCollaborator).mockResolvedValueOnce(true)
     failing('delete', `${pull}/requested_reviewers`)
 
-    await expect(uncc(comment('/uncc'))).rejects.toThrow(`could not self uncc: ${cause}`)
+    await expect(uncc(prComment('/uncc'))).rejects.toThrow(`could not self uncc: ${cause}`)
   })
 })
 

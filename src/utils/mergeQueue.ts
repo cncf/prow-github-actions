@@ -1,11 +1,14 @@
 import type { Octokit } from '@octokit/rest'
 import type { Context } from './context'
 import { platform } from '../platform'
+import { normalizeLogin } from './comments'
 
 export interface QueueEntry {
   state: string
   position: number
   enqueuer?: string
+  /** the enqueuer's GraphQL `__typename`: `Bot` for a GitHub App or `github-actions`, `User` for a person */
+  enqueuerType?: string
 }
 
 export interface QueueState {
@@ -27,7 +30,7 @@ export const queueStateQuery = `query MergeQueueState($owner: String!, $repo: St
       headRefOid
       isMergeQueueEnabled
       isInMergeQueue
-      mergeQueueEntry { state position enqueuer { login } }
+      mergeQueueEntry { state position enqueuer { __typename login } }
     }
   }
 }`
@@ -51,7 +54,7 @@ interface QueueStateResponse {
       headRefOid: string
       isMergeQueueEnabled: boolean
       isInMergeQueue: boolean
-      mergeQueueEntry: { state: string, position: number, enqueuer: { login: string } | null } | null
+      mergeQueueEntry: { state: string, position: number, enqueuer: { __typename?: string, login: string } | null } | null
     } | null
   } | null
 }
@@ -96,7 +99,7 @@ export async function queueState(octokit: Octokit, context: Context, number: num
     headOid: pr.headRefOid,
     enabled: pr.isMergeQueueEnabled,
     inQueue: pr.isInMergeQueue,
-    ...(entry === null ? {} : { entry: { state: entry.state, position: entry.position, ...(entry.enqueuer === null ? {} : { enqueuer: entry.enqueuer.login }) } }),
+    ...(entry === null ? {} : { entry: { state: entry.state, position: entry.position, ...(entry.enqueuer === null ? {} : { enqueuer: entry.enqueuer.login, ...(entry.enqueuer.__typename === undefined ? {} : { enqueuerType: entry.enqueuer.__typename }) }) } }),
   }
 }
 
@@ -145,14 +148,24 @@ export async function dequeue(octokit: Octokit, context: Context, state: QueueSt
 const botLoginPattern = /^github-actions$|\[bot\]$/i
 
 /**
- * enqueuedByBot reports whether the queue entry was made by an automation
- * (`github-actions` or any `[bot]`), which the gate may undo; a human who
- * enqueued deliberately is never fought.
+ * enqueuedByBot reports whether the queue entry was made by this bot, which
+ * the gate may undo; a human who enqueued deliberately is never fought. When
+ * the token's own login is known (see tokenLogin) only an entry it made
+ * counts, so another automation's (Mergify, a second App) is left alone;
+ * otherwise any automation does: a `Bot` enqueuer, `github-actions` or a
+ * `[bot]` login.
  *
  * @param entry - the merge queue entry, if any
+ * @param self - the token's normalized login, if known
  */
-export function enqueuedByBot(entry: QueueEntry | undefined): boolean {
-  return entry?.enqueuer !== undefined && botLoginPattern.test(entry.enqueuer)
+export function enqueuedByBot(entry: QueueEntry | undefined, self?: string): boolean {
+  if (entry?.enqueuer === undefined) {
+    return false
+  }
+  if (self !== undefined) {
+    return normalizeLogin(entry.enqueuer) === self
+  }
+  return entry.enqueuerType === 'Bot' || botLoginPattern.test(entry.enqueuer)
 }
 
 function classify(message: string): EnqueueFailureKind {

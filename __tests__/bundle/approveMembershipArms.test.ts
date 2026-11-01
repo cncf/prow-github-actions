@@ -16,7 +16,7 @@ describe('dist/index.js /approve membership-mode failure arms', () => {
   const { expectCommandThenConfig, expectRequests, routeOwners } = helpersFor(() => gh)
   const bot = { login: 'github-actions[bot]', type: 'Bot' }
   const boom = { status: 500, body: { message: 'boom' } }
-  const reviewsRead = `GET ${repo}/pulls/1/reviews`
+  const reviewsRead = `GET ${repo}/pulls/1/reviews?per_page=100`
   const authReads = [...ownersReads, ...memberReads('bob')]
 
   beforeAll(async () => {
@@ -91,7 +91,7 @@ describe('dist/index.js /approve membership-mode failure arms', () => {
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('could not remove latest review: Error: no latest review found to cancel')
     expect(gh.requestsMatching('PUT', /\/dismissals$/)).toEqual([])
-    expectAuthThen([reviewsRead])
+    expectAuthThen([reviewsRead, queueRead])
   })
 
   it('/approve cancel fails the run when the dismissal is refused', async () => {
@@ -105,7 +105,7 @@ describe('dist/index.js /approve membership-mode failure arms', () => {
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('could not remove latest review: Error: could not dismiss review')
     expect(gh.requestsMatching('PUT', /\/dismissals$/)[0].body).toEqual({ message: 'Canceled through prow-github-actions by @bob' })
-    expectAuthThen([reviewsRead, `PUT ${repo}/pulls/1/reviews/12/dismissals`])
+    expectAuthThen([reviewsRead, queueRead, `PUT ${repo}/pulls/1/reviews/12/dismissals`])
   })
 
   it('/approve by a stranger is refused, and a failed refusal comment is logged without masking the refusal', async () => {

@@ -5,13 +5,13 @@ import type { PullRequestOwners } from '../utils/pullRequestOwners'
 
 import { platform } from '../platform'
 import { hasCommand, hasExactArgs } from '../utils/command'
-import { createComment } from '../utils/comments'
+import { createComment, normalizeLogin } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { labelIssue, removeLabels } from '../utils/labeling'
 import { newOctokitFromInputs } from '../utils/octokit'
 import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
-import { reviewMarker, syncApprovalReview, tokenIdentity, withdrawalReason } from './approveReview'
+import { reviewMarker, syncApprovalReview, tokenIdentity, tokenLogin, withdrawalReason } from './approveReview'
 
 export interface ApproveSettings {
   require_self_approval: boolean
@@ -465,6 +465,10 @@ export async function approveOnPullRequest(context: Context = platform().context
     platform().log.debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`)
     return
   }
+  if ((action === 'labeled' || action === 'unlabeled') && await labeledBySelf(context)) {
+    platform().log.debug(`approve: ${action} ${approvedLabel} by this bot's own token; nothing to re-evaluate`)
+    return
+  }
 
   await evaluateOnOwnersRepo(context, context.payload.pull_request?.number)
 }
@@ -489,6 +493,16 @@ export async function approveOnReview(context: Context = platform().context()): 
   }
 
   await evaluateOnOwnersRepo(context, context.payload.pull_request?.number)
+}
+
+// under a GitHub App or user token the label this plugin wrote raises an event of its own, sent by the token's
+// login; evaluating it again changes nothing (GITHUB_TOKEN's writes raise no event)
+async function labeledBySelf(context: Context): Promise<boolean> {
+  const sender: unknown = context.payload.sender?.login
+  if (typeof sender !== 'string') {
+    return false
+  }
+  return normalizeLogin(sender) === await tokenLogin(newOctokitFromInputs())
 }
 
 async function evaluateOnOwnersRepo(context: Context, pullNumber: number | undefined): Promise<void> {
