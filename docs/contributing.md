@@ -237,6 +237,5 @@ Reviewed survivors of the default set:
 | Mutant | Why it is left |
 |--------|----------------|
 | `duration.ts:13` `value === ''` → `false` / other string | Equivalent: an empty string matches no duration part, `consumed` stays `0 === value.length`, and `Math.round(0)` is returned either way |
-| `hold.ts:26` `getInput('github-token', { required: true })` → `{}` / `false` | `required` is `@actions/core`'s contract, identical at every entry point; the mutant only changes which error a missing token raises |
-| `hold.ts:30` `context.payload.comment?.body` → `.comment.body` | Every `issue_comment` event carries `comment`; the two differ only on a payload GitHub never sends |
-| `hold.ts:73-74` `present.length === 0` guard and its `core.debug` text | `removeLabels` with an empty list issues no request, so the guard only saves a loop; the debug message is not asserted |
+| `hold.ts:27` `context.payload.comment?.body` → `.comment.body` | Every `issue_comment` event carries `comment`; the two differ only on a payload GitHub never sends |
+| `hold.ts:70-71` `present.length === 0` guard and its `platform().log.debug` text | `removeLabels` with an empty list issues no request, so the guard only saves a loop; the debug message is not asserted |
