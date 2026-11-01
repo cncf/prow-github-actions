@@ -362,7 +362,7 @@ describe('/assign', () => {
     )
   })
 
-  it('does not self assign when commenter is not authorized', async () => {
+  it('fails without self assigning when commenter is not authorized', async () => {
     issueCommentEventAssign.comment.body = '/assign'
 
     server.use(
@@ -393,7 +393,7 @@ describe('/assign', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
+    expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('Codertocat is not authorized to be assigned'))
   })
 
   it('assigns user if they have previously commented', async () => {

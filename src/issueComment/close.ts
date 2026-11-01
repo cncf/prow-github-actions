@@ -34,28 +34,32 @@ export async function close(context: Context = platform().context()): Promise<vo
       || (await checkCollaborator(octokit, context, commenterId))
       || (await closePolicyAllows(octokit, context, commenterId))
 
-  if (isAuthUser) {
-    const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned')
+  if (!isAuthUser) {
+    throw new Error(
+      `${commenterId} is not authorized to close this issue. Must be the author, a collaborator or pass authorization.close`,
+    )
+  }
 
-    try {
-      if (notPlanned) {
-        await octokit.issues.update({
-          ...context.repo,
-          issue_number: issueNumber,
-          state: 'closed',
-          state_reason: 'not_planned',
-        })
-      }
-      else {
-        await octokit.issues.update({
-          ...context.repo,
-          issue_number: issueNumber,
-          state: 'closed',
-        })
-      }
+  const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned')
+
+  try {
+    if (notPlanned) {
+      await octokit.issues.update({
+        ...context.repo,
+        issue_number: issueNumber,
+        state: 'closed',
+        state_reason: 'not_planned',
+      })
     }
-    catch (e) {
-      throw new Error(`could not close issue: ${e}`)
+    else {
+      await octokit.issues.update({
+        ...context.repo,
+        issue_number: issueNumber,
+        state: 'closed',
+      })
     }
+  }
+  catch (e) {
+    throw new Error(`could not close issue: ${e}`)
   }
 }

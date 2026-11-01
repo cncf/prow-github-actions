@@ -50,6 +50,7 @@ function servePr(files: string[]) {
       requested_reviewers: [],
       assignees: [],
     })),
+    http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(200, [])),
     filesHandler(changedFiles(...files)),
     ...treeHandlers(owners),
   )

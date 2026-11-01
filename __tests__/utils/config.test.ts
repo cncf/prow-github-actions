@@ -230,6 +230,32 @@ describe('parseProwConfig', () => {
     })
 
     it.each([
+      ['squash', 'squash'],
+      ['Squash', 'squash'],
+      [' REBASE ', 'rebase'],
+      ['', 'merge'],
+    ])('resolves the merge-method input %j to %s without a warning', (input, method) => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      expect(resolveTide({}, input).merge_method).toBe(method)
+      expect(warning).not.toHaveBeenCalled()
+      warning.mockRestore()
+    })
+
+    it('warns about an unknown merge-method input and merges', () => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      expect(resolveTide({}, 'fast-forward').merge_method).toBe('merge')
+      expect(warning).toHaveBeenCalledWith('merge-method: ignoring \'fast-forward\', not one of merge, squash, rebase; merging with \'merge\'')
+      warning.mockRestore()
+    })
+
+    it('lets tide.merge_method win over the input without reading it', () => {
+      const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
+      expect(resolveTide({ merge_method: 'rebase' }, 'bogus').merge_method).toBe('rebase')
+      expect(warning).not.toHaveBeenCalled()
+      warning.mockRestore()
+    })
+
+    it.each([
       ['a non-mapping', 'tide: [lgtm]\n', 'x: tide must be a mapping'],
       ['a non-list labels', 'tide:\n  labels: lgtm\n', 'x: tide.labels must be a list of label names'],
       ['a non-list missing_labels', 'tide:\n  missing_labels: [1]\n', 'x: tide.missing_labels must be a list of label names'],

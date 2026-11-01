@@ -109,3 +109,29 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content: {name: PROW_SHUTDOWN_GRACE_MS, value: '40000'}
+  - it: a cron run is killed after cronjob.activeDeadlineSeconds
+    template: cronjob.yaml
+    asserts:
+      - equal: {path: spec.jobTemplate.spec.activeDeadlineSeconds, value: 3000}
+  - it: cronjob.activeDeadlineSeconds is configurable
+    set:
+      cronjob.activeDeadlineSeconds: 600
+    template: cronjob.yaml
+    asserts:
+      - equal: {path: spec.jobTemplate.spec.activeDeadlineSeconds, value: 600}
+  - it: the cron pods are the jobs component
+    template: cronjob.yaml
+    asserts:
+      - equal: {path: 'spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/component"]', value: jobs}
+  - it: the Deployment selects only the server pods
+    template: deployment.yaml
+    asserts:
+      - equal: {path: 'spec.selector.matchLabels["app.kubernetes.io/component"]', value: server}
+      - equal: {path: 'spec.template.metadata.labels["app.kubernetes.io/component"]', value: server}
+  - it: the pdb selects only the server pods, never a cron run
+    set:
+      replicaCount: 2
+      redis.url: redis://r:6379
+    template: pdb.yaml
+    asserts:
+      - equal: {path: 'spec.selector.matchLabels["app.kubernetes.io/component"]', value: server}

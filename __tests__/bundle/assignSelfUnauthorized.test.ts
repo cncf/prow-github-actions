@@ -21,7 +21,7 @@ describe('dist/index.js /assign by an unauthorized commenter', () => {
   afterEach(() => gh.reset())
   afterAll(() => gh.close())
 
-  it('does not assign and does not fail when the commenter is not authorized', async () => {
+  it('fails without assigning when the commenter is not authorized', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
     gh.route('GET', `${repo}/issues/1/comments`, { status: 200, body: [] })
 
@@ -32,8 +32,8 @@ describe('dist/index.js /assign by an unauthorized commenter', () => {
       apiUrl: gh.url,
     })
 
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('Codertocat is not authorized to be assigned'))).toBe(true)
     expect(gh.requestsMatching('POST', /./)).toEqual([])
     expect(calls()).toEqual([...membershipReads('Codertocat'), commentsRead])
   })

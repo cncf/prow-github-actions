@@ -57,6 +57,8 @@ export interface FakeGithub {
    */
   assertNoUnexpectedRequests: () => void
   route: (method: string, pattern: string | RegExp, response: Handler | FakeResponse) => void
+  /** like route, but consulted after every other route, so a test's own route for the same request wins */
+  routeFallback: (method: string, pattern: string | RegExp, response: FakeResponse) => void
   /** answers with one response per call in order, repeating the last one */
   routeSequence: (method: string, pattern: string | RegExp, responses: FakeResponse[]) => void
   /** serves the combined commit status of `sha` under `repo` (`/repos/o/r`) and accepts status posts to it */
@@ -163,6 +165,9 @@ export async function start(): Promise<FakeGithub> {
     route(method, pattern, response) {
       const handler = typeof response === 'function' ? response : () => response
       routes.push({ method: method.toUpperCase(), pattern, handler })
+    },
+    routeFallback(method, pattern, response) {
+      fallbacks.push({ method: method.toUpperCase(), pattern, handler: () => response })
     },
     routeSequence(method, pattern, responses) {
       let calls = 0

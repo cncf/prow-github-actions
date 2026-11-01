@@ -92,6 +92,30 @@ describe('dist/index.js', () => {
     expect(gh.requests).toEqual([])
   })
 
+  it('pull_request labeled lgtm whose head repository was deleted is treated as a fork: a notice and no api call', async () => {
+    const payload = { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'lgtm' } }
+    const gone = { ...payload, pull_request: { ...payload.pull_request, head: { ...payload.pull_request.head, repo: null } } }
+
+    const result = await runBundle({ eventName: 'pull_request', payload: gone, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain('::notice::fork pull request under pull_request: the token is read-only; the sweep job handles it')
+    expect(gh.requests).toEqual([])
+  })
+
+  it('pull_request_review on a fork head without a repository in the payload is not skipped as a fork: no notice, no api call', async () => {
+    const { repository: _repository, ...rest } = { ...pullReqReviewSubmittedEvent, action: 'edited' }
+    const payload = { ...rest, pull_request: { ...rest.pull_request, head: { ...rest.pull_request.head, repo: { full_name: 'octocat/Hello-World' } } } }
+
+    const result = await runBundle({ eventName: 'pull_request_review', payload, inputs: { ...token, jobs: 'lgtm' }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).not.toContain('fork pull request under')
+    expect(gh.requests).toEqual([])
+  })
+
   it('issues labeled with no require_matching_label configured only reads the configuration', async () => {
     const result = await runBundle({ eventName: 'issues', payload: issuesLabeledEvent, inputs: token, apiUrl: gh.url })
 
@@ -395,7 +419,7 @@ describe('dist/index.js', () => {
     expect(gh.requestsMatching('POST', /assignees$/)[0].body).toEqual({ assignees: ['Codertocat'] })
   })
 
-  it('issue_comment /close by a non-collaborator non-author is a silent no-op', async () => {
+  it('issue_comment /close by a non-collaborator non-author fails the run without closing', async () => {
     gh.route('GET', `${repo}/collaborators/Codertocat`, { status: 404, body: { message: 'Not Found' } })
 
     const result = await runBundle({
@@ -405,8 +429,8 @@ describe('dist/index.js', () => {
       apiUrl: gh.url,
     })
 
-    expect(result.status, result.stdout).toBe(0)
-    expect(result.errors).toEqual([])
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.some(e => e.includes('Codertocat is not authorized to close this issue'))).toBe(true)
     expect(gh.requestsMatching('PATCH', /./)).toEqual([])
     // only the refusal reads authorization.close, after the collaborator check
     expect(gh.requests.map(r => `${r.method} ${r.path}`).slice(0, 1)).toEqual([
@@ -988,6 +1012,7 @@ describe('dist/index.js', () => {
     }
     const ownersBlobs = [`GET ${repo}/git/blobs/${blobSha('OWNERS')}`, `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`].sort()
     const requestReviewers = `POST ${repo}/pulls/1/requested_reviewers`
+    const reviewsRead = `GET ${repo}/pulls/1/reviews?per_page=100`
 
     function routeWrites() {
       gh.route('GET', `${repo}/issues/1`, { status: 200, body: { labels: [] } })
@@ -1019,7 +1044,7 @@ describe('dist/index.js', () => {
       expect(['alice', 'bob', 'carol']).toEqual(expect.arrayContaining(reviewers))
       // require-matching-label's configuration probes interleave with the OWNERS plugins; the memo means one pull request read for both
       const calls = gh.requests.map(r => `${r.method} ${r.path}`)
-      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, requestReviewers, ownersProbe].sort())
+      expect([...calls].sort()).toEqual([...configReads(), ...ownersReads, ...ownersBlobs, `GET ${repo}/issues/1`, labelsRead, `POST ${repo}/issues/1/labels`, reviewsRead, requestReviewers, ownersProbe].sort())
       expect(calls.indexOf(`POST ${repo}/issues/1/labels`)).toBeGreaterThan(calls.indexOf(labelsRead))
       expect(calls.indexOf(requestReviewers)).toBeGreaterThan(calls.indexOf(`GET ${repo}/git/trees/basesha?recursive=true`))
     })
@@ -1079,7 +1104,7 @@ describe('dist/index.js', () => {
       // alice covers both changed files, so with request_count 1 she is the deterministic pick
       expect(requestedReviewers()).toEqual(['alice'])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-      expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [requestReviewers])
+      expectRequests([...configReads({ org: '.project' }), ...ownersReads, ...ownersBlobs], [reviewsRead, requestReviewers])
     })
 
     it('synchronize of a pull request carrying ok-to-test approves the runs waiting on its head', async () => {
@@ -1797,11 +1822,11 @@ describe('dist/index.js', () => {
       gh.route('PUT', `${repo}/pulls/2/merge`, merge)
     }
 
-    function runCron() {
+    function runCron(inputs: Record<string, string> = {}) {
       return runBundle({
         eventName: 'schedule',
         payload: {},
-        inputs: { ...token, 'jobs': 'lgtm', 'merge-method': 'squash' },
+        inputs: { ...token, 'jobs': 'lgtm', 'merge-method': 'squash', ...inputs },
         apiUrl: gh.url,
       })
     }
@@ -1822,6 +1847,19 @@ describe('dist/index.js', () => {
         ...evaluation,
         `PUT ${repo}/pulls/2/merge`,
       ])
+    })
+
+    it('an unknown merge-method input is warned about and the pr is merged with merge', async () => {
+      routePulls(openPr(['lgtm']))
+
+      const result = await runCron({ 'merge-method': 'fast-forward' })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain(`::warning::merge-method: ignoring 'fast-forward', not one of merge, squash, rebase; merging with 'merge'`)
+      const merges = gh.requestsMatching('PUT', /\/pulls\/2\/merge$/)
+      expect(merges).toHaveLength(1)
+      expect(merges[0].body).toEqual({ merge_method: 'merge', sha: head })
     })
 
     it('tide.merge_method in prow.yaml wins over the merge-method input', async () => {

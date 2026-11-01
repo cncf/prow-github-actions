@@ -20,10 +20,17 @@ export function skipReadOnlyForkRun(context: Context): boolean {
     return false
   }
 
-  const head: unknown = context.payload.pull_request?.head?.repo?.full_name
+  const headRepo: unknown = context.payload.pull_request?.head?.repo
   const base: unknown = context.payload.repository?.full_name
-  if (typeof head !== 'string' || typeof base !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+  if (typeof base !== 'string') {
     return false
+  }
+  // a deleted fork leaves `head.repo` null; GitHub still hands the run a read-only token
+  if (headRepo !== null) {
+    const head: unknown = context.payload.pull_request?.head?.repo?.full_name
+    if (typeof head !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+      return false
+    }
   }
 
   platform().log.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`)

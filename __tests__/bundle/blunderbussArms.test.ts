@@ -17,8 +17,8 @@ function yamlFile(text: string) {
 }
 
 // blunderbuss's remaining arms driven through dist/index.js: the `ready_for_review` skip when drafts are not
-// ignored, `/auto-cc` on a plain issue, a changed file no OWNERS covers, an empty candidate set, and a refused
-// reviewer request. The bundle suite runs the defaults and `blunderbussSettings.test.ts` the configured options.
+// ignored, `/auto-cc` on a plain issue, a changed file no OWNERS covers, an empty candidate set, a refused
+// reviewer request, candidates who have all reviewed already, and a failed review listing. The bundle suite runs the defaults and `blunderbussSettings.test.ts` the configured options.
 describe('dist/index.js blunderbuss arms', () => {
   let gh: FakeGithub
   const { routeOwners } = helpersFor(() => gh)
@@ -100,5 +100,36 @@ describe('dist/index.js blunderbuss arms', () => {
     expect(result.status, result.stdout).toBe(1)
     expect(requested()).toHaveLength(1)
     expect(result.errors.join('\n')).toContain('could not request reviewers')
+  })
+
+  it('requests nobody when every candidate has already reviewed, counting neither pending nor userless reviews', async () => {
+    routeOwners({ OWNERS: 'reviewers:\n- bob\n- carol\n' }, ['x.go'])
+    gh.route('GET', `${repo}/pulls/1/reviews`, {
+      status: 200,
+      body: [
+        { state: 'APPROVED', user: { login: 'Bob' } },
+        { state: 'COMMENTED', user: { login: 'carol' } },
+        { state: 'PENDING', user: { login: 'dave' } },
+        { state: 'COMMENTED', user: null },
+      ],
+    })
+
+    const result = await runBundle({ eventName: 'pull_request', payload: pullReqOpenedEvent, inputs: token, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(result.stdout).toContain('blunderbuss: every reviewer candidate for #1 has already reviewed it')
+    expect(requested()).toEqual([])
+  })
+
+  it('fails the run when the reviews cannot be listed', async () => {
+    routeOwners({ OWNERS: 'reviewers:\n- bob\n' }, ['x.go'])
+    gh.route('GET', `${repo}/pulls/1/reviews`, { status: 500, body: { message: 'boom' } })
+
+    const result = await runBundle({ eventName: 'pull_request', payload: pullReqOpenedEvent, inputs: token, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(1)
+    expect(result.errors.join('\n')).toContain('could not list reviews')
+    expect(requested()).toEqual([])
   })
 })

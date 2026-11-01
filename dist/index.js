@@ -41803,7 +41803,14 @@ function resolveTide(tide, inputMergeMethod = '', options = {}) {
     };
 }
 function toMergeMethod(input) {
-    return mergeMethods.includes(input) ? input : 'merge';
+    const method = input.trim().toLowerCase();
+    if (mergeMethods.includes(method)) {
+        return method;
+    }
+    if (method !== '') {
+        platform_platform().log.warning(`merge-method: ignoring '${input}', not one of ${mergeMethods.join(', ')}; merging with 'merge'`);
+    }
+    return 'merge';
 }
 /**
  * resolveHoldLabel returns the label `/hold` applies: `hold.label`, else
@@ -42508,12 +42515,9 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
     if (tree.truncated) {
         // a truncated listing may have dropped OWNERS entries, so ask for each candidate path directly
         platform_platform().log.debug(`tree at ${ref} is truncated; probing for OWNERS files`);
-        return probeOwners(octokit, context, ref, dirs);
+        return probeOwners(octokit, context, ref, dirs, listedOwners(tree).length > 0);
     }
-    const entries = tree.tree.filter(entry => entry.type === 'blob'
-        && entry.path !== undefined
-        && entry.sha !== undefined
-        && isOwnersPath(entry.path));
+    const entries = listedOwners(tree);
     const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
     let files;
     try {
@@ -42533,7 +42537,21 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
         hasOwners: entries.length > 0,
     };
 }
-async function probeOwners(octokit, context, ref, dirs) {
+function listedOwners(tree) {
+    return tree.tree.filter(entry => entry.type === 'blob'
+        && entry.path !== undefined
+        && entry.sha !== undefined
+        && isOwnersPath(entry.path));
+}
+/**
+ * probeOwners reads the OWNERS file of each directory in dirs through the
+ * contents API, for a tree listing GitHub truncated. The ref has OWNERS files
+ * when a probe finds one (the root is always probed) or when the partial
+ * listing names one elsewhere, the same answer `branchHasOwners` gives, so
+ * that an OWNERS file outside the changed paths' ancestors keeps the OWNERS
+ * rules on whether or not the listing was truncated.
+ */
+async function probeOwners(octokit, context, ref, dirs, listed) {
     // every candidate directory at once; a missing OWNERS file is just absent
     const found = await Promise.all([...dirs].map(async (dir) => {
         const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
@@ -42555,7 +42573,7 @@ async function probeOwners(octokit, context, ref, dirs) {
         return [dir, parseOwners(path, decode(data, path))];
     }));
     const owners = new Map(found.filter(entry => entry !== undefined));
-    return { owners, hasOwners: owners.size > 0 };
+    return { owners, hasOwners: listed || owners.size > 0 };
 }
 /**
  * repoHasOwners reports whether the default branch carries any OWNERS file.
@@ -42692,6 +42710,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
         draft: pull.draft === true,
         open: pull.state === 'open',
         requestedReviewers: (pull.requested_reviewers ?? []).map(user => user.login.toLowerCase()),
+        requestedTeams: (pull.requested_teams ?? []).map(team => team.slug),
         assignees: (pull.assignees ?? []).map(user => user.login.toLowerCase()),
         labels: (pull.labels ?? []).map(label => label.name),
         files,
@@ -45368,11 +45387,21 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
     }
     let count = settings.request_count;
     if (settings.max_request_count !== undefined) {
-        count = Math.min(count, settings.max_request_count - pull.requestedReviewers.length);
+        // a requested team is one request against the cap, as a requested user is
+        const requested = pull.requestedReviewers.length + pull.requestedTeams.length;
+        count = Math.min(count, settings.max_request_count - requested);
         if (count <= 0) {
-            platform_platform().log.debug(`blunderbuss: #${pullNumber} already has ${pull.requestedReviewers.length} requested reviewers, max_request_count is ${settings.max_request_count}`);
+            platform_platform().log.debug(`blunderbuss: #${pullNumber} already has ${requested} requested reviewers, max_request_count is ${settings.max_request_count}`);
             return;
         }
+    }
+    // GitHub drops a reviewer from requested_reviewers once they review: they are not candidates either
+    for (const login of await reviewedBy(octokit, context, pullNumber)) {
+        coverage.delete(login);
+    }
+    if (coverage.size === 0) {
+        platform_platform().log.debug(`blunderbuss: every reviewer candidate for #${pullNumber} has already reviewed it`);
+        return;
     }
     const picked = pickReviewers(coverage, count, rng);
     let reviewers = picked;
@@ -45408,6 +45437,15 @@ async function requestEach(octokit, context, pullNumber, reviewers) {
 }
 function isUnprocessable(error) {
     return typeof error === 'object' && error !== null && 'status' in error && error.status === 422;
+}
+async function reviewedBy(octokit, context, pullNumber) {
+    try {
+        const reviews = await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: pullNumber, per_page: 100 });
+        return reviews.filter(review => review.state !== 'PENDING').flatMap(review => review.user?.login === undefined ? [] : [review.user.login.toLowerCase()]);
+    }
+    catch (e) {
+        throw new Error(`could not list reviews: ${e}`);
+    }
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/ownersLabel.js
@@ -46464,12 +46502,7 @@ async function assign_assign(context = platform_platform().context()) {
     const commentArgs = getCommandArgs('/assign', commentBody);
     // no arguments after command provided
     if (commentArgs.length === 0) {
-        try {
-            await selfAssign(octokit, context, issueNumber, commenterId);
-        }
-        catch (e) {
-            throw new Error(`could not self assign: ${e}`);
-        }
+        await selfAssign(octokit, context, issueNumber, commenterId);
         return;
     }
     // Only target users who:
@@ -46504,12 +46537,18 @@ async function assign_assign(context = platform_platform().context()) {
  */
 async function selfAssign(octokit, context, issueNum, user) {
     const isAuthorized = await checkCommenterAuth(octokit, context, issueNum, user);
-    if (isAuthorized) {
+    if (!isAuthorized) {
+        throw new Error(`${user} is not authorized to be assigned. Only users who are members of the org, are collaborators, or have previously commented on this issue may be assigned`);
+    }
+    try {
         await octokit.issues.addAssignees({
             ...context.repo,
             issue_number: issueNum,
             assignees: [user],
         });
+    }
+    catch (e) {
+        throw new Error(`could not self assign: ${e}`);
     }
 }
 
@@ -46570,7 +46609,7 @@ async function cc(context = platform_platform().context()) {
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
- * @param issueNum - the  pr number this runtime is associated with
+ * @param pullNum - the pr number this runtime is associated with
  * @param user - the user to request a self review
  */
 async function selfReview(octokit, context, pullNum, user) {
@@ -46611,28 +46650,29 @@ async function close_close(context = platform_platform().context()) {
     const isAuthUser = isAuthor
         || (await checkCollaborator(octokit, context, commenterId))
         || (await closePolicyAllows(octokit, context, commenterId));
-    if (isAuthUser) {
-        const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned');
-        try {
-            if (notPlanned) {
-                await octokit.issues.update({
-                    ...context.repo,
-                    issue_number: issueNumber,
-                    state: 'closed',
-                    state_reason: 'not_planned',
-                });
-            }
-            else {
-                await octokit.issues.update({
-                    ...context.repo,
-                    issue_number: issueNumber,
-                    state: 'closed',
-                });
-            }
+    if (!isAuthUser) {
+        throw new Error(`${commenterId} is not authorized to close this issue. Must be the author, a collaborator or pass authorization.close`);
+    }
+    const notPlanned = hasKeyword(getCommandArgs('/close', commentBody), 'not-planned');
+    try {
+        if (notPlanned) {
+            await octokit.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                state: 'closed',
+                state_reason: 'not_planned',
+            });
         }
-        catch (e) {
-            throw new Error(`could not close issue: ${e}`);
+        else {
+            await octokit.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                state: 'closed',
+            });
         }
+    }
+    catch (e) {
+        throw new Error(`could not close issue: ${e}`);
     }
 }
 
@@ -46946,17 +46986,18 @@ async function reopen(context = platform_platform().context()) {
     const isAuthUser = isAuthor
         || (await checkCollaborator(octokit, context, commenterId))
         || (await closePolicyAllows(octokit, context, commenterId));
-    if (isAuthUser) {
-        try {
-            await octokit.issues.update({
-                ...context.repo,
-                issue_number: issueNumber,
-                state: 'open',
-            });
-        }
-        catch (e) {
-            throw new Error(`could not open issue: ${e}`);
-        }
+    if (!isAuthUser) {
+        throw new Error(`${commenterId} is not authorized to reopen this issue. Must be the author, a collaborator or pass authorization.close`);
+    }
+    try {
+        await octokit.issues.update({
+            ...context.repo,
+            issue_number: issueNumber,
+            state: 'open',
+        });
+    }
+    catch (e) {
+        throw new Error(`could not open issue: ${e}`);
     }
 }
 
@@ -46965,6 +47006,7 @@ async function reopen(context = platform_platform().context()) {
 
 
 
+const MAX_TITLE_LENGTH = 256;
 /**
  * /retitle will "rename" the issue / PR.
  * Note - it is expected that the command has an argument with the new title
@@ -46980,24 +47022,28 @@ async function retitle(context = platform_platform().context()) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const title = getLineArgs('/retitle', commentBody);
-    // no arguments after command provided. Can't retitle!
     if (title === '') {
-        return;
+        throw new Error(`please provide a new title: /retitle <title>`);
+    }
+    // GitHub refuses a longer title with an opaque validation error
+    if (title.length > MAX_TITLE_LENGTH) {
+        throw new Error(`the new title is ${title.length} characters long, at most ${MAX_TITLE_LENGTH} are allowed`);
     }
     // Only users who:
     // - are collaborators
     const isAuthUser = await checkCollaborator(octokit, context, commenterId);
-    if (isAuthUser) {
-        try {
-            await octokit.issues.update({
-                ...context.repo,
-                issue_number: issueNumber,
-                title,
-            });
-        }
-        catch (e) {
-            throw new Error(`could not update issue: ${e}`);
-        }
+    if (!isAuthUser) {
+        throw new Error(`${commenterId} is not authorized to retitle this issue. Must be repo collaborator`);
+    }
+    try {
+        await octokit.issues.update({
+            ...context.repo,
+            issue_number: issueNumber,
+            title,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not update issue: ${e}`);
     }
 }
 
@@ -47315,10 +47361,17 @@ function skipReadOnlyForkRun(context) {
     if (!platform_platform().capabilities().readOnlyForkToken || !readOnlyForkEvents.has(context.eventName)) {
         return false;
     }
-    const head = context.payload.pull_request?.head?.repo?.full_name;
+    const headRepo = context.payload.pull_request?.head?.repo;
     const base = context.payload.repository?.full_name;
-    if (typeof head !== 'string' || typeof base !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+    if (typeof base !== 'string') {
         return false;
+    }
+    // a deleted fork leaves `head.repo` null; GitHub still hands the run a read-only token
+    if (headRepo !== null) {
+        const head = context.payload.pull_request?.head?.repo?.full_name;
+        if (typeof head !== 'string' || head.toLowerCase() === base.toLowerCase()) {
+            return false;
+        }
     }
     platform_platform().log.notice(`fork pull request under ${context.eventName}: the token is read-only; the sweep job handles it`);
     return true;

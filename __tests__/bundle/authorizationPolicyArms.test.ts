@@ -112,7 +112,7 @@ describe('dist/index.js authorization policy arms', () => {
   })
 
   describe('/close by a stranger', () => {
-    it('when the authorization section does not parse: refused silently with a warning, nothing is closed', async () => {
+    it('when the authorization section does not parse: refused with a warning and a failed run, nothing is closed', async () => {
       routeConfig('authorization:\n  close: everyone\n')
       gh.route('GET', `${repo}/collaborators/stranger`, notFound)
       const payload = comment('/close')
@@ -120,8 +120,8 @@ describe('dist/index.js authorization policy arms', () => {
 
       const result = await runBundle({ eventName: 'issue_comment', payload, inputs: { ...token, 'prow-commands': '/close' }, apiUrl: gh.url })
 
-      expect(result.status, result.stdout).toBe(0)
-      expect(result.errors).toEqual([])
+      expect(result.status, result.stdout).toBe(1)
+      expect(result.errors.some(e => e.includes('stranger is not authorized to close this issue'))).toBe(true)
       expect(warnings(result.stdout).some(w => w.includes('authorization: could not load prow config'))).toBe(true)
       expect(warnings(result.stdout).some(w => w.includes('authorization.close'))).toBe(true)
       expect(gh.requestsMatching('PATCH', /./)).toEqual([])

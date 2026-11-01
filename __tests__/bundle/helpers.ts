@@ -105,6 +105,8 @@ export function helpersFor(fake: () => FakeGithub) {
       status: 200,
       body: files.map(filename => ({ filename, status: 'modified' })),
     })
+    // blunderbuss leaves out who already reviewed; a scenario serving its own reviews overrides this
+    gh.routeFallback('GET', `${repo}/pulls/1/reviews`, { status: 200, body: [] })
     gh.route('GET', `${repo}/branches/master`, { status: 200, body: { name: 'master', commit: { sha: 'basesha' } } })
     gh.route('GET', `${repo}/git/trees/basesha`, {
       status: 200,

@@ -252,6 +252,7 @@ The deliberate divergences, each documented where it lives:
 - every merge path, the cron included, merges only on `mergeable_state` `clean`/`has_hooks` — [automatic merging](./automatic-merging.md)
 - `lgtm` is bound to the head commit with a `prow/lgtm` commit status and a stale `lgtm` is stripped by whichever path evaluates the PR next; Prow relies on the `synchronize` event alone — [automatic merging](./automatic-merging.md#lgtm-is-bound-to-a-commit)
 - on OWNERS repositories `/approve` submits no bot review — [commands](./commands.md#approve)
+- **`approve.require_self_approval: true` is stricter than Prow**: the author never counts, even through an explicit `/approve`, where Prow's setting only drops the implicit author approval and still accepts the author's `/approve` — [configuration](./configuration.md#approve)
 - comment commands that write a label evaluate `needs-*` and the merge gate in the same run, because the bot's own label writes fire no events; Prow's tide re-syncs on a loop instead — [events](./events.md#the-bots-writes-fire-no-events)
 
 Not divergences, but often assumed to be: the author implicitly approving files they own

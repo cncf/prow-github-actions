@@ -13,6 +13,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
+      activeDeadlineSeconds: {{ .Values.cronjob.activeDeadlineSeconds }}
       template:
         metadata:
           labels: {{- include "prow-github-app.selectorLabels" . | nindent 12 }}
