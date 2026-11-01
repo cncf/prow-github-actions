@@ -183,9 +183,11 @@ merge, or be held, for the wrong reason. It is a bounded check, not a per-push
 gate: the suite takes minutes per mutant set, so the local run sets no `break`
 threshold and nothing fails a push. The `mutation` job of `test.yml` runs the
 same set on the daily schedule (and on `workflow_dispatch`) through
-`stryker.nightly.config.mjs`, which fails below a score of 95 — just under
-what `main` reaches with its equivalent survivors — and publishes the per-file
-tally in the job summary and `reports/mutation/` as an artifact.
+`stryker.nightly.config.mjs`, together with `src/plugins/tide.ts` and
+`src/utils/mergeQueue.ts` — the code that performs the merge, left out of the
+local default only for its ~620 extra mutants — fails below a score of 95 —
+just under what `main` reaches with its equivalent survivors — and publishes
+the per-file tally in the job summary and `reports/mutation/` as an artifact.
 
 ```sh
 npm run test:mutation                                   # the default set (~150 mutants, ~12 minutes)
@@ -212,7 +214,25 @@ vitest-runner release carries the fix.
 A survivor is a finding only after reading it. Add a test when the mutant
 changes an observable effect (a request made or not made, a label applied, a
 thrown message a caller reads); record it here instead when it is equivalent
-or only changes text nobody asserts on. Reviewed survivors of the default set:
+or only changes text nobody asserts on.
+
+Reviewed survivors of the files the nightly run adds (`npm run test:mutation
+-- --mutate src/plugins/tide.ts --mutate src/utils/mergeQueue.ts` at 424fb95:
+596 killed, 24 survived, none in `mergeQueue.ts`):
+
+| Mutant | Why it is left |
+|--------|----------------|
+| `tide.ts:98`, `:308`, `:312`, `:444-445`, `:461-462`, `:504-505`, `:547` — `platform().log.debug` text and the conditions that only select a debug line (`!mergeableStates.has(pr.state)`, the `merge-method-ignored` warn-once condition, `action === undefined` before a `Set.has(action)` that is false for `undefined` anyway, `conclusion !== undefined` likewise) | Debug output is not asserted; the `warned` entry the `merge-method-ignored` condition adds is read nowhere else |
+| `tide.ts:337` `could not enqueue pr` error text | Only the log line changes; the returned `{ result: 'failed', message }` carries `outcome.message` unchanged |
+| `tide.ts:246` `compared.data.files ?? []` → a non-empty placeholder | `workflowFiles` keeps only paths under `.github/workflows/`, so the placeholder is filtered out |
+| `tide.ts:261` `' and '` and `:267` `' '` joiners of the fork-workflows comment | Text of a comment nobody asserts on; both lists still name every file |
+| `tide.ts:421` `data.base.repo?.full_name` → `.repo.full_name` | A pull request's base repository is always present; the two differ only on a payload GitHub never sends |
+| `tide.ts:429-431` `catch { return false }` → `catch {}` | An empty catch returns `undefined`, which every caller tests for truthiness, so `isMerged` still reads as false |
+| `tide.ts:532` `let hasOwners = false` → `true` | `hasOwners` is only read by `resolveTide` when `tide.labels` is unset, and that branch assigns it before use; with `labels` set, `??` never looks at it |
+| `tide.ts:536` `inputs.get('merge-method', { required: false })` → `{}` | `required` defaults to false |
+| `tide.ts:553` `numbers.length === 0 && lookup !== undefined` → `lookup` always taken | Every caller that can pass an empty list (`tideOnCheckSuite`) also passes `lookup`; the others pass one number |
+
+Reviewed survivors of the default set:
 
 | Mutant | Why it is left |
 |--------|----------------|
