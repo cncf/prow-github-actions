@@ -189,12 +189,16 @@ describe('the Worker in a fresh isolate', () => {
   it('mints an installation token once per isolate, not once per delivery', async () => {
     const namespace = await mf.getDurableObjectNamespace('PULL_REQUEST_LOCK', 'prow')
     const lock = namespace.get(namespace.idFromName('Codertocat/Hello-World#1')) as unknown as { handle: (delivery: unknown) => Promise<void> }
+    // the tests run in any order (npm run test:shuffle) and this isolate's log is never cleared: count this test's
+    // own PATCHes, and every mint the isolate has made
+    const patches = async () => (await githubSawIn(mf)).filter(s => s.method === 'PATCH').length
+    const before = await patches()
 
     await lock.handle({ id: 'd-again', eventName: 'issue_comment', payload: closeComment() })
+    await lock.handle({ id: 'd-and-again', eventName: 'issue_comment', payload: closeComment() })
 
-    const seen = await githubSawIn(mf)
-    expect(seen.filter(s => s.method === 'PATCH')).toHaveLength(2)
-    expect(seen.filter(s => s.path.endsWith('/access_tokens'))).toHaveLength(1)
+    expect(await patches() - before).toBe(2)
+    expect((await githubSawIn(mf)).filter(s => s.path.endsWith('/access_tokens'))).toHaveLength(1)
   })
 })
 
@@ -246,14 +250,16 @@ describe('the Worker', () => {
   })
 
   it('closes the issue /close names: token minted with the app jwt on the GHES url, then PATCH with it, through the pull request lock', async () => {
-    const response = await deliver('issue_comment', closeComment(), 'd-close')
+    // the isolate keeps the tokens it mints, and the tests run in any order (npm run test:shuffle): an installation
+    // no other test delivers for has no token yet, so the mint this test looks for is its own
+    const response = await deliver('issue_comment', closeComment(9), 'd-close')
     expect(response.status).toBe(202)
 
     await eventually(async () => (await githubSaw()).some(s => s.method === 'PATCH'))
     const seen = await githubSaw()
     // minted once, by the Durable Object that reads it; the receiver that hands the delivery over mints none
     const tokens = seen.filter(s => s.path.endsWith('/access_tokens'))
-    expect(tokens.map(s => s.path)).toEqual(['/api/v3/app/installations/7/access_tokens'])
+    expect(tokens.map(s => s.path)).toEqual(['/api/v3/app/installations/9/access_tokens'])
     expect(tokens[0]?.auth).toMatch(/^bearer ey/i)
     const patch = seen.find(s => s.method === 'PATCH')
     expect(patch?.path).toBe('/api/v3/repos/Codertocat/Hello-World/issues/1')
