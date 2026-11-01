@@ -37439,6 +37439,10 @@ function newRunState() {
         hasOwners: new Map(),
         pullRequestOwners: new Map(),
         pullRequestTips: new Map(),
+        authChecks: new Map(),
+        issueCommenters: new Map(),
+        rootOwners: new Map(),
+        clients: new Map(),
         tideEvaluated: new Set(),
         warned: new Set(),
     };
@@ -41298,12 +41302,21 @@ function loadProwConfig(octokit, context) {
     return pending;
 }
 async function config_load(octokit, context) {
-    const explicit = platform_platform().inputs.get('config', { required: false }).trim();
-    // the org and repo tiers do not depend on each other, so probe both at once
-    const [base, repo] = await Promise.all([
-        explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+    const input = platform_platform().inputs.get('config', { required: false }).trim();
+    // an input that names no source is refused before any request is made
+    const explicit = input === '' ? undefined : parseExplicitSource(input);
+    // the org and repo tiers do not depend on each other, so probe both at once; a failure is raised only
+    // once both have settled, so that no probe is still in flight when loading returns
+    const settled = await Promise.allSettled([
+        explicit === undefined ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
         loadRepoTier(octokit, context),
     ]);
+    const [base, repo] = settled.map((result) => {
+        if (result.status === 'rejected') {
+            throw result.reason;
+        }
+        return result.value;
+    });
     const tiers = [base, repo].filter((tier) => tier !== undefined);
     const merged = tiers.reduce((acc, tier) => mergeProwConfig(acc, tier.config), {});
     const sources = tiers.map(tier => tier.source);
@@ -41313,52 +41326,57 @@ async function config_load(octokit, context) {
 async function loadOrgTier(octokit, context) {
     const { owner } = context.repo;
     // the event repository is the org config repo itself: its file is the repo tier
-    for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
-        const source = `${owner}/${repo}:${orgConfigPath}`;
-        let text;
-        try {
-            text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath });
-        }
-        catch (e) {
-            throw new Error(`could not load organization prow config from ${source}: ${e}`);
-        }
-        if (text !== undefined) {
-            return { source, config: parseProwConfig(source, text) };
-        }
-    }
-    return undefined;
+    return firstFound(orgConfigRepos.filter(repo => repo !== context.repo.repo).map(repo => ({
+        source: `${owner}/${repo}:${orgConfigPath}`,
+        file: { owner, repo, path: orgConfigPath },
+        failure: 'could not load organization prow config from',
+    })), octokit);
 }
 async function loadRepoTier(octokit, context) {
-    for (const path of repoConfigPaths) {
-        const source = `${context.repo.owner}/${context.repo.repo}:${path}`;
-        let text;
-        try {
-            text = await fetchRepoFile(octokit, { ...context.repo, path });
+    return firstFound(repoConfigPaths.map(path => ({
+        source: `${context.repo.owner}/${context.repo.repo}:${path}`,
+        file: { ...context.repo, path },
+        failure: 'could not load prow config from',
+    })), octokit);
+}
+// probes every candidate at once and settles in precedence order: the first that exists wins, and an
+// error stops the walk only when no candidate before it exists, as probing one after another would.
+// It returns only once every probe has answered, so that none is still in flight afterwards.
+async function firstFound(probes, octokit) {
+    const settled = await Promise.allSettled(probes.map(probe => fetchRepoFile(octokit, probe.file)));
+    for (const [i, probe] of probes.entries()) {
+        const result = settled[i];
+        if (result.status === 'rejected') {
+            throw new Error(`${probe.failure} ${probe.source}: ${result.reason}`);
         }
-        catch (e) {
-            throw new Error(`could not load prow config from ${source}: ${e}`);
-        }
-        if (text !== undefined) {
-            return { source, config: parseProwConfig(source, text) };
+        if (result.value !== undefined) {
+            return { source: probe.source, config: parseProwConfig(probe.source, result.value) };
         }
     }
     return undefined;
 }
-async function loadExplicitTier(octokit, input) {
+function parseExplicitSource(input) {
     if (input.startsWith('http://')) {
         throw new Error('config: http:// sources are not allowed, use https://');
     }
     if (input.startsWith('https://')) {
-        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+        return { kind: 'url', input };
     }
     const match = explicitSourcePattern.exec(input);
     if (match === null) {
         throw new Error(`config: expected owner/repo:path[@ref] or an https:// url, got '${input}'`);
     }
     const [, owner, repo, path, ref] = match;
+    return { kind: 'repo', input, file: { owner, repo, path, ref } };
+}
+async function loadExplicitTier(octokit, source) {
+    const { input } = source;
+    if (source.kind === 'url') {
+        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+    }
     let text;
     try {
-        text = await fetchRepoFile(octokit, { owner, repo, path, ref });
+        text = await fetchRepoFile(octokit, source.file);
     }
     catch (e) {
         throw new Error(`could not load prow config from ${input}: ${e}`);
@@ -41417,8 +41435,12 @@ function isNotFound(error) {
  * @param text - the yaml text
  */
 function parseProwConfig(source, text) {
-    // a comment-only file holds zero documents, which yaml.load rejects
-    const loaded = loadAll(text).length === 0 ? undefined : load(text);
+    // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+    const documents = loadAll(text);
+    if (documents.length > 1) {
+        throw new YAMLException('expected a single document in the stream, but found more');
+    }
+    const loaded = documents[0];
     if (loaded === undefined || loaded === null) {
         return {};
     }
@@ -41995,7 +42017,8 @@ async function getCurrentLabels(octokit, context, issueNum) {
  * @param labels - the labels to remove from the issue
  */
 async function removeLabels(octokit, context, issueNum, labels) {
-    for (const label of labels) {
+    // every label at once; the first failure in the given order is the one reported
+    const settled = await Promise.allSettled(labels.map(async (label) => {
         try {
             await octokit.issues.removeLabel({
                 ...context.repo,
@@ -42010,6 +42033,10 @@ async function removeLabels(octokit, context, issueNum, labels) {
             else
                 throw new Error(`could not remove label ${label}: ${e}`);
         }
+    }));
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed !== undefined) {
+        throw failed.reason;
     }
 }
 /**
@@ -42093,8 +42120,18 @@ function newOctokit(token) {
         baseUrl: platform_platform().apiBaseUrl(),
     });
 }
+/**
+ * The client for the configured token, built once per run: every handler of an event shares it.
+ */
 function newOctokitFromInputs() {
-    return newOctokit(platform_platform().inputs.get('github-token', { required: true }));
+    const token = platform_platform().inputs.get('github-token', { required: true });
+    const clients = platform_platform().state().clients;
+    let client = clients.get(token);
+    if (client === undefined) {
+        client = newOctokit(token);
+        clients.set(token, client);
+    }
+    return client;
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
@@ -42515,8 +42552,8 @@ function listedOwners(tree) {
  * rules on whether or not the listing was truncated.
  */
 async function probeOwners(octokit, context, ref, dirs, listed) {
-    const owners = new Map();
-    for (const dir of dirs) {
+    // every candidate directory at once; a missing OWNERS file is just absent
+    const found = await Promise.all([...dirs].map(async (dir) => {
         const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
         let data;
         try {
@@ -42529,12 +42566,13 @@ async function probeOwners(octokit, context, ref, dirs, listed) {
         }
         catch (e) {
             if (owners_isNotFound(e)) {
-                continue;
+                return undefined;
             }
             throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
         }
-        owners.set(dir, parseOwners(path, decode(data, path)));
-    }
+        return [dir, parseOwners(path, decode(data, path))];
+    }));
+    const owners = new Map(found.filter(entry => entry !== undefined));
     return { owners, hasOwners: listed || owners.size > 0 };
 }
 /**
@@ -42562,6 +42600,7 @@ function repoHasOwners(octokit, context) {
 function branchHasOwners(octokit, context, branch) {
     return memoized(platform_platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}@${branch}`, () => probeBranchOwners(octokit, context, branch));
 }
+/** memoized returns the cached promise for `key`, computing it on first use */
 function memoized(cache, key, compute) {
     let pending = cache.get(key);
     if (pending === undefined) {
@@ -42640,15 +42679,18 @@ function loadPullRequestOwners(octokit, context, pullNumber) {
     return pending;
 }
 async function pullRequestOwners_load(octokit, context, pullNumber) {
-    const { data: pull } = await octokit.pulls.get({
-        ...context.repo,
-        pull_number: pullNumber,
-    });
-    const changed = await octokit.paginate(octokit.pulls.listFiles, {
-        ...context.repo,
-        pull_number: pullNumber,
-        per_page: 100,
-    });
+    // the pull request and its changed files do not depend on each other, so read both at once
+    const [{ data: pull }, changed] = await Promise.all([
+        octokit.pulls.get({
+            ...context.repo,
+            pull_number: pullNumber,
+        }),
+        octokit.paginate(octokit.pulls.listFiles, {
+            ...context.repo,
+            pull_number: pullNumber,
+            per_page: 100,
+        }),
+    ]);
     const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
     // OWNERS come from the base branch so a PR cannot grant itself approvers: its current tip, not
     // `pull.base.sha`, which GitHub snapshots when the PR last changed. A PR opened before OWNERS
@@ -42720,7 +42762,11 @@ function getErrorDetails(error) {
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-async function checkOrgMember(octokit, context, user) {
+function checkOrgMember(octokit, context, user) {
+    const org = context.payload.repository?.owner.login;
+    return memoized(platform_platform().state().authChecks, `member:${org}/${user}`, () => fetchOrgMember(octokit, context, user));
+}
+async function fetchOrgMember(octokit, context, user) {
     try {
         if (context.payload.repository === undefined) {
             platform_platform().log.debug(`checkOrgMember error: context payload repository undefined`);
@@ -42749,7 +42795,11 @@ async function checkOrgMember(octokit, context, user) {
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-async function checkCollaborator(octokit, context, user) {
+function checkCollaborator(octokit, context, user) {
+    const { owner, repo } = context.repo;
+    return memoized(platform_platform().state().authChecks, `collaborator:${owner}/${repo}/${user}`, () => fetchCollaborator(octokit, context, user));
+}
+async function fetchCollaborator(octokit, context, user) {
     try {
         await octokit.repos.checkCollaborator({
             ...context.repo,
@@ -42769,7 +42819,8 @@ async function checkCollaborator(octokit, context, user) {
 }
 /**
  * checkIssueComments will check to see if the given user
- * has commented on the given issue
+ * has commented on the given issue, reading every page of comments once per
+ * issue for the run and comparing logins case-insensitively
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -42778,16 +42829,17 @@ async function checkCollaborator(octokit, context, user) {
  */
 async function checkIssueComments(octokit, context, issueNum, user) {
     try {
-        const comments = await octokit.issues.listComments({
-            ...context.repo,
-            issue_number: issueNum,
+        const commenters = await memoized(platform_platform().state().issueCommenters, `${context.repo.owner}/${context.repo.repo}#${issueNum}`, async () => {
+            // every page: on a busy issue the user's comment may be past the first 30
+            const comments = await octokit.paginate(octokit.issues.listComments, {
+                ...context.repo,
+                issue_number: issueNum,
+                per_page: 100,
+            });
+            // GitHub logins are case-insensitive
+            return comments.map(e => e.user?.login.toLowerCase());
         });
-        for (const e of comments.data) {
-            if (e.user?.login === user) {
-                return true;
-            }
-        }
-        return false;
+        return commenters.includes(user.toLowerCase());
     }
     catch (e) {
         const { status, message } = getErrorDetails(e);
@@ -42805,13 +42857,8 @@ async function checkIssueComments(octokit, context, issueNum, user) {
  * @param args - the users to check auth on
  */
 async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
-    const toReturn = [];
-    await Promise.all(args.map(async (arg) => {
-        if (await checkCommenterAuth(octokit, context, issueNum, arg)) {
-            toReturn.push(arg);
-        }
-    }));
-    return toReturn;
+    const results = await Promise.all(args.map(arg => checkCommenterAuth(octokit, context, issueNum, arg)));
+    return args.filter((_, i) => results[i]);
 }
 /**
  * checkCommenterAuth will return true
@@ -42823,10 +42870,14 @@ async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
  * @param user - the user to check auth on
  */
 async function checkCommenterAuth(octokit, context, issueNum, user) {
-    const isOrgMember = await checkOrgMember(octokit, context, user);
-    const isCollaborator = await checkCollaborator(octokit, context, user);
-    const hasCommented = await checkIssueComments(octokit, context, issueNum, user);
-    return isOrgMember || isCollaborator || hasCommented;
+    // cheapest first; each check runs only when the previous ones refused the user
+    if (await checkOrgMember(octokit, context, user)) {
+        return true;
+    }
+    if (await checkCollaborator(octokit, context, user)) {
+        return true;
+    }
+    return checkIssueComments(octokit, context, issueNum, user);
 }
 /**
  * When the repository has OWNERS files, use them to authorize the action,
@@ -42846,9 +42897,7 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
         ? await assertPullRequestOwner(octokit, context, role, username)
         : await assertRootOwner(octokit, context, role, username);
     if (!hasOwners) {
-        const isOrgMember = await checkOrgMember(octokit, context, username);
-        const isCollaborator = await checkCollaborator(octokit, context, username);
-        if (!isOrgMember && !isCollaborator) {
+        if (!(await isOrgMemberOrCollaborator(octokit, context, username))) {
             // every review policy admits members and collaborators, so only a refusal needs the configuration
             const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization);
             if (review === 'members') {
@@ -42859,6 +42908,13 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
             }
         }
     }
+}
+// the collaborator check runs only when the org membership check refused the user
+async function isOrgMemberOrCollaborator(octokit, context, user) {
+    if (await checkOrgMember(octokit, context, user)) {
+        return true;
+    }
+    return checkCollaborator(octokit, context, user);
 }
 /**
  * policyAllows reports whether an `authorization` policy admits the user,
@@ -42996,10 +43052,14 @@ async function rootOwnersIncludes(octokit, context, user) {
     return ownersInclude(octokit, context, [...owners.reviewers, ...owners.approvers], login);
 }
 /**
- * Retrieve the contents of the OWNERS file at the root of the repository.
+ * Retrieve the contents of the OWNERS file at the root of the repository,
+ * once per repository for the run.
  * If the file does not exist, returns an empty string.
  */
-async function retrieveOwnersFile(octokit, context) {
+function retrieveOwnersFile(octokit, context) {
+    return memoized(platform_platform().state().rootOwners, `${context.repo.owner}/${context.repo.repo}`, () => fetchOwnersFile(octokit, context));
+}
+async function fetchOwnersFile(octokit, context) {
     platform_platform().log.debug(`Looking for an OWNERS file at the root of the repository`);
     let data;
     try {
@@ -43074,6 +43134,19 @@ function getCommandArgs(command, body) {
  */
 function hasKeyword(args, keyword) {
     return args.some(arg => arg.toLowerCase() === keyword);
+}
+/**
+ * hasExactArgs reports whether a line carrying the command has exactly the
+ * given argument text after it, ignoring case and surrounding whitespace like
+ * Prow's `^/lgtm cancel\s*$`, so that a sentence after the command that only
+ * mentions the word (`/lgtm no need to cancel`) does not match
+ *
+ * @param command - the command to look for. Ex: '/lgtm'
+ * @param body - the full body of the comment
+ * @param args - the lowercase argument text, ex: 'cancel'
+ */
+function hasExactArgs(command, body, args) {
+    return findCommandArgs(command, body).some(rest => rest.toLowerCase() === args);
 }
 function findCommandArgs(command, body) {
     const pattern = commandPattern(command);
@@ -43498,8 +43571,8 @@ function removeCommandFor(command) {
 /**
  * addPrefixedLabels labels the issue with '<prefix>/<value>' for every value
  * that is both in the comment and in the configured allowlist.
- * When the command is exclusive, existing '<prefix>/*' labels that were not
- * requested are removed first.
+ * When the command is exclusive it takes a single value, and existing
+ * '<prefix>/*' labels that were not requested are removed first.
  *
  * @param context - the github actions event context
  * @param cmd - the command definition
@@ -43512,6 +43585,11 @@ async function addPrefixedLabels(context, cmd) {
     await assertPolicy(octokit, context, section.authorization, 'labels', commenter(context), cmd.command);
     const labels = requestedLabels(cmd, cmd.command, commentBody, section.values, section.protectedLabels);
     if (section.exclusive) {
+        if (labels.length > 1) {
+            throw new Error(`${cmd.command.slice(1)}: ${cmd.command} takes one value; got ${labels.join(', ')}`);
+        }
+        // refuse a label the repository lacks before the old value is taken off
+        await assertLabelsExist(octokit, context, labels);
         const currentLabels = await currentIssueLabels(octokit, context, issueNumber, cmd.command);
         const stale = currentLabels.filter((label) => {
             return label.toLowerCase().startsWith(`${cmd.prefix.toLowerCase()}/`)
@@ -43674,7 +43752,7 @@ async function hold(context = platform_platform().context()) {
     await assertPolicy(octokit, context, resolveAuthorization(config.authorization), 'hold', commenter(context), '/hold');
     const cancel = hasCommand('/unhold', commentBody)
         || hasCommand('/remove-hold', commentBody)
-        || (hasCommand('/hold', commentBody) && hasKeyword(getCommandArgs('/hold', commentBody), 'cancel'));
+        || hasExactArgs('/hold', commentBody, 'cancel');
     if (cancel) {
         await cancelHold(octokit, context, issueNumber, holdLabel);
         return;
@@ -44084,7 +44162,7 @@ function errorMessage(e) {
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
 /**
  * Lists the numbers of the open pull requests whose head is the given commit,
- * paging through `pulls.list` until a page comes back empty.
+ * paging through `pulls.list` until a page comes back short of a full one.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
@@ -44092,17 +44170,19 @@ function errorMessage(e) {
  */
 async function pullRequestsForSha(octokit, context, sha) {
     const numbers = [];
+    const perPage = 100;
     for (let page = 1;; page++) {
         const { data } = await octokit.pulls.list({
             ...context.repo,
             state: 'open',
-            per_page: 100,
+            per_page: perPage,
             page,
         });
-        if (data.length === 0) {
+        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
+        // a short page is the last one: no need to ask for the empty page after it
+        if (data.length < perPage) {
             return numbers;
         }
-        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
     }
 }
 
@@ -44544,10 +44624,20 @@ async function evaluate(context, numbers, lookup) {
         platform_platform().log.debug('tide: no open pull request to evaluate');
         return;
     }
-    const results = await Promise.all(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
-    const failed = candidates.filter((_, i) => results[i] === 'failed');
+    // settled, so one candidate whose evaluation throws neither stops nor hides the others
+    const results = await Promise.allSettled(candidates.map(number => tryMergePullRequest(octokit, context, number, tide, lgtm)));
+    const failed = [];
+    results.forEach((settled, i) => {
+        if (settled.status === 'rejected') {
+            platform_platform().log.error(`could not evaluate pr #${candidates[i]}: ${settled.reason}`);
+            failed.push(`#${candidates[i]} (could not evaluate: ${settled.reason})`);
+        }
+        else if (settled.value === 'failed') {
+            failed.push(`#${candidates[i]}`);
+        }
+    });
     if (failed.length > 0) {
-        throw new Error(`could not merge pull request(s) ${failed.map(number => `#${number}`).join(', ')}`);
+        throw new Error(`could not merge pull request(s) ${failed.join(', ')}`);
     }
 }
 function pullNumber(context) {
@@ -44556,118 +44646,6 @@ function pullNumber(context) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
     return number;
-}
-
-;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
-
-
-
-
-
-
-/**
- * Inspired by https://github.com/actions/stale
- * this will recurse through the pages of PRs for a repo
- * and evaluate every one that passes the tide merge gate
- * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
- * through the shared merge path: the lgtm binding, GitHub's mergeability,
- * then the merge. It is the backstop of the event-driven tide handlers.
- * Every PR is attempted; once all pages are processed the run fails
- * if any merge was refused or any evaluation threw, listing the affected PRs.
- * Only a listing that cannot be read stops the run early.
- *
- * @param currentPage - the page to return from the github api
- * @param context - The github actions event context
- * @param progress - merges done and failures collected on earlier pages
- */
-async function cronLgtm(currentPage, context, progress = { jobsDone: 0, failures: [] }) {
-    platform_platform().log.info(`starting lgtm merger page: ${currentPage}`);
-    const octokit = newOctokitFromInputs();
-    const policy = {
-        tide: base => loadTide(octokit, context, base),
-        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
-    };
-    // Get next batch
-    let prs;
-    try {
-        prs = await getOpenPrs(octokit, context, currentPage);
-    }
-    catch (e) {
-        throw new Error(`could not get PRs: ${e}`);
-    }
-    if (prs.length <= 0) {
-        // All done!
-        if (progress.failures.length > 0) {
-            const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
-            throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
-        }
-        return progress.jobsDone;
-    }
-    await Promise.all(prs.map(async (pr) => {
-        platform_platform().log.info(`processing pr: ${pr.number}`);
-        if (pr.state === 'closed') {
-            return;
-        }
-        if (pr.locked) {
-            return;
-        }
-        try {
-            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
-                progress.jobsDone++;
-            }
-        }
-        catch (error) {
-            // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
-            platform_platform().log.error(`could not evaluate pr #${pr.number}: ${error}`);
-            progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
-        }
-    }));
-    // Recurse, continue to next page
-    return await cronLgtm(currentPage + 1, context, progress);
-}
-/**
- * grabs pulls from github in baches of 100
- *
- * @param octokit - a hydrated github client
- * @param context - the github actions workflow context
- * @param page - the page number to get from the api
- */
-async function getOpenPrs(octokit, context = platform_platform().context(), page) {
-    platform_platform().log.debug(`getting prs page ${page}...`);
-    const prResults = await octokit.pulls.list({
-        ...context.repo,
-        state: 'open',
-        page,
-    });
-    platform_platform().log.debug(`got: ${prResults.data}`);
-    return prResults.data;
-}
-/**
- * Evaluates a PR that passes the tide merge gate on its listed labels
- * through the shared merge path; a PR that does not is skipped with the
- * reason logged and costs no further call. A refused merge is recorded in
- * failures instead of aborting the run. On a branch that requires a merge
- * queue the PR is enqueued instead; that counts as done.
- *
- * @param pr - the PR to try and merge
- * @param octokit - a hydrated github api client
- * @param context - the github actions event context
- * @param policy - the resolved tide and lgtm configuration
- * @param failures - collects PRs whose merge the api refused
- * @returns whether the PR was merged or enqueued
- */
-async function tryMergePr(pr, octokit, context = platform_platform().context(), policy, failures) {
-    const tide = await policy.tide(pr.base.ref);
-    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
-    if (!gate.ok) {
-        platform_platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`);
-        return false;
-    }
-    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
-    if (verdict.result === 'failed') {
-        failures.push({ number: pr.number, message: verdict.message });
-    }
-    return successfulResults.has(verdict.result);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approveReview.js
@@ -44942,7 +44920,7 @@ function commandKind(body, command, removeAlias) {
     if (!hasCommand(command, body)) {
         return undefined;
     }
-    return hasKeyword(getCommandArgs(command, body), 'cancel') ? 'cancel' : 'add';
+    return hasExactArgs(command, body, 'cancel') ? 'cancel' : 'add';
 }
 function humanLogin(user) {
     if (user?.login === undefined || user.login === '' || user.type === 'Bot' || user.login === 'github-actions[bot]') {
@@ -45425,14 +45403,40 @@ async function requestOwnersReviewers(octokit, context, pullNumber, settings, op
         platform_platform().log.debug(`blunderbuss: every reviewer candidate for #${pullNumber} has already reviewed it`);
         return;
     }
-    const reviewers = pickReviewers(coverage, count, rng);
+    const picked = pickReviewers(coverage, count, rng);
+    let reviewers = picked;
     try {
         await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers });
     }
     catch (e) {
-        throw new Error(`could not request reviewers: ${e}`);
+        if (!isUnprocessable(e)) {
+            throw new Error(`could not request reviewers: ${e}`);
+        }
+        // GitHub refuses the whole batch when one login cannot be requested (not a collaborator, the author);
+        // request each alone so the others still get the request
+        reviewers = await requestEach(octokit, context, pullNumber, picked);
+        if (reviewers.length === 0) {
+            throw new Error(`could not request reviewers: ${e}`);
+        }
     }
     platform_platform().log.info(`blunderbuss: requested review from ${reviewers.join(', ')} on #${pullNumber}`);
+}
+/** requests each reviewer on its own and returns the ones GitHub accepted, warning about the others */
+async function requestEach(octokit, context, pullNumber, reviewers) {
+    const accepted = [];
+    for (const reviewer of reviewers) {
+        try {
+            await octokit.pulls.requestReviewers({ ...context.repo, pull_number: pullNumber, reviewers: [reviewer] });
+            accepted.push(reviewer);
+        }
+        catch (e) {
+            platform_platform().log.warning(`blunderbuss: could not request review from ${reviewer} on #${pullNumber}: ${e}`);
+        }
+    }
+    return accepted;
+}
+function isUnprocessable(error) {
+    return typeof error === 'object' && error !== null && 'status' in error && error.status === 422;
 }
 async function reviewedBy(octokit, context, pullNumber) {
     try {
@@ -45811,8 +45815,18 @@ async function sweep(context = platform_platform().context(), now = new Date()) 
 async function sweepPullRequest(octokit, context, pr, plugins) {
     const outcome = { result: 'evaluated', errors: [] };
     // both memoized per base branch: one tree listing however many pull requests share it
-    const hasOwners = await branchHasOwners(octokit, context, pr.base.ref);
-    const tide = await loadTide(octokit, context, pr.base.ref);
+    let hasOwners;
+    let tide;
+    try {
+        hasOwners = await branchHasOwners(octokit, context, pr.base.ref);
+        tide = await loadTide(octokit, context, pr.base.ref);
+    }
+    catch (e) {
+        // collected like a failed step, so a base branch whose OWNERS or configuration cannot be read does not stop the other pull requests
+        outcome.errors.push(`setup: ${e instanceof Error ? e.message : String(e)}`);
+        platform_platform().log.info(`sweep: #${pr.number} ${outcome.result} with ${outcome.errors.length} error(s)`);
+        return outcome;
+    }
     const ownersSteps = [
         ['owners-label', () => applyOwnersLabels(octokit, context, pr.number)],
         ['blunderbuss', () => plugins.reviewers.delay > 0
@@ -45936,6 +45950,7 @@ async function recentlyUpdatedPulls(octokit, context, since) {
         }
     }
 }
+/** runs fn over items, at most `limit` at once, in order */
 async function forEachLimited(items, limit, fn) {
     let next = 0;
     const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -45944,6 +45959,113 @@ async function forEachLimited(items, limit, fn) {
         }
     });
     await Promise.all(workers);
+}
+
+;// CONCATENATED MODULE: ./lib/cronJobs/lgtm.js
+
+
+
+
+
+
+
+/**
+ * Inspired by https://github.com/actions/stale
+ * this lists every open PR of a repo first, then evaluates every one
+ * that passes the tide merge gate
+ * (`tide.labels` present, no `tide.missing_labels`) on the listed labels
+ * through the shared merge path: the lgtm binding, GitHub's mergeability,
+ * then the merge. It is the backstop of the event-driven tide handlers.
+ * Listing before merging keeps a merge from shifting a later PR onto a
+ * page already read. A few PRs are evaluated at a time; every PR is
+ * attempted, and the run then fails if any merge was refused or any
+ * evaluation threw, listing the affected PRs.
+ * Only a listing that cannot be read stops the run early.
+ *
+ * @param context - The github actions event context
+ */
+async function cronLgtm(context) {
+    platform_platform().log.info('starting lgtm merger');
+    const octokit = newOctokitFromInputs();
+    const policy = {
+        tide: base => loadTide(octokit, context, base),
+        lgtm: lgtmSettings(await loadProwConfig(octokit, context)),
+    };
+    let prs;
+    try {
+        prs = await getOpenPrs(octokit, context);
+    }
+    catch (e) {
+        throw new Error(`could not get PRs: ${e}`);
+    }
+    const progress = { jobsDone: 0, failures: [] };
+    await forEachLimited(prs, sweepConcurrency, async (pr) => {
+        platform_platform().log.info(`processing pr: ${pr.number}`);
+        if (pr.state === 'closed') {
+            return;
+        }
+        if (pr.locked) {
+            return;
+        }
+        try {
+            if (await tryMergePr(pr, octokit, context, policy, progress.failures)) {
+                progress.jobsDone++;
+            }
+        }
+        catch (error) {
+            // collected like a refused merge, so one PR that cannot be evaluated does not stop the others
+            platform_platform().log.error(`could not evaluate pr #${pr.number}: ${error}`);
+            progress.failures.push({ number: pr.number, message: `could not evaluate: ${error}` });
+        }
+    });
+    if (progress.failures.length > 0) {
+        const list = progress.failures.map(f => `#${f.number} (${f.message})`).join(', ');
+        throw new Error(`${progress.failures.length} pull request(s) could not be merged: ${list}`);
+    }
+    return progress.jobsDone;
+}
+/**
+ * lists every open pull request, following the api's pages
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github actions workflow context
+ */
+async function getOpenPrs(octokit, context) {
+    platform_platform().log.debug('getting open prs...');
+    const prs = await octokit.paginate(octokit.pulls.list, {
+        ...context.repo,
+        state: 'open',
+        per_page: 100,
+    });
+    platform_platform().log.debug(`got: ${prs.length} open prs`);
+    return prs;
+}
+/**
+ * Evaluates a PR that passes the tide merge gate on its listed labels
+ * through the shared merge path; a PR that does not is skipped with the
+ * reason logged and costs no further call. A refused merge is recorded in
+ * failures instead of aborting the run. On a branch that requires a merge
+ * queue the PR is enqueued instead; that counts as done.
+ *
+ * @param pr - the PR to try and merge
+ * @param octokit - a hydrated github api client
+ * @param context - the github actions event context
+ * @param policy - the resolved tide and lgtm configuration
+ * @param failures - collects PRs whose merge the api refused
+ * @returns whether the PR was merged or enqueued
+ */
+async function tryMergePr(pr, octokit, context = platform_platform().context(), policy, failures) {
+    const tide = await policy.tide(pr.base.ref);
+    const gate = meetsMergeGate(pr.labels.map(e => e.name), tide);
+    if (!gate.ok) {
+        platform_platform().log.info(`skipping pr #${pr.number}: ${gate.reason}`);
+        return false;
+    }
+    const verdict = await evaluateMerge(octokit, context, pr.number, tide, policy.lgtm, { once: true });
+    if (verdict.result === 'failed') {
+        failures.push({ number: pr.number, message: verdict.message });
+    }
+    return successfulResults.has(verdict.result);
 }
 
 ;// CONCATENATED MODULE: ./lib/cronJobs/handleCronJob.js
@@ -45966,7 +46088,7 @@ async function handleCronJobs(context = platform_platform().context()) {
         switch (command) {
             case 'lgtm':
                 platform_platform().log.debug('running cronLgtm job');
-                return await cronLgtm(1, context).catch(async (e) => {
+                return await cronLgtm(context).catch(async (e) => {
                     return e;
                 });
             case 'label-sync':
@@ -46070,6 +46192,7 @@ function fixed_requireIssueNumber(context) {
 
 
 
+
 /**
  * /lgtm will add the lgtm label. On a pull request the label is first bound
  * to the head commit with a `prow/lgtm` commit status (`lgtm.bind_to_commit`);
@@ -46093,7 +46216,7 @@ async function lgtm(context = platform_platform().context()) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const cancel = hasCommand('/remove-lgtm', commentBody)
-        || (hasCommand('/lgtm', commentBody) && hasKeyword(getCommandArgs('/lgtm', commentBody), 'cancel'));
+        || hasExactArgs('/lgtm', commentBody, 'cancel');
     if (cancel) {
         if (!isAuthor) {
             await assertReviewer(octokit, context, issueNumber, commenterId);
@@ -46128,12 +46251,13 @@ async function cancelLgtm(octokit, context, issueNumber, commenterId, isPullRequ
     catch (e) {
         throw new Error(`could not remove latest review: could not get labels from issue: ${e}`);
     }
-    if (!currentLabels.includes(lgtmLabel)) {
+    const present = currentLabels.filter(label => sameLabel(label, lgtmLabel));
+    if (present.length === 0) {
         platform_platform().log.debug(`could not find ${lgtmLabel} to remove`);
         return;
     }
     try {
-        await removeLabels(octokit, context, issueNumber, [lgtmLabel]);
+        await removeLabels(octokit, context, issueNumber, present);
     }
     catch (e) {
         throw new Error(`could not remove latest review: ${e}`);
@@ -46169,8 +46293,13 @@ async function lgtm_refuse(octokit, context, issueNumber, msg, cause = new Error
 
 
 
+
+
 /**
- * /remove will remove a label based on the command argument
+ * /remove will remove a label based on the command argument.
+ * Labels owned by their own, separately authorized commands (lgtm, approved,
+ * the hold label and do-not-merge/*) are refused: those are released with
+ * /lgtm cancel, /approve cancel and /hold cancel.
  *
  * @param context - the github actions event context
  */
@@ -46188,7 +46317,16 @@ async function remove(context = platform_platform().context()) {
     if (!isAuthUser) {
         throw new Error(`commenter is not authorized to remove a label. Must be repo collaborator`);
     }
-    let toRemove = getCommandArgs('/remove', commentBody);
+    const requested = getCommandArgs('/remove', commentBody);
+    // no arguments after command provided
+    if (requested.length === 0) {
+        throw new Error(`remove: command args missing from body`);
+    }
+    const { hold } = await loadProwConfig(octokit, context);
+    const offender = requested.find(label => isProtectedLabel(label, [resolveHoldLabel(hold)]));
+    if (offender !== undefined) {
+        throw new Error(`remove: ${offender} is managed by its own command and cannot be removed with /remove; use /lgtm cancel, /approve cancel or /hold cancel`);
+    }
     let currentLabels = [];
     try {
         currentLabels = await getCurrentLabels(octokit, context, issueNumber);
@@ -46197,12 +46335,10 @@ async function remove(context = platform_platform().context()) {
     catch (e) {
         throw new Error(`could not get labels from issue: ${e}`);
     }
-    toRemove = toRemove.filter((e) => {
-        return currentLabels.includes(e);
-    });
-    // no arguments after command provided
+    // GitHub label names are case-insensitive: remove the issue's own spelling
+    const toRemove = currentLabels.filter(label => requested.some(name => sameLabel(name, label)));
     if (toRemove.length === 0) {
-        throw new Error(`remove: command args missing from body`);
+        throw new Error(`remove: none of ${requested.join(', ')} are on the issue`);
     }
     await removeLabels(octokit, context, issueNumber, toRemove);
 }
@@ -46241,7 +46377,7 @@ async function approve(context = platform_platform().context()) {
         throw new Error(`github context payload missing issue number: ${JSON.stringify(context.payload)}`);
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
-        || (hasCommand('/approve', commentBody) && hasKeyword(getCommandArgs('/approve', commentBody), 'cancel'));
+        || hasExactArgs('/approve', commentBody, 'cancel');
     if (context.payload.issue?.pull_request !== undefined) {
         const owners = await loadPullRequestOwners(octokit, context, issueNumber);
         if (owners.tree.hasOwners) {
@@ -46791,27 +46927,39 @@ async function milestone(context = platform_platform().context()) {
         throw new Error(`please provide a milestone to add`);
     }
     if (milestoneToAdd.toLowerCase() === 'clear') {
-        await octokit.issues.update({
-            ...context.repo,
-            issue_number: issueNumber,
-            milestone: null,
-        });
+        try {
+            await octokit.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                milestone: null,
+            });
+        }
+        catch (e) {
+            throw new Error(`could not clear milestone: ${e}`);
+        }
         return;
     }
-    const ms = await octokit.issues.listMilestones({
+    const ms = await octokit.paginate(octokit.issues.listMilestones, {
         ...context.repo,
+        state: 'open',
+        per_page: 100,
     });
-    const match = ms.data.find(m => m.title === milestoneToAdd);
+    const match = ms.find(m => m.title === milestoneToAdd);
     if (match === undefined) {
-        const titles = ms.data.map(m => m.title);
+        const titles = ms.map(m => m.title);
         const available = titles.length === 0 ? 'none' : titles.join(', ');
         throw new Error(`milestone "${milestoneToAdd}" not found. Available milestones: ${available}`);
     }
-    await octokit.issues.update({
-        ...context.repo,
-        issue_number: issueNumber,
-        milestone: match.number,
-    });
+    try {
+        await octokit.issues.update({
+            ...context.repo,
+            issue_number: issueNumber,
+            milestone: match.number,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not set milestone: ${e}`);
+    }
 }
 
 ;// CONCATENATED MODULE: ./lib/issueComment/reopen.js
@@ -46932,18 +47080,24 @@ async function unassign(context = platform_platform().context()) {
         }
         return;
     }
-    const isAuthUser = await checkCommenterAuth(octokit, context, issueNumber, commenterId);
-    if (isAuthUser) {
-        try {
-            await octokit.issues.removeAssignees({
-                ...context.repo,
-                issue_number: issueNumber,
-                assignees: commentArgs,
-            });
-        }
-        catch (e) {
-            throw new Error(`could not remove assignee: ${e}`);
-        }
+    // Only a commenter who is an org member or a repo collaborator may unassign
+    // other users; having commented on the issue is not enough
+    // org membership admits the commenter without a collaborator read
+    const authorized = await checkOrgMember(octokit, context, commenterId)
+        || await checkCollaborator(octokit, context, commenterId);
+    if (!authorized) {
+        platform_platform().log.info(`unassign: ${commenterId} is not an org member or repo collaborator; not unassigning ${commentArgs.join(', ')}`);
+        return;
+    }
+    try {
+        await octokit.issues.removeAssignees({
+            ...context.repo,
+            issue_number: issueNumber,
+            assignees: commentArgs,
+        });
+    }
+    catch (e) {
+        throw new Error(`could not remove assignee: ${e}`);
     }
 }
 
@@ -46976,18 +47130,20 @@ async function uncc(context = platform_platform().context()) {
         }
         return;
     }
-    // Only target users who:
-    // - are members of the org
-    // - are collaborators
-    // - have previously commented on this issue
-    const authUser = await checkCommenterAuth(octokit, context, pullNumber, commenterId);
-    if (authUser) {
-        await octokit.pulls.removeRequestedReviewers({
-            ...context.repo,
-            pull_number: pullNumber,
-            reviewers: commentArgs,
-        });
+    // Only a commenter who is an org member or a repo collaborator may remove
+    // other users' review requests; having commented on the PR is not enough
+    // org membership admits the commenter without a collaborator read
+    const authorized = await checkOrgMember(octokit, context, commenterId)
+        || await checkCollaborator(octokit, context, commenterId);
+    if (!authorized) {
+        platform_platform().log.info(`uncc: ${commenterId} is not an org member or repo collaborator; not removing ${commentArgs.join(', ')}`);
+        return;
     }
+    await octokit.pulls.removeRequestedReviewers({
+        ...context.repo,
+        pull_number: pullNumber,
+        reviewers: commentArgs,
+    });
 }
 /**
  * removeSelfReviewReq will remove the self review req if no arguments were provided
@@ -47102,6 +47258,13 @@ function commandForms(command) {
  * @param context - the github context of the current action event
  */
 async function handleIssueComment(context = platform_platform().context()) {
+    // only a newly written comment carries commands: editing an old comment (or deleting one)
+    // must not replay or smuggle in a command after the fact
+    const action = context.payload.action;
+    if (action !== undefined && action !== 'created') {
+        platform_platform().log.info(`issue_comment: ignoring the ${action} action; commands run only on created comments`);
+        return;
+    }
     const commandConfig = [...new Set(platform_platform().inputs.get('prow-commands', { required: false }).split(/\s+/).filter(command => command !== '').map(command => canonicalCommand(command.toLowerCase())))];
     // GitHub allows an empty comment, whose body arrives as null
     const commentBody = context.payload.comment?.body ?? '';
@@ -47130,11 +47293,9 @@ async function handleIssueComment(context = platform_platform().context()) {
         }
         return new Error(`could not execute ${command}. May not be supported - please refer to docs`);
     }));
-    const failures = [];
-    const commandError = results.find(result => result instanceof Error);
-    if (commandError !== undefined) {
-        failures.push(`${new TypeError(`error handling issue comment: ${commandError}`)}`);
-    }
+    const failures = results
+        .filter(result => result instanceof Error)
+        .map(commandError => `${new TypeError(`error handling issue comment: ${commandError}`)}`);
     if (commandConfig.some((command, i) => results[i] !== 'unmatched' && changesLabels(command))) {
         const alreadyChecked = commandConfig.includes('/check-required-labels') && hasCommand('/check-required-labels', commentBody);
         failures.push(...await handleIssueComment_sweep(context, alreadyChecked));
