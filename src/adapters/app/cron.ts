@@ -53,9 +53,11 @@ export function appInstallationLister(settings: AppSettings, tokens: TokenSource
     },
     async* repositories() {
       for await (const installationId of lister.installations()) {
-        let repositories: ScheduledRepository[]
+        const repositories: ScheduledRepository[] = []
         try {
-          repositories = await Array.fromAsync(lister.repositoriesOf(installationId))
+          for await (const repository of lister.repositoriesOf(installationId)) {
+            repositories.push(repository)
+          }
         }
         catch (error) {
           sink({ level: 'error', event: 'schedule', installationId, message: `could not list the repositories of installation ${installationId}: ${error instanceof Error ? error.message : String(error)}` })
