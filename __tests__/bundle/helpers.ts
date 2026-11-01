@@ -28,14 +28,11 @@ const repoConfigFiles = [
   '.prowlabels.yml',
 ]
 
-// the configuration reads the loader makes before it finds `org` and `repo` (or gives up on a tier)
-export function configReads({ org, repo: file }: { org?: string, repo?: string } = {}): string[] {
-  const orgReads = orgConfigRepos
-    .slice(0, org ? orgConfigRepos.indexOf(org) + 1 : orgConfigRepos.length)
-    .map(name => `GET /repos/Codertocat/${name}/contents/prow.yaml`)
-  const repoReads = repoConfigFiles
-    .slice(0, file ? repoConfigFiles.indexOf(file) + 1 : repoConfigFiles.length)
-    .map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`)
+// the configuration reads the loader makes: every probe of both tiers is sent at once, so the files found (`_found`,
+// kept to document each test's fixture) no longer cut the list short
+export function configReads(_found: { org?: string, repo?: string } = {}): string[] {
+  const orgReads = orgConfigRepos.map(name => `GET /repos/Codertocat/${name}/contents/prow.yaml`)
+  const repoReads = repoConfigFiles.map(path => `GET ${repo}/contents/${encodeURIComponent(path)}`)
   return [...orgReads, ...repoReads]
 }
 
@@ -59,6 +56,14 @@ export const queueRead = 'POST /graphql'
 export function membershipReads(login: string) {
   return [`GET /orgs/Codertocat/members/${login}`, `GET ${repo}/collaborators/${login}`]
 }
+
+// the read that authorizes an org member: once membership admits the login, its collaborator status is not read
+export function memberReads(login: string) {
+  return [`GET /orgs/Codertocat/members/${login}`]
+}
+
+// the issue's comment thread, read once per run to find the logins that have commented
+export const commentsRead = `GET ${repo}/issues/1/comments?per_page=100`
 
 // the repository's label list, as the label commands read it before applying a label
 export function repoLabels(...names: string[]) {

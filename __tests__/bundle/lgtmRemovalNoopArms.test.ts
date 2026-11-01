@@ -6,7 +6,7 @@ import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { comment, configReads, helpersFor, membershipReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
+import { comment, configReads, helpersFor, memberReads, ownersProbe, ownersReads, queueRead, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -82,7 +82,7 @@ describe('dist/index.js lgtm removal without a binding', () => {
       // the reviewer is authorized and the pull request read, then the labels read and removal, the configuration
       // read that finds the binding off (so the head is never read for unbinding), and the post-command sweep
       const recorded = calls()
-      const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+      const authReads = [...ownersReads, ...memberReads('Codertocat')]
       expect(recorded.slice(0, authReads.length).sort()).toEqual([...authReads].sort())
       const afterAuth = recorded.slice(authReads.length)
       expect(afterAuth.slice(0, 2)).toEqual([labelsRead, unlabel])
@@ -109,7 +109,7 @@ describe('dist/index.js lgtm removal without a binding', () => {
       expect(gh.requestsMatching('GET', /\/pulls\//)).toEqual([])
       // issue-side authorization probes the root OWNERS file (none) and the commenter's membership; the removal
       // is the whole command, and only the post-command sweep's configuration reads follow — no tide calls on an issue
-      expectCommandThenConfig([labelsRead, unlabel], [], [`GET ${repo}/contents/OWNERS`, ...membershipReads('Codertocat')])
+      expectCommandThenConfig([labelsRead, unlabel], [], [`GET ${repo}/contents/OWNERS`, ...memberReads('Codertocat')])
     })
   })
 })

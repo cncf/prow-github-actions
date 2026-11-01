@@ -53,8 +53,9 @@ describe('loadProwConfig', () => {
 
       const config = await loadProwConfig(octokit, context)
 
+      // both are probed at once; the lower-precedence answer is read and dropped
       expect(config.labels).toEqual({ kind: section('from-project') })
-      await expect(github.notCalled()).resolves.toBe('not called')
+      await expect(github.called()).resolves.toBe('called')
     })
 
     it('falls back to <owner>/.github when .project has no prow.yaml', async () => {
@@ -92,8 +93,9 @@ describe('loadProwConfig', () => {
 
       const config = await loadProwConfig(octokit, context)
 
+      // every path is probed at once; the lower-precedence answer is read and dropped
       expect(config.labels).toEqual({ kind: section('modern') })
-      await expect(legacy.notCalled()).resolves.toBe('not called')
+      await expect(legacy.called()).resolves.toBe('called')
     })
 
     it('reads a legacy .prowlabels.yml when nothing else exists', async () => {
@@ -114,6 +116,65 @@ describe('loadProwConfig', () => {
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         'could not load prow config from Codertocat/Hello-World:prow.yaml:',
       )
+    })
+
+    it('a file found before a failing probe wins, as probing one after another would', async () => {
+      serve('.github/prow.yaml', 'labels:\n  kind: [modern]\n')
+      server.use(
+        http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })),
+        ...utils.noOrgOrRepoConfigExcept('.github/prow.yaml', 'prow.yaml'),
+      )
+
+      await expect(loadProwConfig(octokit, context)).resolves.toMatchObject({ labels: { kind: section('modern') } })
+    })
+
+    it('a failing probe before a file found fails closed, as probing one after another would', async () => {
+      serve('.prowlabels.yml', 'kind: [legacy]\n')
+      server.use(
+        http.get(utils.contentsUrl('Codertocat/Hello-World:prow.yaml'), utils.mockResponse(403, { message: 'forbidden' })),
+        ...utils.noOrgOrRepoConfigExcept('.prowlabels.yml', 'prow.yaml'),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from Codertocat/Hello-World:prow.yaml:',
+      )
+    })
+
+    it('sends every probe of both tiers before any answer arrives', async () => {
+      let started = 0
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      server.use(...utils.configProbes.map(source => http.get(utils.contentsUrl(source), async () => {
+        started++
+        if (started === utils.configProbes.length) {
+          release()
+        }
+        await gate
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+      })))
+
+      await expect(loadProwConfig(octokit, context)).resolves.toMatchObject({ sources: [] })
+      expect(started).toBe(utils.configProbes.length)
+    })
+
+    it('fails only once every probe of both tiers has answered', async () => {
+      let answered = 0
+      server.use(
+        http.get(utils.contentsUrl('prow.yaml'), () => {
+          answered++
+          return new Response(JSON.stringify({ message: 'forbidden' }), { status: 403 })
+        }),
+        ...utils.configProbes.filter(source => source !== 'Codertocat/Hello-World:prow.yaml').map(source => http.get(utils.contentsUrl(source), async () => {
+          await new Promise(resolve => setTimeout(resolve, 20))
+          answered++
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+        })),
+      )
+
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow('could not load prow config from Codertocat/Hello-World:prow.yaml:')
+      expect(answered).toBe(utils.configProbes.length)
     })
   })
 
@@ -267,12 +328,19 @@ describe('loadProwConfig', () => {
       )
     })
 
-    it('rejects an input that is neither owner/repo:path nor a url', async () => {
+    it('rejects an input that is neither owner/repo:path nor a url, without probing the repository tier', async () => {
       process.env.INPUT_CONFIG = 'just-a-file.yaml'
+      let started = 0
+      server.use(...utils.configProbes.map(source => http.get(utils.contentsUrl(source), () => {
+        started++
+        return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 })
+      })))
 
       await expect(loadProwConfig(octokit, context)).rejects.toThrow(
         `config: expected owner/repo:path[@ref] or an https:// url, got 'just-a-file.yaml'`,
       )
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(started).toBe(0)
     })
 
     it('fails when the explicit repo file does not exist', async () => {

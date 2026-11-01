@@ -16,7 +16,9 @@ Explicit source | the `config` input | **replaces** the organization tier when s
 Repository | the event repository, default branch: `.github/prow.yaml`, `.github/prowlabels.yaml`, `prow.yaml`, `.prowlabels.yaml`, then the `.yml` spelling of each, in that order | first found wins
 
 A 404 on an organization or repository probe is silent. Any other error (permissions,
-rate limit, 5xx) fails the run. Label commands require a file in at least one tier;
+rate limit, 5xx) fails the run. Every probe of a tier is sent at once, but the outcome is
+the one probing in order would give: an error on a probe ranked after the file that wins is
+ignored, and an error ranked before it fails the run. Label commands require a file in at least one tier;
 otherwise the run fails with
 `no prow configuration found: looked for prow.yaml in <owner>/.project and <owner>/.github, and .github/prow.yaml, .github/prowlabels.yaml, prow.yaml, .prowlabels.yaml (.yaml/.yml) in <owner>/<repo>`.
 

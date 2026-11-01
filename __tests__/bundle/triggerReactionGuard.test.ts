@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import pullReqOpenedEvent from '../fixtures/pullReq/pullReqOpenedEvent.json'
 import { prCommentEvent } from '../utils/ownersData'
 import { start } from './fakeGithub'
-import { helpersFor, membershipReads, ownersReads, repo, token } from './helpers'
+import { helpersFor, memberReads, ownersReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -15,7 +15,7 @@ vi.setConfig({ testTimeout: 30_000 })
 describe('dist/index.js /retest reaction guard', () => {
   const runsRead = `GET ${repo}/actions/runs?head_sha=headsha&per_page=100`
   const rerun = `POST ${repo}/actions/runs/1/rerun-failed-jobs`
-  const authReads = [...ownersReads, ...membershipReads('Codertocat')]
+  const authReads = [...ownersReads, ...memberReads('Codertocat')]
   let gh: FakeGithub
   const { expectRequests, routeOwners } = helpersFor(() => gh)
 

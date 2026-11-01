@@ -53,15 +53,18 @@ async function load(
   context: Context,
   pullNumber: number,
 ): Promise<PullRequestOwners> {
-  const { data: pull } = await octokit.pulls.get({
-    ...context.repo,
-    pull_number: pullNumber,
-  })
-  const changed = await octokit.paginate(octokit.pulls.listFiles, {
-    ...context.repo,
-    pull_number: pullNumber,
-    per_page: 100,
-  })
+  // the pull request and its changed files do not depend on each other, so read both at once
+  const [{ data: pull }, changed] = await Promise.all([
+    octokit.pulls.get({
+      ...context.repo,
+      pull_number: pullNumber,
+    }),
+    octokit.paginate(octokit.pulls.listFiles, {
+      ...context.repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    }),
+  ])
   const files = [...new Set(changed.flatMap(f =>
     f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename],
   ))]

@@ -219,13 +219,22 @@ export function loadProwConfig(octokit: Octokit, context: Context): Promise<Prow
 }
 
 async function load(octokit: Octokit, context: Context): Promise<ProwConfig> {
-  const explicit = platform().inputs.get('config', { required: false }).trim()
+  const input = platform().inputs.get('config', { required: false }).trim()
+  // an input that names no source is refused before any request is made
+  const explicit = input === '' ? undefined : parseExplicitSource(input)
 
-  // the org and repo tiers do not depend on each other, so probe both at once
-  const [base, repo] = await Promise.all([
-    explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+  // the org and repo tiers do not depend on each other, so probe both at once; a failure is raised only
+  // once both have settled, so that no probe is still in flight when loading returns
+  const settled = await Promise.allSettled([
+    explicit === undefined ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
     loadRepoTier(octokit, context),
   ])
+  const [base, repo] = settled.map((result) => {
+    if (result.status === 'rejected') {
+      throw result.reason
+    }
+    return result.value
+  })
 
   const tiers = [base, repo].filter((tier): tier is Tier => tier !== undefined)
   const merged = tiers.reduce<Partial<ProwConfig>>((acc, tier) => mergeProwConfig(acc, tier.config), {})
@@ -240,50 +249,58 @@ async function loadOrgTier(octokit: Octokit, context: Context): Promise<Tier | u
   const { owner } = context.repo
 
   // the event repository is the org config repo itself: its file is the repo tier
-  for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
-    const source = `${owner}/${repo}:${orgConfigPath}`
-    let text: string | undefined
-    try {
-      text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath })
-    }
-    catch (e) {
-      throw new Error(`could not load organization prow config from ${source}: ${e}`)
-    }
-
-    if (text !== undefined) {
-      return { source, config: parseProwConfig(source, text) }
-    }
-  }
-
-  return undefined
+  return firstFound(orgConfigRepos.filter(repo => repo !== context.repo.repo).map(repo => ({
+    source: `${owner}/${repo}:${orgConfigPath}`,
+    file: { owner, repo, path: orgConfigPath },
+    failure: 'could not load organization prow config from',
+  })), octokit)
 }
 
 async function loadRepoTier(octokit: Octokit, context: Context): Promise<Tier | undefined> {
-  for (const path of repoConfigPaths) {
-    const source = `${context.repo.owner}/${context.repo.repo}:${path}`
-    let text: string | undefined
-    try {
-      text = await fetchRepoFile(octokit, { ...context.repo, path })
-    }
-    catch (e) {
-      throw new Error(`could not load prow config from ${source}: ${e}`)
+  return firstFound(repoConfigPaths.map(path => ({
+    source: `${context.repo.owner}/${context.repo.repo}:${path}`,
+    file: { ...context.repo, path },
+    failure: 'could not load prow config from',
+  })), octokit)
+}
+
+interface Probe {
+  source: string
+  file: { owner: string, repo: string, path: string }
+  failure: string
+}
+
+// probes every candidate at once and settles in precedence order: the first that exists wins, and an
+// error stops the walk only when no candidate before it exists, as probing one after another would.
+// It returns only once every probe has answered, so that none is still in flight afterwards.
+async function firstFound(probes: Probe[], octokit: Octokit): Promise<Tier | undefined> {
+  const settled = await Promise.allSettled(probes.map(probe => fetchRepoFile(octokit, probe.file)))
+
+  for (const [i, probe] of probes.entries()) {
+    const result = settled[i]
+    if (result.status === 'rejected') {
+      throw new Error(`${probe.failure} ${probe.source}: ${result.reason}`)
     }
 
-    if (text !== undefined) {
-      return { source, config: parseProwConfig(source, text) }
+    if (result.value !== undefined) {
+      return { source: probe.source, config: parseProwConfig(probe.source, result.value) }
     }
   }
 
   return undefined
 }
 
-async function loadExplicitTier(octokit: Octokit, input: string): Promise<Tier> {
+type ExplicitSource
+  = | { kind: 'url', input: string }
+    | { kind: 'repo', input: string, file: { owner: string, repo: string, path: string, ref?: string } }
+
+function parseExplicitSource(input: string): ExplicitSource {
   if (input.startsWith('http://')) {
     throw new Error('config: http:// sources are not allowed, use https://')
   }
 
   if (input.startsWith('https://')) {
-    return { source: input, config: parseProwConfig(input, await fetchUrl(input)) }
+    return { kind: 'url', input }
   }
 
   const match = explicitSourcePattern.exec(input)
@@ -292,9 +309,18 @@ async function loadExplicitTier(octokit: Octokit, input: string): Promise<Tier> 
   }
 
   const [, owner, repo, path, ref] = match
+  return { kind: 'repo', input, file: { owner, repo, path, ref } }
+}
+
+async function loadExplicitTier(octokit: Octokit, source: ExplicitSource): Promise<Tier> {
+  const { input } = source
+  if (source.kind === 'url') {
+    return { source: input, config: parseProwConfig(input, await fetchUrl(input)) }
+  }
+
   let text: string | undefined
   try {
-    text = await fetchRepoFile(octokit, { owner, repo, path, ref })
+    text = await fetchRepoFile(octokit, source.file)
   }
   catch (e) {
     throw new Error(`could not load prow config from ${input}: ${e}`)
@@ -365,8 +391,12 @@ function isNotFound(error: unknown): boolean {
  * @param text - the yaml text
  */
 export function parseProwConfig(source: string, text: string): Partial<ProwConfig> {
-  // a comment-only file holds zero documents, which yaml.load rejects
-  const loaded: unknown = yaml.loadAll(text).length === 0 ? undefined : yaml.load(text)
+  // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+  const documents: unknown[] = yaml.loadAll(text)
+  if (documents.length > 1) {
+    throw new yaml.YAMLException('expected a single document in the stream, but found more')
+  }
+  const loaded = documents[0]
 
   if (loaded === undefined || loaded === null) {
     return {}

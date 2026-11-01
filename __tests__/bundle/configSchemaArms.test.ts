@@ -43,6 +43,7 @@ describe('dist/index.js prow.yaml schema rejections', () => {
 
   it.each([
     ['a top level scalar', 'just a string\n', `${source}: yaml malformed, expected a mapping at the top level`],
+    ['a stream of more than one document', 'kind: [cleanup]\n---\ntide: {}\n', 'expected a single document in the stream, but found more'],
     ['a legacy label section that is a scalar', 'kind: bug\n', 'kind: yaml malformed, expected a list of values or { values: [...], exclusive: bool }'],
     ['a label value that is neither a string nor a mapping', 'kind:\n  - 42\n', 'kind: yaml malformed, expected a list of values or { values: [...], exclusive: bool }'],
     ['a label color with a leading #', 'kind:\n  - { name: bug, color: "#d73a4a" }\n', 'kind: invalid color \'#d73a4a\' for label \'bug\', expected 6 hex digits'],

@@ -45,10 +45,11 @@ export async function unassign(
 
   // Only a commenter who is an org member or a repo collaborator may unassign
   // other users; having commented on the issue is not enough
-  const isOrgMember = await checkOrgMember(octokit, context, commenterId)
-  const isCollaborator = await checkCollaborator(octokit, context, commenterId)
+  // org membership admits the commenter without a collaborator read
+  const authorized = await checkOrgMember(octokit, context, commenterId)
+    || await checkCollaborator(octokit, context, commenterId)
 
-  if (!isOrgMember && !isCollaborator) {
+  if (!authorized) {
     platform().log.info(`unassign: ${commenterId} is not an org member or repo collaborator; not unassigning ${commentArgs.join(', ')}`)
     return
   }

@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, membershipReads, repo, token } from './helpers'
+import { comment, helpersFor, memberReads, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -51,7 +51,8 @@ describe('dist/index.js review and lock command refused writes', () => {
 
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('could not request reviewers'))).toBe(true)
-      expect(calls()).toEqual([...membershipReads('octocat'), `GET ${repo}/issues/1/comments?per_page=100`, `POST ${repo}/pulls/1/requested_reviewers`])
+      // membership admits octocat: no collaborator or comment-thread read
+      expect(calls()).toEqual([...memberReads('octocat'), `POST ${repo}/pulls/1/requested_reviewers`])
       expect(gh.requestsMatching('POST', /requested_reviewers$/)[0].body).toEqual({ reviewers: ['octocat'] })
     })
   })
@@ -93,7 +94,8 @@ describe('dist/index.js review and lock command refused writes', () => {
 
       expect(result.status, result.stdout).toBe(1)
       expect(result.errors.some(e => e.includes('could not remove assignee'))).toBe(true)
-      expect(calls()).toEqual([...membershipReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
+      // membership admits the commenter: no collaborator or comment-thread read
+      expect(calls()).toEqual([...memberReads('Codertocat'), `DELETE ${repo}/issues/1/assignees`])
       expect(gh.requestsMatching('DELETE', /assignees$/)[0].body).toEqual({ assignees: ['octocat'] })
     })
   })

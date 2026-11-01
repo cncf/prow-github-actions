@@ -37439,6 +37439,10 @@ function newRunState() {
         hasOwners: new Map(),
         pullRequestOwners: new Map(),
         pullRequestTips: new Map(),
+        authChecks: new Map(),
+        issueCommenters: new Map(),
+        rootOwners: new Map(),
+        clients: new Map(),
         tideEvaluated: new Set(),
         warned: new Set(),
     };
@@ -41298,12 +41302,21 @@ function loadProwConfig(octokit, context) {
     return pending;
 }
 async function config_load(octokit, context) {
-    const explicit = platform_platform().inputs.get('config', { required: false }).trim();
-    // the org and repo tiers do not depend on each other, so probe both at once
-    const [base, repo] = await Promise.all([
-        explicit === '' ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
+    const input = platform_platform().inputs.get('config', { required: false }).trim();
+    // an input that names no source is refused before any request is made
+    const explicit = input === '' ? undefined : parseExplicitSource(input);
+    // the org and repo tiers do not depend on each other, so probe both at once; a failure is raised only
+    // once both have settled, so that no probe is still in flight when loading returns
+    const settled = await Promise.allSettled([
+        explicit === undefined ? loadOrgTier(octokit, context) : loadExplicitTier(octokit, explicit),
         loadRepoTier(octokit, context),
     ]);
+    const [base, repo] = settled.map((result) => {
+        if (result.status === 'rejected') {
+            throw result.reason;
+        }
+        return result.value;
+    });
     const tiers = [base, repo].filter((tier) => tier !== undefined);
     const merged = tiers.reduce((acc, tier) => mergeProwConfig(acc, tier.config), {});
     const sources = tiers.map(tier => tier.source);
@@ -41313,52 +41326,57 @@ async function config_load(octokit, context) {
 async function loadOrgTier(octokit, context) {
     const { owner } = context.repo;
     // the event repository is the org config repo itself: its file is the repo tier
-    for (const repo of orgConfigRepos.filter(repo => repo !== context.repo.repo)) {
-        const source = `${owner}/${repo}:${orgConfigPath}`;
-        let text;
-        try {
-            text = await fetchRepoFile(octokit, { owner, repo, path: orgConfigPath });
-        }
-        catch (e) {
-            throw new Error(`could not load organization prow config from ${source}: ${e}`);
-        }
-        if (text !== undefined) {
-            return { source, config: parseProwConfig(source, text) };
-        }
-    }
-    return undefined;
+    return firstFound(orgConfigRepos.filter(repo => repo !== context.repo.repo).map(repo => ({
+        source: `${owner}/${repo}:${orgConfigPath}`,
+        file: { owner, repo, path: orgConfigPath },
+        failure: 'could not load organization prow config from',
+    })), octokit);
 }
 async function loadRepoTier(octokit, context) {
-    for (const path of repoConfigPaths) {
-        const source = `${context.repo.owner}/${context.repo.repo}:${path}`;
-        let text;
-        try {
-            text = await fetchRepoFile(octokit, { ...context.repo, path });
+    return firstFound(repoConfigPaths.map(path => ({
+        source: `${context.repo.owner}/${context.repo.repo}:${path}`,
+        file: { ...context.repo, path },
+        failure: 'could not load prow config from',
+    })), octokit);
+}
+// probes every candidate at once and settles in precedence order: the first that exists wins, and an
+// error stops the walk only when no candidate before it exists, as probing one after another would.
+// It returns only once every probe has answered, so that none is still in flight afterwards.
+async function firstFound(probes, octokit) {
+    const settled = await Promise.allSettled(probes.map(probe => fetchRepoFile(octokit, probe.file)));
+    for (const [i, probe] of probes.entries()) {
+        const result = settled[i];
+        if (result.status === 'rejected') {
+            throw new Error(`${probe.failure} ${probe.source}: ${result.reason}`);
         }
-        catch (e) {
-            throw new Error(`could not load prow config from ${source}: ${e}`);
-        }
-        if (text !== undefined) {
-            return { source, config: parseProwConfig(source, text) };
+        if (result.value !== undefined) {
+            return { source: probe.source, config: parseProwConfig(probe.source, result.value) };
         }
     }
     return undefined;
 }
-async function loadExplicitTier(octokit, input) {
+function parseExplicitSource(input) {
     if (input.startsWith('http://')) {
         throw new Error('config: http:// sources are not allowed, use https://');
     }
     if (input.startsWith('https://')) {
-        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+        return { kind: 'url', input };
     }
     const match = explicitSourcePattern.exec(input);
     if (match === null) {
         throw new Error(`config: expected owner/repo:path[@ref] or an https:// url, got '${input}'`);
     }
     const [, owner, repo, path, ref] = match;
+    return { kind: 'repo', input, file: { owner, repo, path, ref } };
+}
+async function loadExplicitTier(octokit, source) {
+    const { input } = source;
+    if (source.kind === 'url') {
+        return { source: input, config: parseProwConfig(input, await fetchUrl(input)) };
+    }
     let text;
     try {
-        text = await fetchRepoFile(octokit, { owner, repo, path, ref });
+        text = await fetchRepoFile(octokit, source.file);
     }
     catch (e) {
         throw new Error(`could not load prow config from ${input}: ${e}`);
@@ -41417,8 +41435,12 @@ function isNotFound(error) {
  * @param text - the yaml text
  */
 function parseProwConfig(source, text) {
-    // a comment-only file holds zero documents, which yaml.load rejects
-    const loaded = loadAll(text).length === 0 ? undefined : load(text);
+    // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+    const documents = loadAll(text);
+    if (documents.length > 1) {
+        throw new YAMLException('expected a single document in the stream, but found more');
+    }
+    const loaded = documents[0];
     if (loaded === undefined || loaded === null) {
         return {};
     }
@@ -41988,7 +42010,8 @@ async function getCurrentLabels(octokit, context, issueNum) {
  * @param labels - the labels to remove from the issue
  */
 async function removeLabels(octokit, context, issueNum, labels) {
-    for (const label of labels) {
+    // every label at once; the first failure in the given order is the one reported
+    const settled = await Promise.allSettled(labels.map(async (label) => {
         try {
             await octokit.issues.removeLabel({
                 ...context.repo,
@@ -42003,6 +42026,10 @@ async function removeLabels(octokit, context, issueNum, labels) {
             else
                 throw new Error(`could not remove label ${label}: ${e}`);
         }
+    }));
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed !== undefined) {
+        throw failed.reason;
     }
 }
 /**
@@ -42086,8 +42113,18 @@ function newOctokit(token) {
         baseUrl: platform_platform().apiBaseUrl(),
     });
 }
+/**
+ * The client for the configured token, built once per run: every handler of an event shares it.
+ */
 function newOctokitFromInputs() {
-    return newOctokit(platform_platform().inputs.get('github-token', { required: true }));
+    const token = platform_platform().inputs.get('github-token', { required: true });
+    const clients = platform_platform().state().clients;
+    let client = clients.get(token);
+    if (client === undefined) {
+        client = newOctokit(token);
+        clients.set(token, client);
+    }
+    return client;
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/lgtmBinding.js
@@ -42497,8 +42534,8 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
     };
 }
 async function probeOwners(octokit, context, ref, dirs) {
-    const owners = new Map();
-    for (const dir of dirs) {
+    // every candidate directory at once; a missing OWNERS file is just absent
+    const found = await Promise.all([...dirs].map(async (dir) => {
         const path = dir === '' ? 'OWNERS' : `${dir}/OWNERS`;
         let data;
         try {
@@ -42511,12 +42548,13 @@ async function probeOwners(octokit, context, ref, dirs) {
         }
         catch (e) {
             if (owners_isNotFound(e)) {
-                continue;
+                return undefined;
             }
             throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
         }
-        owners.set(dir, parseOwners(path, decode(data, path)));
-    }
+        return [dir, parseOwners(path, decode(data, path))];
+    }));
+    const owners = new Map(found.filter(entry => entry !== undefined));
     return { owners, hasOwners: owners.size > 0 };
 }
 /**
@@ -42544,6 +42582,7 @@ function repoHasOwners(octokit, context) {
 function branchHasOwners(octokit, context, branch) {
     return memoized(platform_platform().state().hasOwners, `${context.repo.owner}/${context.repo.repo}@${branch}`, () => probeBranchOwners(octokit, context, branch));
 }
+/** memoized returns the cached promise for `key`, computing it on first use */
 function memoized(cache, key, compute) {
     let pending = cache.get(key);
     if (pending === undefined) {
@@ -42622,15 +42661,18 @@ function loadPullRequestOwners(octokit, context, pullNumber) {
     return pending;
 }
 async function pullRequestOwners_load(octokit, context, pullNumber) {
-    const { data: pull } = await octokit.pulls.get({
-        ...context.repo,
-        pull_number: pullNumber,
-    });
-    const changed = await octokit.paginate(octokit.pulls.listFiles, {
-        ...context.repo,
-        pull_number: pullNumber,
-        per_page: 100,
-    });
+    // the pull request and its changed files do not depend on each other, so read both at once
+    const [{ data: pull }, changed] = await Promise.all([
+        octokit.pulls.get({
+            ...context.repo,
+            pull_number: pullNumber,
+        }),
+        octokit.paginate(octokit.pulls.listFiles, {
+            ...context.repo,
+            pull_number: pullNumber,
+            per_page: 100,
+        }),
+    ]);
     const files = [...new Set(changed.flatMap(f => f.previous_filename !== undefined ? [f.filename, f.previous_filename] : [f.filename]))];
     // OWNERS come from the base branch so a PR cannot grant itself approvers: its current tip, not
     // `pull.base.sha`, which GitHub snapshots when the PR last changed. A PR opened before OWNERS
@@ -42701,7 +42743,11 @@ function getErrorDetails(error) {
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-async function checkOrgMember(octokit, context, user) {
+function checkOrgMember(octokit, context, user) {
+    const org = context.payload.repository?.owner.login;
+    return memoized(platform_platform().state().authChecks, `member:${org}/${user}`, () => fetchOrgMember(octokit, context, user));
+}
+async function fetchOrgMember(octokit, context, user) {
     try {
         if (context.payload.repository === undefined) {
             platform_platform().log.debug(`checkOrgMember error: context payload repository undefined`);
@@ -42730,7 +42776,11 @@ async function checkOrgMember(octokit, context, user) {
  * @param context - the github actions event context
  * @param user - the users to check auth on
  */
-async function checkCollaborator(octokit, context, user) {
+function checkCollaborator(octokit, context, user) {
+    const { owner, repo } = context.repo;
+    return memoized(platform_platform().state().authChecks, `collaborator:${owner}/${repo}/${user}`, () => fetchCollaborator(octokit, context, user));
+}
+async function fetchCollaborator(octokit, context, user) {
     try {
         await octokit.repos.checkCollaborator({
             ...context.repo,
@@ -42750,8 +42800,8 @@ async function checkCollaborator(octokit, context, user) {
 }
 /**
  * checkIssueComments will check to see if the given user
- * has commented on the given issue, reading every page of comments
- * and comparing logins case-insensitively
+ * has commented on the given issue, reading every page of comments once per
+ * issue for the run and comparing logins case-insensitively
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -42760,15 +42810,17 @@ async function checkCollaborator(octokit, context, user) {
  */
 async function checkIssueComments(octokit, context, issueNum, user) {
     try {
-        // every page: on a busy issue the user's comment may be past the first 30
-        const comments = await octokit.paginate(octokit.issues.listComments, {
-            ...context.repo,
-            issue_number: issueNum,
-            per_page: 100,
+        const commenters = await memoized(platform_platform().state().issueCommenters, `${context.repo.owner}/${context.repo.repo}#${issueNum}`, async () => {
+            // every page: on a busy issue the user's comment may be past the first 30
+            const comments = await octokit.paginate(octokit.issues.listComments, {
+                ...context.repo,
+                issue_number: issueNum,
+                per_page: 100,
+            });
+            // GitHub logins are case-insensitive
+            return comments.map(e => e.user?.login.toLowerCase());
         });
-        // GitHub logins are case-insensitive
-        const wanted = user.toLowerCase();
-        return comments.some(e => e.user?.login.toLowerCase() === wanted);
+        return commenters.includes(user.toLowerCase());
     }
     catch (e) {
         const { status, message } = getErrorDetails(e);
@@ -42786,13 +42838,8 @@ async function checkIssueComments(octokit, context, issueNum, user) {
  * @param args - the users to check auth on
  */
 async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
-    const toReturn = [];
-    await Promise.all(args.map(async (arg) => {
-        if (await checkCommenterAuth(octokit, context, issueNum, arg)) {
-            toReturn.push(arg);
-        }
-    }));
-    return toReturn;
+    const results = await Promise.all(args.map(arg => checkCommenterAuth(octokit, context, issueNum, arg)));
+    return args.filter((_, i) => results[i]);
 }
 /**
  * checkCommenterAuth will return true
@@ -42804,10 +42851,14 @@ async function getOrgCollabCommentUsers(octokit, context, issueNum, args) {
  * @param user - the user to check auth on
  */
 async function checkCommenterAuth(octokit, context, issueNum, user) {
-    const isOrgMember = await checkOrgMember(octokit, context, user);
-    const isCollaborator = await checkCollaborator(octokit, context, user);
-    const hasCommented = await checkIssueComments(octokit, context, issueNum, user);
-    return isOrgMember || isCollaborator || hasCommented;
+    // cheapest first; each check runs only when the previous ones refused the user
+    if (await checkOrgMember(octokit, context, user)) {
+        return true;
+    }
+    if (await checkCollaborator(octokit, context, user)) {
+        return true;
+    }
+    return checkIssueComments(octokit, context, issueNum, user);
 }
 /**
  * When the repository has OWNERS files, use them to authorize the action,
@@ -42827,9 +42878,7 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
         ? await assertPullRequestOwner(octokit, context, role, username)
         : await assertRootOwner(octokit, context, role, username);
     if (!hasOwners) {
-        const isOrgMember = await checkOrgMember(octokit, context, username);
-        const isCollaborator = await checkCollaborator(octokit, context, username);
-        if (!isOrgMember && !isCollaborator) {
+        if (!(await isOrgMemberOrCollaborator(octokit, context, username))) {
             // every review policy admits members and collaborators, so only a refusal needs the configuration
             const { review, users } = await loadAuthorization(octokit, context).catch(() => defaultAuthorization);
             if (review === 'members') {
@@ -42840,6 +42889,13 @@ async function assertAuthorizedByOwnersOrMembership(octokit, context, role, user
             }
         }
     }
+}
+// the collaborator check runs only when the org membership check refused the user
+async function isOrgMemberOrCollaborator(octokit, context, user) {
+    if (await checkOrgMember(octokit, context, user)) {
+        return true;
+    }
+    return checkCollaborator(octokit, context, user);
 }
 /**
  * policyAllows reports whether an `authorization` policy admits the user,
@@ -42977,10 +43033,14 @@ async function rootOwnersIncludes(octokit, context, user) {
     return ownersInclude(octokit, context, [...owners.reviewers, ...owners.approvers], login);
 }
 /**
- * Retrieve the contents of the OWNERS file at the root of the repository.
+ * Retrieve the contents of the OWNERS file at the root of the repository,
+ * once per repository for the run.
  * If the file does not exist, returns an empty string.
  */
-async function retrieveOwnersFile(octokit, context) {
+function retrieveOwnersFile(octokit, context) {
+    return memoized(platform_platform().state().rootOwners, `${context.repo.owner}/${context.repo.repo}`, () => fetchOwnersFile(octokit, context));
+}
+async function fetchOwnersFile(octokit, context) {
     platform_platform().log.debug(`Looking for an OWNERS file at the root of the repository`);
     let data;
     try {
@@ -44083,7 +44143,7 @@ function errorMessage(e) {
 ;// CONCATENATED MODULE: ./lib/utils/pulls.js
 /**
  * Lists the numbers of the open pull requests whose head is the given commit,
- * paging through `pulls.list` until a page comes back empty.
+ * paging through `pulls.list` until a page comes back short of a full one.
  *
  * @param octokit - a hydrated github client
  * @param context - the github context of the current action event
@@ -44091,17 +44151,19 @@ function errorMessage(e) {
  */
 async function pullRequestsForSha(octokit, context, sha) {
     const numbers = [];
+    const perPage = 100;
     for (let page = 1;; page++) {
         const { data } = await octokit.pulls.list({
             ...context.repo,
             state: 'open',
-            per_page: 100,
+            per_page: perPage,
             page,
         });
-        if (data.length === 0) {
+        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
+        // a short page is the last one: no need to ask for the empty page after it
+        if (data.length < perPage) {
             return numbers;
         }
-        numbers.push(...data.filter(pr => pr.head.sha === sha).map(pr => pr.number));
     }
 }
 
@@ -46974,9 +47036,10 @@ async function unassign(context = platform_platform().context()) {
     }
     // Only a commenter who is an org member or a repo collaborator may unassign
     // other users; having commented on the issue is not enough
-    const isOrgMember = await checkOrgMember(octokit, context, commenterId);
-    const isCollaborator = await checkCollaborator(octokit, context, commenterId);
-    if (!isOrgMember && !isCollaborator) {
+    // org membership admits the commenter without a collaborator read
+    const authorized = await checkOrgMember(octokit, context, commenterId)
+        || await checkCollaborator(octokit, context, commenterId);
+    if (!authorized) {
         platform_platform().log.info(`unassign: ${commenterId} is not an org member or repo collaborator; not unassigning ${commentArgs.join(', ')}`);
         return;
     }
@@ -47023,9 +47086,10 @@ async function uncc(context = platform_platform().context()) {
     }
     // Only a commenter who is an org member or a repo collaborator may remove
     // other users' review requests; having commented on the PR is not enough
-    const isOrgMember = await checkOrgMember(octokit, context, commenterId);
-    const isCollaborator = await checkCollaborator(octokit, context, commenterId);
-    if (!isOrgMember && !isCollaborator) {
+    // org membership admits the commenter without a collaborator read
+    const authorized = await checkOrgMember(octokit, context, commenterId)
+        || await checkCollaborator(octokit, context, commenterId);
+    if (!authorized) {
         platform_platform().log.info(`uncc: ${commenterId} is not an org member or repo collaborator; not removing ${commentArgs.join(', ')}`);
         return;
     }
