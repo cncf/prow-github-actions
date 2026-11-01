@@ -1,6 +1,6 @@
 # Prow github actions commands
 
-These docs describe `main`; the latest release is `v3.4.0` ([releasing](./releasing.md)).
+These docs describe `main`; the latest release is `v3.5.0` ([releasing](./releasing.md)).
 
 ## Command syntax
 
@@ -161,7 +161,7 @@ jobs:
   prow:
     runs-on: ubuntu-latest
     steps:
-      - uses: cncf/prow-github-actions@v3.4.0
+      - uses: cncf/prow-github-actions@v3.5.0
         with:
           prow-commands: /meow
           github-token: '${{ secrets.GITHUB_TOKEN }}'

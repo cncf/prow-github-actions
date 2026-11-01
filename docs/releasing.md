@@ -50,7 +50,7 @@ highest in its major, and `X.Y` only when it is the highest in its minor. A
 backport `v3.3.2` tagged after `v3.4.0` therefore publishes `3.3.2` and `3.3`
 and leaves `3`, `v3` and `latest` on `v3.4.0`.
 
-The templates, the README and the docs pin the **exact** release (`@v3.4.0`) on
+The templates, the README and the docs pin the **exact** release (`@v3.5.0`) on
 purpose: organizations that hash-pin can replace it with the release's commit
 sha, and Dependabot bumps it to the next release. The floating `v3` tag keeps
 moving for callers who prefer it ([upgrading](./installing.md#upgrading)).
@@ -161,7 +161,7 @@ Releases follow [SemVer](https://semver.org/) with `v`-prefixed tags
 - uses: cncf/prow-github-actions@v3
 
 # or pin to an exact release, what the templates ship
-- uses: cncf/prow-github-actions@v3.4.0
+- uses: cncf/prow-github-actions@v3.5.0
 ```
 
 The same refs work for the reusable workflow,
