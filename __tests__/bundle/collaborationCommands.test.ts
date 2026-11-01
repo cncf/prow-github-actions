@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, commentsRead, configReads, helpersFor, memberReads, membershipReads, repo, token } from './helpers'
+import { comment, commentsRead, configReads, helpersFor, memberReads, membershipReads, prComment, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -23,7 +23,7 @@ describe('dist/index.js collaboration commands', () => {
   async function run(body: string, command: string, author?: string) {
     const result = await runBundle({
       eventName: 'issue_comment',
-      payload: comment(body, author),
+      payload: command === '/cc' || command === '/uncc' ? prComment(body, author) : comment(body, author),
       inputs: { ...token, 'prow-commands': command },
       apiUrl: gh.url,
     })
@@ -35,6 +35,23 @@ describe('dist/index.js collaboration commands', () => {
   function membershipOrCommentReads(user: string) {
     return [...membershipReads(user), commentsRead]
   }
+
+  // /cc, /uncc and /approve request or remove pull request reviews: on an issue they only say so
+  it.each([
+    ['/cc @octocat', '/cc'],
+    ['/uncc @octocat', '/uncc'],
+    ['/approve', '/approve'],
+  ])('%s on an issue replies that it only applies to pull requests and changes nothing', async (body, command) => {
+    gh.route('POST', `${repo}/issues/1/comments`, { status: 201, body: {} })
+
+    const result = await runBundle({ eventName: 'issue_comment', payload: comment(body), inputs: { ...token, 'prow-commands': command }, apiUrl: gh.url })
+
+    expect(result.status, result.stdout).toBe(0)
+    expect(result.errors).toEqual([])
+    expect(gh.requestsMatching('POST', /\/issues\/1\/comments$/).map(r => r.body)).toEqual([{ body: `\`${command}\` only applies to pull requests.` }])
+    // /approve's post-command sweep then reads the configuration and stops at the issue
+    expect(calls().filter(call => !configReads().includes(call))).toEqual([`POST ${repo}/issues/1/comments`])
+  })
 
   describe('/cc', () => {
     it('with no arguments requests a review from a collaborator commenter', async () => {

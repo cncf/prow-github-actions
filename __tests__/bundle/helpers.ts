@@ -16,6 +16,12 @@ export function comment(body: string, author = issueCommentEvent.issue.user.logi
   return payload
 }
 
+// the same comment on pull request #1: /cc, /uncc and /approve only apply to pull requests
+export function prComment(body: string, author = issueCommentEvent.issue.user.login) {
+  const payload = comment(body, author)
+  return { ...payload, issue: { ...payload.issue, pull_request: { url: 'https://api.github.com/repos/Codertocat/Hello-World/pulls/1' } } }
+}
+
 const orgConfigRepos = ['.project', '.github']
 const repoConfigFiles = [
   '.github/prow.yaml',

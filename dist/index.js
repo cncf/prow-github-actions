@@ -37444,6 +37444,7 @@ function newRunState() {
         rootOwners: new Map(),
         clients: new Map(),
         tideEvaluated: new Set(),
+        tokenLogins: new Map(),
         warned: new Set(),
     };
 }
@@ -41897,6 +41898,16 @@ async function createCommentOnce(octokit, context, issueNum, marker, message) {
 function isBotUser(user) {
     return user?.type === 'Bot' || user?.login === 'github-actions[bot]';
 }
+/**
+ * normalizeLogin lowercases a login and drops the `[bot]` suffix that REST
+ * and webhook payloads give a `Bot` user and GraphQL leaves off, so that
+ * `my-app[bot]` and `my-app` compare equal.
+ *
+ * @param login - a GitHub login
+ */
+function normalizeLogin(login) {
+    return login.toLowerCase().replace(/\[bot\]$/, '');
+}
 
 ;// CONCATENATED MODULE: ./lib/utils/labeling.js
 
@@ -44024,6 +44035,7 @@ function meetsMergeGate(labels, tide) {
 
 ;// CONCATENATED MODULE: ./lib/utils/mergeQueue.js
 
+
 const queueStateQuery = `query MergeQueueState($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
@@ -44031,7 +44043,7 @@ const queueStateQuery = `query MergeQueueState($owner: String!, $repo: String!, 
       headRefOid
       isMergeQueueEnabled
       isInMergeQueue
-      mergeQueueEntry { state position enqueuer { login } }
+      mergeQueueEntry { state position enqueuer { __typename login } }
     }
   }
 }`;
@@ -44079,7 +44091,7 @@ async function queueState(octokit, context, number) {
         headOid: pr.headRefOid,
         enabled: pr.isMergeQueueEnabled,
         inQueue: pr.isInMergeQueue,
-        ...(entry === null ? {} : { entry: { state: entry.state, position: entry.position, ...(entry.enqueuer === null ? {} : { enqueuer: entry.enqueuer.login }) } }),
+        ...(entry === null ? {} : { entry: { state: entry.state, position: entry.position, ...(entry.enqueuer === null ? {} : { enqueuer: entry.enqueuer.login, ...(entry.enqueuer.__typename === undefined ? {} : { enqueuerType: entry.enqueuer.__typename }) }) } }),
     };
 }
 /**
@@ -44124,14 +44136,24 @@ async function dequeue(octokit, context, state, number) {
 }
 const botLoginPattern = /^github-actions$|\[bot\]$/i;
 /**
- * enqueuedByBot reports whether the queue entry was made by an automation
- * (`github-actions` or any `[bot]`), which the gate may undo; a human who
- * enqueued deliberately is never fought.
+ * enqueuedByBot reports whether the queue entry was made by this bot, which
+ * the gate may undo; a human who enqueued deliberately is never fought. When
+ * the token's own login is known (see tokenLogin) only an entry it made
+ * counts, so another automation's (Mergify, a second App) is left alone;
+ * otherwise any automation does: a `Bot` enqueuer, `github-actions` or a
+ * `[bot]` login.
  *
  * @param entry - the merge queue entry, if any
+ * @param self - the token's normalized login, if known
  */
-function enqueuedByBot(entry) {
-    return entry?.enqueuer !== undefined && botLoginPattern.test(entry.enqueuer);
+function enqueuedByBot(entry, self) {
+    if (entry?.enqueuer === undefined) {
+        return false;
+    }
+    if (self !== undefined) {
+        return normalizeLogin(entry.enqueuer) === self;
+    }
+    return entry.enqueuerType === 'Bot' || botLoginPattern.test(entry.enqueuer);
 }
 function classify(message) {
     const lower = message.toLowerCase();
@@ -44186,7 +44208,228 @@ async function pullRequestsForSha(octokit, context, sha) {
     }
 }
 
+;// CONCATENATED MODULE: ./lib/plugins/approveReview.js
+
+
+/** identifies the APPROVE review that mirrors the `approved` label (`approve.github_review`) */
+const reviewMarker = '<!-- prow-github-actions/approve-review -->';
+// memoized per client: GET /user is read at most once per handler run
+const identities = new WeakMap();
+/**
+ * tokenIdentity asks GitHub who the token is (`GET /user`), once per client.
+ * An installation token, `GITHUB_TOKEN` included, may not read `/user` and
+ * is answered with 403 (404 on some servers): its reviews are authored by a
+ * `Bot` user, which the approve plugin never counts anyway, so the login is
+ * left undefined. Any other failure fails the evaluation.
+ *
+ * @param octokit - a hydrated github client
+ */
+function tokenIdentity(octokit) {
+    let pending = identities.get(octokit);
+    if (pending === undefined) {
+        pending = octokit.users.getAuthenticated().then(({ data }) => ({ login: data.login.toLowerCase() }), (e) => {
+            const status = errorStatus(e);
+            if (status === 403 || status === 404) {
+                platform_platform().log.debug(`approve: GET /user answered ${status}; the token is an installation token`);
+                return {};
+            }
+            throw new Error(`could not identify the token for approve.github_review: ${e}`);
+        });
+        identities.set(octokit, pending);
+    }
+    return pending;
+}
+const viewerQuery = 'query TokenLogin { viewer { login } }';
+/**
+ * tokenLogin is the login the token acts as, normalized by normalizeLogin,
+ * read from the GraphQL `viewer`, which answers for every kind of token, an
+ * installation token included where `GET /user` refuses (`github-actions` for
+ * `GITHUB_TOKEN`, the App's slug for a GitHub App). It is read at most once
+ * per event (RunState). Undefined when GitHub does not say, which callers
+ * treat as "unknown": a failure here is a debug message, never a failed run.
+ *
+ * @param octokit - a hydrated github client
+ */
+function tokenLogin(octokit) {
+    const cache = platform_platform().state().tokenLogins;
+    const key = platform_platform().apiBaseUrl();
+    let pending = cache.get(key);
+    if (pending === undefined) {
+        pending = viewerLogin(octokit);
+        cache.set(key, pending);
+    }
+    return pending;
+}
+async function viewerLogin(octokit) {
+    try {
+        const { viewer } = await octokit.graphql(viewerQuery);
+        return normalizeLogin(viewer.login);
+    }
+    catch (e) {
+        platform_platform().log.debug(`could not read the token's login from the GraphQL viewer: ${e}`);
+        return undefined;
+    }
+}
+/**
+ * isOwnReview reports whether a review is the mirrored approval this action
+ * submitted: it carries the marker and was written by the token's identity
+ * (any `Bot` user when the token is an installation token).
+ *
+ * @param review - a review of the pull request
+ * @param identity - who the token is
+ */
+function isOwnReview(review, identity) {
+    if (!(review.body ?? '').includes(reviewMarker)) {
+        return false;
+    }
+    const login = review.user?.login?.toLowerCase();
+    return identity.login === undefined ? isBotUser(review.user) : login === identity.login;
+}
+/**
+ * reviewBody is the text of the mirrored approval: who approved, without
+ * an `@`, since every push submits a fresh review and a mention would notify
+ * the approvers each time.
+ *
+ * @param state - the computed approval
+ */
+function reviewBody(state) {
+    return [
+        `Approved via /approve by ${[...state.approvers].join(', ')} (OWNERS).`,
+        '',
+        'This review mirrors the `approved` label: it is submitted while the label is set and dismissed when the label goes away. Use `/approve` and `/approve cancel` to change it.',
+        reviewMarker,
+    ].join('\n');
+}
+const reasonFiles = 5;
+const withdrawals = {
+    'cancel': '/approve cancel',
+    'review-changes': 'changes requested',
+    'lgtm-cancel': '/lgtm cancel',
+};
+/**
+ * withdrawalReason says why a pull request is not approved, for the
+ * dismissal message: the files nobody covers and, when someone withdrew
+ * their approval last, who and how.
+ *
+ * @param owners - the pull request and the OWNERS covering its files
+ * @param state - the computed approval
+ * @param events - what users did on the pull request, as counted
+ * @param settings - the resolved `approve` configuration
+ */
+function withdrawalReason(owners, state, events, settings) {
+    if (owners.files.length === 0) {
+        return 'the pull request changes no files';
+    }
+    const shown = state.uncoveredFiles.slice(0, reasonFiles).join(', ');
+    const more = state.uncoveredFiles.length > reasonFiles ? ` and ${state.uncoveredFiles.length - reasonFiles} more` : '';
+    const reason = `no approver covers ${shown}${more}`;
+    const latest = new Map();
+    for (const event of [...events].sort((a, b) => a.at.getTime() - b.at.getTime())) {
+        if (event.kind.startsWith('lgtm') && !settings.lgtm_acts_as_approve) {
+            continue;
+        }
+        latest.set(event.user.toLowerCase(), event);
+    }
+    const withdrawn = [...latest.entries()]
+        .filter(([, event]) => withdrawals[event.kind] !== undefined)
+        .map(([user, event]) => `${user} (${withdrawals[event.kind]})`)
+        .sort();
+    return withdrawn.length === 0 ? reason : `${reason}; withdrawn by ${withdrawn.join(', ')}`;
+}
+const notPermittedWarning = 'cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review)';
+const forbiddenWarning = 'cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review)';
+/**
+ * syncApprovalReview makes the action's own APPROVE review follow the
+ * `approved` label (`approve.github_review`). Approved: one review by the
+ * token on the current head commit, submitted unless it already exists.
+ * A draft gets none until it is ready for review. Not approved: every such
+ * review the action submitted earlier is dismissed, on any commit, drafts
+ * included. Reviews without the marker, or by anyone else, are never
+ * touched. GitHub refusing the approval itself (the repository does not let
+ * Actions approve, the token lacks `pull-requests: write`, or the token
+ * authored the pull request) is a warning; any other API error fails the
+ * evaluation.
+ *
+ * @param octokit - a hydrated github client
+ * @param context - the github context of the current action event
+ * @param input - see MirrorInput
+ */
+async function syncApprovalReview(octokit, context, input) {
+    const { owners, state, reviews, identity } = input;
+    const number = owners.number;
+    if (!owners.open) {
+        platform_platform().log.debug(`approve: #${number} is not open; its approval review is left alone`);
+        return;
+    }
+    const own = reviews.filter(review => review.state === 'APPROVED' && isOwnReview(review, identity));
+    if (!state.approved) {
+        if (own.length === 0) {
+            platform_platform().log.debug(`approve: #${number} carries no approval review to dismiss`);
+            return;
+        }
+        const message = `approved removed: ${input.reason()}`;
+        for (const review of own) {
+            try {
+                await octokit.pulls.dismissReview({ ...context.repo, pull_number: number, review_id: review.id, message });
+            }
+            catch (e) {
+                throw new Error(`could not dismiss the approval review ${review.id}: ${e}`);
+            }
+            platform_platform().log.info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`);
+        }
+        return;
+    }
+    if (own.some(review => review.commit_id === owners.headSha)) {
+        platform_platform().log.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`);
+        return;
+    }
+    if (owners.draft) {
+        platform_platform().log.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`);
+        return;
+    }
+    if (identity.login !== undefined && identity.login === owners.author) {
+        platform_platform().log.warning(selfApprovalWarning(number, identity.login));
+        return;
+    }
+    try {
+        await octokit.pulls.createReview({
+            ...context.repo,
+            pull_number: number,
+            commit_id: owners.headSha,
+            event: 'APPROVE',
+            body: reviewBody(state),
+        });
+    }
+    catch (e) {
+        const message = approveReview_errorMessage(e);
+        if (/approve your own pull request/i.test(message)) {
+            platform_platform().log.warning(selfApprovalWarning(number, owners.author));
+            return;
+        }
+        if (/not permitted to approve pull requests/i.test(message)) {
+            platform_platform().log.warning(`${notPermittedWarning}: ${message}`);
+            return;
+        }
+        if (errorStatus(e) === 403) {
+            platform_platform().log.warning(`${forbiddenWarning}: ${message}`);
+            return;
+        }
+        throw new Error(`could not submit the approval review: ${e}`);
+    }
+    platform_platform().log.info(`approve: submitted the approval review on #${number} at ${owners.headSha}`);
+}
+function selfApprovalWarning(number, login) {
+    return `cannot submit the approval review: #${number} was opened by the token's own identity (${login}), and GitHub does not let an author approve their own pull request (approve.github_review)`;
+}
+function errorStatus(e) {
+    return typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' ? e.status : undefined;
+}
+function approveReview_errorMessage(e) {
+    return e instanceof Error ? e.message : String(e);
+}
+
 ;// CONCATENATED MODULE: ./lib/plugins/tide.js
+
 
 
 
@@ -44446,7 +44689,7 @@ async function dequeueIfOurs(octokit, context, number, tide, reason) {
     if (queue === undefined || !queue.inQueue) {
         return false;
     }
-    if (!enqueuedByBot(queue.entry)) {
+    if (!enqueuedByBot(queue.entry, queue.entry?.enqueuer === undefined ? undefined : await tokenLogin(octokit))) {
         platform_platform().log.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`);
         return false;
     }
@@ -44646,195 +44889,6 @@ function pullNumber(context) {
         throw new Error(`github context payload missing pull request: ${JSON.stringify(context.payload)}`);
     }
     return number;
-}
-
-;// CONCATENATED MODULE: ./lib/plugins/approveReview.js
-
-
-/** identifies the APPROVE review that mirrors the `approved` label (`approve.github_review`) */
-const reviewMarker = '<!-- prow-github-actions/approve-review -->';
-// memoized per client: GET /user is read at most once per handler run
-const identities = new WeakMap();
-/**
- * tokenIdentity asks GitHub who the token is (`GET /user`), once per client.
- * An installation token, `GITHUB_TOKEN` included, may not read `/user` and
- * is answered with 403 (404 on some servers): its reviews are authored by a
- * `Bot` user, which the approve plugin never counts anyway, so the login is
- * left undefined. Any other failure fails the evaluation.
- *
- * @param octokit - a hydrated github client
- */
-function tokenIdentity(octokit) {
-    let pending = identities.get(octokit);
-    if (pending === undefined) {
-        pending = octokit.users.getAuthenticated().then(({ data }) => ({ login: data.login.toLowerCase() }), (e) => {
-            const status = errorStatus(e);
-            if (status === 403 || status === 404) {
-                platform_platform().log.debug(`approve: GET /user answered ${status}; the token is an installation token`);
-                return {};
-            }
-            throw new Error(`could not identify the token for approve.github_review: ${e}`);
-        });
-        identities.set(octokit, pending);
-    }
-    return pending;
-}
-/**
- * isOwnReview reports whether a review is the mirrored approval this action
- * submitted: it carries the marker and was written by the token's identity
- * (any `Bot` user when the token is an installation token).
- *
- * @param review - a review of the pull request
- * @param identity - who the token is
- */
-function isOwnReview(review, identity) {
-    if (!(review.body ?? '').includes(reviewMarker)) {
-        return false;
-    }
-    const login = review.user?.login?.toLowerCase();
-    return identity.login === undefined ? isBotUser(review.user) : login === identity.login;
-}
-/**
- * reviewBody is the text of the mirrored approval: who approved, without
- * an `@`, since every push submits a fresh review and a mention would notify
- * the approvers each time.
- *
- * @param state - the computed approval
- */
-function reviewBody(state) {
-    return [
-        `Approved via /approve by ${[...state.approvers].join(', ')} (OWNERS).`,
-        '',
-        'This review mirrors the `approved` label: it is submitted while the label is set and dismissed when the label goes away. Use `/approve` and `/approve cancel` to change it.',
-        reviewMarker,
-    ].join('\n');
-}
-const reasonFiles = 5;
-const withdrawals = {
-    'cancel': '/approve cancel',
-    'review-changes': 'changes requested',
-    'lgtm-cancel': '/lgtm cancel',
-};
-/**
- * withdrawalReason says why a pull request is not approved, for the
- * dismissal message: the files nobody covers and, when someone withdrew
- * their approval last, who and how.
- *
- * @param owners - the pull request and the OWNERS covering its files
- * @param state - the computed approval
- * @param events - what users did on the pull request, as counted
- * @param settings - the resolved `approve` configuration
- */
-function withdrawalReason(owners, state, events, settings) {
-    if (owners.files.length === 0) {
-        return 'the pull request changes no files';
-    }
-    const shown = state.uncoveredFiles.slice(0, reasonFiles).join(', ');
-    const more = state.uncoveredFiles.length > reasonFiles ? ` and ${state.uncoveredFiles.length - reasonFiles} more` : '';
-    const reason = `no approver covers ${shown}${more}`;
-    const latest = new Map();
-    for (const event of [...events].sort((a, b) => a.at.getTime() - b.at.getTime())) {
-        if (event.kind.startsWith('lgtm') && !settings.lgtm_acts_as_approve) {
-            continue;
-        }
-        latest.set(event.user.toLowerCase(), event);
-    }
-    const withdrawn = [...latest.entries()]
-        .filter(([, event]) => withdrawals[event.kind] !== undefined)
-        .map(([user, event]) => `${user} (${withdrawals[event.kind]})`)
-        .sort();
-    return withdrawn.length === 0 ? reason : `${reason}; withdrawn by ${withdrawn.join(', ')}`;
-}
-const notPermittedWarning = 'cannot submit the approval review: enable "Allow GitHub Actions to create and approve pull requests" (Settings → Actions → General) or pass a token that can (approve.github_review)';
-const forbiddenWarning = 'cannot submit the approval review: the token was refused; grant the workflow `pull-requests: write` (approve.github_review)';
-/**
- * syncApprovalReview makes the action's own APPROVE review follow the
- * `approved` label (`approve.github_review`). Approved: one review by the
- * token on the current head commit, submitted unless it already exists.
- * A draft gets none until it is ready for review. Not approved: every such
- * review the action submitted earlier is dismissed, on any commit, drafts
- * included. Reviews without the marker, or by anyone else, are never
- * touched. GitHub refusing the approval itself (the repository does not let
- * Actions approve, the token lacks `pull-requests: write`, or the token
- * authored the pull request) is a warning; any other API error fails the
- * evaluation.
- *
- * @param octokit - a hydrated github client
- * @param context - the github context of the current action event
- * @param input - see MirrorInput
- */
-async function syncApprovalReview(octokit, context, input) {
-    const { owners, state, reviews, identity } = input;
-    const number = owners.number;
-    if (!owners.open) {
-        platform_platform().log.debug(`approve: #${number} is not open; its approval review is left alone`);
-        return;
-    }
-    const own = reviews.filter(review => review.state === 'APPROVED' && isOwnReview(review, identity));
-    if (!state.approved) {
-        if (own.length === 0) {
-            platform_platform().log.debug(`approve: #${number} carries no approval review to dismiss`);
-            return;
-        }
-        const message = `approved removed: ${input.reason()}`;
-        for (const review of own) {
-            try {
-                await octokit.pulls.dismissReview({ ...context.repo, pull_number: number, review_id: review.id, message });
-            }
-            catch (e) {
-                throw new Error(`could not dismiss the approval review ${review.id}: ${e}`);
-            }
-            platform_platform().log.info(`approve: dismissed the approval review ${review.id} on #${number}: ${message}`);
-        }
-        return;
-    }
-    if (own.some(review => review.commit_id === owners.headSha)) {
-        platform_platform().log.debug(`approve: #${number} already carries the approval review on ${owners.headSha}`);
-        return;
-    }
-    if (owners.draft) {
-        platform_platform().log.debug(`approve: #${number} is a draft; no approval review is submitted until it is ready for review`);
-        return;
-    }
-    if (identity.login !== undefined && identity.login === owners.author) {
-        platform_platform().log.warning(selfApprovalWarning(number, identity.login));
-        return;
-    }
-    try {
-        await octokit.pulls.createReview({
-            ...context.repo,
-            pull_number: number,
-            commit_id: owners.headSha,
-            event: 'APPROVE',
-            body: reviewBody(state),
-        });
-    }
-    catch (e) {
-        const message = approveReview_errorMessage(e);
-        if (/approve your own pull request/i.test(message)) {
-            platform_platform().log.warning(selfApprovalWarning(number, owners.author));
-            return;
-        }
-        if (/not permitted to approve pull requests/i.test(message)) {
-            platform_platform().log.warning(`${notPermittedWarning}: ${message}`);
-            return;
-        }
-        if (errorStatus(e) === 403) {
-            platform_platform().log.warning(`${forbiddenWarning}: ${message}`);
-            return;
-        }
-        throw new Error(`could not submit the approval review: ${e}`);
-    }
-    platform_platform().log.info(`approve: submitted the approval review on #${number} at ${owners.headSha}`);
-}
-function selfApprovalWarning(number, login) {
-    return `cannot submit the approval review: #${number} was opened by the token's own identity (${login}), and GitHub does not let an author approve their own pull request (approve.github_review)`;
-}
-function errorStatus(e) {
-    return typeof e === 'object' && e !== null && 'status' in e && typeof e.status === 'number' ? e.status : undefined;
-}
-function approveReview_errorMessage(e) {
-    return e instanceof Error ? e.message : String(e);
 }
 
 ;// CONCATENATED MODULE: ./lib/plugins/approve.js
@@ -45203,6 +45257,10 @@ async function approveOnPullRequest(context = platform_platform().context()) {
         platform_platform().log.debug(`approve: ${action} ${context.payload.label?.name} does not concern approval`);
         return;
     }
+    if ((action === 'labeled' || action === 'unlabeled') && await labeledBySelf(context)) {
+        platform_platform().log.debug(`approve: ${action} ${approvedLabel} by this bot's own token; nothing to re-evaluate`);
+        return;
+    }
     await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
 }
 /**
@@ -45224,6 +45282,15 @@ async function approveOnReview(context = platform_platform().context()) {
         return;
     }
     await evaluateOnOwnersRepo(context, context.payload.pull_request?.number);
+}
+// under a GitHub App or user token the label this plugin wrote raises an event of its own, sent by the token's
+// login; evaluating it again changes nothing (GITHUB_TOKEN's writes raise no event)
+async function labeledBySelf(context) {
+    const sender = context.payload.sender?.login;
+    if (typeof sender !== 'string') {
+        return false;
+    }
+    return normalizeLogin(sender) === await tokenLogin(newOctokitFromInputs());
 }
 async function evaluateOnOwnersRepo(context, pullNumber) {
     if (pullNumber === undefined) {
@@ -46352,6 +46419,7 @@ async function remove(context = platform_platform().context()) {
 
 
 
+
 /**
  * /approve on a pull request whose base branch has OWNERS files records the
  * commenter's approval for the files they own and re-evaluates the approve
@@ -46359,10 +46427,11 @@ async function remove(context = platform_platform().context()) {
  * comment; no GitHub review is submitted. /approve cancel withdraws it the
  * same way: the comment itself is the state, so both just recompute.
  *
- * Anywhere else (an issue, or a repository without OWNERS files) the legacy
- * behaviour is kept: org members and collaborators (or the root OWNERS
- * approvers on an issue) make the github-actions bot submit an APPROVE
- * review, and /approve cancel or /remove-approve dismisses its latest one.
+ * On a pull request in a repository without OWNERS files the legacy
+ * behaviour is kept: org members and collaborators make the token's identity
+ * (github-actions[bot], a GitHub App's `<slug>[bot]`, or a PAT's user) submit
+ * an APPROVE review, and /approve cancel or /remove-approve dismisses its
+ * latest one. On an issue it only replies that it applies to pull requests.
  * The Prow argument 'no-issue' is accepted and ignored.
  *
  * @param context - the github actions event context
@@ -46378,12 +46447,14 @@ async function approve(context = platform_platform().context()) {
     }
     const isCancel = hasCommand('/remove-approve', commentBody)
         || hasExactArgs('/approve', commentBody, 'cancel');
-    if (context.payload.issue?.pull_request !== undefined) {
-        const owners = await loadPullRequestOwners(octokit, context, issueNumber);
-        if (owners.tree.hasOwners) {
-            await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel);
-            return;
-        }
+    if (context.payload.issue?.pull_request === undefined) {
+        await createComment(octokit, context, issueNumber, '`/approve` only applies to pull requests.');
+        return;
+    }
+    const owners = await loadPullRequestOwners(octokit, context, issueNumber);
+    if (owners.tree.hasOwners) {
+        await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel);
+        return;
     }
     await authorize(octokit, context, issueNumber, commenterLogin);
     if (isCancel) {
@@ -46437,7 +46508,7 @@ async function approve_refuse(octokit, context, issueNumber, msg, cause = new Er
     throw cause;
 }
 /**
- * Removes the latest review from the github actions bot
+ * Removes the latest APPROVE review the token's identity submitted
  *
  * @param octokit - a hydrated github api client
  * @param context - the github actions workflow event context
@@ -46448,18 +46519,17 @@ async function cancel(octokit, context, issueNumber, commenterLogin) {
     platform_platform().log.debug(`canceling latest review`);
     let reviews;
     try {
-        reviews = await octokit.pulls.listReviews({
-            ...context.repo,
-            pull_number: issueNumber,
-        });
+        reviews = await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: issueNumber, per_page: 100 });
     }
     catch (e) {
         throw new Error(`could not list reviews for PR ${issueNumber}: ${e}`);
     }
+    // the token's own reviews: a GitHub App's are authored by `<slug>[bot]`, GITHUB_TOKEN's by github-actions[bot]
+    const self = await tokenLogin(octokit) ?? 'github-actions';
     let latestReview;
-    for (const e of reviews.data) {
+    for (const e of reviews) {
         platform_platform().log.debug(`checking review: ${e.user?.login}`);
-        if (e.user?.login === 'github-actions[bot]' && e.state === 'APPROVED') {
+        if (e.user?.login !== undefined && normalizeLogin(e.user.login) === self && e.state === 'APPROVED') {
             latestReview = e;
         }
     }
@@ -46557,6 +46627,7 @@ async function selfAssign(octokit, context, issueNum, user) {
 
 
 
+
 /**
  * /cc will request a review from self with no arguments or the users specified
  * or assign the users in the argument list
@@ -46570,6 +46641,10 @@ async function cc(context = platform_platform().context()) {
     const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull number: ${JSON.stringify(context.payload)}`);
+    }
+    if (context.payload.issue?.pull_request === undefined) {
+        await createComment(octokit, context, pullNumber, '`/cc` only applies to pull requests.');
+        return;
     }
     const commentArgs = getCommandArgs('/cc', commentBody);
     // no arguments after command provided
@@ -47106,6 +47181,7 @@ async function unassign(context = platform_platform().context()) {
 
 
 
+
 /**
  * /uncc will remove the review request for argument users (or self)
  *
@@ -47118,6 +47194,10 @@ async function uncc(context = platform_platform().context()) {
     const commentBody = context.payload.comment?.body;
     if (pullNumber === undefined) {
         throw new Error(`github context payload missing pull number: ${JSON.stringify(context.payload)}`);
+    }
+    if (context.payload.issue?.pull_request === undefined) {
+        await createComment(octokit, context, pullNumber, '`/uncc` only applies to pull requests.');
+        return;
     }
     const commentArgs = getCommandArgs('/uncc', commentBody);
     // no arguments after command provided

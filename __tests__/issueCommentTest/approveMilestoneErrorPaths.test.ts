@@ -10,12 +10,14 @@ import * as auth from '../../src/utils/auth'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import pullReqListReviews from '../fixtures/pullReq/pullReqListReviews.json'
 import * as utils from '../testUtils'
+import { prHandlers } from '../utils/ownersFixtures'
 
 // the auth helpers are stubbed so each error path can be reached
 // without routing the membership, collaborator and comment probes
 vi.mock('../../src/utils/auth', { spy: true })
 
-const server = setupServer()
+// the viewer query (the token's own login, read on cancel) answers github-actions[bot]
+const server = setupServer(utils.noMergeQueue)
 utils.failTestOnUnhandledRequests(server)
 beforeAll(() =>
   server.listen(utils.failOnUnhandledRequest),
@@ -27,11 +29,11 @@ const issue = `${utils.api}/repos/Codertocat/Hello-World/issues/1`
 const pull = `${utils.api}/repos/Codertocat/Hello-World/pulls/1`
 const forbidden = { message: 'Resource not accessible by integration' }
 
-// the fixture is a plain issue comment, so /approve takes the legacy review path
+// a pull request whose base branch has no OWNERS files, so /approve takes the legacy review path
 function comment(body: string) {
   const payload = structuredClone(issueCommentEvent)
   payload.comment.body = body
-  return new utils.MockContext(payload)
+  return new utils.MockContext({ ...payload, issue: { ...payload.issue, pull_request: { url: pull } } })
 }
 
 function commentWithoutIssue(body: string) {
@@ -46,6 +48,7 @@ function failing(method: 'get' | 'post' | 'put', url: string) {
 
 beforeEach(() => {
   utils.setupActionsEnv()
+  server.use(...prHandlers({}, ['x.go']))
 })
 
 describe('/approve error paths', () => {

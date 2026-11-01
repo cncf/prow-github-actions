@@ -345,11 +345,30 @@ describe('dequeue when the gate breaks', () => {
     expect(info).toHaveBeenCalledWith('dequeued pr #1: missing lgtm')
   })
 
-  it('a [bot] enqueuer counts as the bot too', async () => {
+  // GraphQL names a GitHub App's Bot by its slug, without the `[bot]` the REST API adds
+  it('a GitHub App token: its own entry, enqueued as the bare slug, is dequeued', async () => {
     servePull(pull(['lgtm', 'do-not-merge/hold']))
-    const calls = serveGraphql({ inQueue: true, entry: { state: 'QUEUED', position: 1, enqueuer: 'my-app[bot]' } })
+    const calls = serveGraphql({ inQueue: true, viewer: 'my-app', entry: { state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'Bot' } })
 
     await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'blocked by do-not-merge/hold (dequeued)' })
+    expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(1)
+  })
+
+  it('another automation\'s entry (Mergify) is left alone when the token\'s login is known', async () => {
+    servePull(pull([]))
+    const calls = serveGraphql({ inQueue: true, viewer: 'my-app', entry: { state: 'QUEUED', position: 1, enqueuer: 'mergify', enqueuerType: 'Bot' } })
+    const debug = vi.spyOn(core, 'debug')
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm' })
+    expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(0)
+    expect(debug).toHaveBeenCalledWith('pr #1 was enqueued by mergify; leaving it in the queue')
+  })
+
+  it('the token\'s login unreadable: any Bot enqueuer counts as the bot', async () => {
+    servePull(pull([]))
+    const calls = serveGraphql({ inQueue: true, viewer: null, entry: { state: 'QUEUED', position: 1, enqueuer: 'my-app', enqueuerType: 'Bot' } })
+
+    await expect(evaluateMerge(octokit, context, 1, tide)).resolves.toEqual({ result: 'skipped', reason: 'missing lgtm (dequeued)' })
     expect(mutations(calls, 'dequeuePullRequest')).toHaveLength(1)
   })
 

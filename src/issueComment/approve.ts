@@ -1,17 +1,16 @@
-import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
+import type { Octokit } from '@octokit/rest'
+import type { Review } from '../plugins/approve'
 import type { Context } from '../utils/context'
 
 import { platform } from '../platform'
 import { approveSettings, evaluateApproval } from '../plugins/approve'
+import { tokenLogin } from '../plugins/approveReview'
 import { assertAuthorizedByOwnersOrMembership } from '../utils/auth'
 import { hasCommand, hasExactArgs } from '../utils/command'
-import { createComment } from '../utils/comments'
+import { createComment, normalizeLogin } from '../utils/comments'
 import { loadProwConfig } from '../utils/config'
 import { newOctokitFromInputs } from '../utils/octokit'
 import { loadPullRequestOwners } from '../utils/pullRequestOwners'
-
-type PullsListReviewsResponseType
-  = RestEndpointMethodTypes['pulls']['listReviews']['response']
 
 /**
  * /approve on a pull request whose base branch has OWNERS files records the
@@ -20,10 +19,11 @@ type PullsListReviewsResponseType
  * comment; no GitHub review is submitted. /approve cancel withdraws it the
  * same way: the comment itself is the state, so both just recompute.
  *
- * Anywhere else (an issue, or a repository without OWNERS files) the legacy
- * behaviour is kept: org members and collaborators (or the root OWNERS
- * approvers on an issue) make the github-actions bot submit an APPROVE
- * review, and /approve cancel or /remove-approve dismisses its latest one.
+ * On a pull request in a repository without OWNERS files the legacy
+ * behaviour is kept: org members and collaborators make the token's identity
+ * (github-actions[bot], a GitHub App's `<slug>[bot]`, or a PAT's user) submit
+ * an APPROVE review, and /approve cancel or /remove-approve dismisses its
+ * latest one. On an issue it only replies that it applies to pull requests.
  * The Prow argument 'no-issue' is accepted and ignored.
  *
  * @param context - the github actions event context
@@ -47,12 +47,15 @@ export async function approve(
   const isCancel = hasCommand('/remove-approve', commentBody)
     || hasExactArgs('/approve', commentBody, 'cancel')
 
-  if (context.payload.issue?.pull_request !== undefined) {
-    const owners = await loadPullRequestOwners(octokit, context, issueNumber)
-    if (owners.tree.hasOwners) {
-      await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel)
-      return
-    }
+  if (context.payload.issue?.pull_request === undefined) {
+    await createComment(octokit, context, issueNumber, '`/approve` only applies to pull requests.')
+    return
+  }
+
+  const owners = await loadPullRequestOwners(octokit, context, issueNumber)
+  if (owners.tree.hasOwners) {
+    await approveByCoverage(octokit, context, issueNumber, commenterLogin, isCancel)
+    return
   }
 
   await authorize(octokit, context, issueNumber, commenterLogin)
@@ -132,7 +135,7 @@ async function refuse(
 }
 
 /**
- * Removes the latest review from the github actions bot
+ * Removes the latest APPROVE review the token's identity submitted
  *
  * @param octokit - a hydrated github api client
  * @param context - the github actions workflow event context
@@ -147,22 +150,21 @@ async function cancel(
 ): Promise<void> {
   platform().log.debug(`canceling latest review`)
 
-  let reviews: PullsListReviewsResponseType
+  let reviews: Review[]
   try {
-    reviews = await octokit.pulls.listReviews({
-      ...context.repo,
-      pull_number: issueNumber,
-    })
+    reviews = await octokit.paginate(octokit.pulls.listReviews, { ...context.repo, pull_number: issueNumber, per_page: 100 })
   }
   catch (e) {
     throw new Error(`could not list reviews for PR ${issueNumber}: ${e}`)
   }
 
+  // the token's own reviews: a GitHub App's are authored by `<slug>[bot]`, GITHUB_TOKEN's by github-actions[bot]
+  const self = await tokenLogin(octokit) ?? 'github-actions'
   let latestReview
 
-  for (const e of reviews.data) {
+  for (const e of reviews) {
     platform().log.debug(`checking review: ${e.user?.login}`)
-    if (e.user?.login === 'github-actions[bot]' && e.state === 'APPROVED') {
+    if (e.user?.login !== undefined && normalizeLogin(e.user.login) === self && e.state === 'APPROVED') {
       latestReview = e
     }
   }

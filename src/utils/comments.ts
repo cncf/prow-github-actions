@@ -65,3 +65,14 @@ export async function createCommentOnce(
 export function isBotUser(user: { login?: string, type?: string } | null | undefined): boolean {
   return user?.type === 'Bot' || user?.login === 'github-actions[bot]'
 }
+
+/**
+ * normalizeLogin lowercases a login and drops the `[bot]` suffix that REST
+ * and webhook payloads give a `Bot` user and GraphQL leaves off, so that
+ * `my-app[bot]` and `my-app` compare equal.
+ *
+ * @param login - a GitHub login
+ */
+export function normalizeLogin(login: string): string {
+  return login.toLowerCase().replace(/\[bot\]$/, '')
+}

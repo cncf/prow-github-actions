@@ -90,6 +90,32 @@ describe('dist/index.js approve plugin arms', () => {
       expect(gh.requestsMatching('POST', /\/issues\/1\/(labels|comments)$/)).toEqual([])
     })
 
+    // under a GitHub App or user token the approved label approve wrote raises an event sent by the token's own login
+    it('pull_request labeled approved by the token\'s own login evaluates nothing', async () => {
+      routeEvaluation(['sdk/x.go'])
+
+      const result = await runBundle({ eventName: 'pull_request', payload: { ...pullReqOpenedEvent, action: 'labeled', label: { name: 'approved' }, sender: bot }, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(result.stdout).toContain('approve: labeled approved by this bot\'s own token; nothing to re-evaluate')
+      expect(gh.graphqlCalls('viewer')).toHaveLength(1)
+      expect(calls()).not.toContain(commentsRead)
+      expect(gh.requestsMatching('POST', /\/issues\/1\/(labels|comments)$/)).toEqual([])
+    })
+
+    it('pull_request unlabeled approved without a sender is evaluated: nobody to compare with the token', async () => {
+      routeEvaluation(['sdk/x.go'])
+      const { sender: _dropped, ...payload } = pullReqOpenedEvent
+
+      const result = await runBundle({ eventName: 'pull_request', payload: { ...payload, action: 'unlabeled', label: { name: 'approved' } }, inputs: token, apiUrl: gh.url })
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      expect(gh.graphqlCalls('viewer')).toEqual([])
+      expect(calls()).toContain(commentsRead)
+    })
+
     it('pull_request_review submitted by the mirrored approval review itself evaluates nothing', async () => {
       routeEvaluation(['sdk/x.go'])
       const review = { ...pullReqReviewSubmittedEvent.review, id: 71, body: `Approved via /approve by bob (OWNERS).\n${reviewMarker}` }

@@ -27,13 +27,16 @@ export interface MergeQueueFixture {
   headOid: string
   enabled: boolean
   inQueue?: boolean
-  entry?: { state: string, position: number, enqueuer: string }
+  /** `enqueuerType` is the enqueuer's GraphQL `__typename`, ex: `Bot` */
+  entry?: { state: string, position: number, enqueuer: string, enqueuerType?: string }
   /** GraphQL error message for the enqueue mutation */
   enqueueError?: string
   /** GraphQL error message for the state query */
   queryError?: string
   /** GraphQL error message for the dequeue mutation */
   dequeueError?: string
+  /** the login the `viewer` query answers (the token's own); `null` fails that query; default `github-actions[bot]` */
+  viewer?: string | null
 }
 
 export interface FakeGithub {
@@ -63,7 +66,7 @@ export interface FakeGithub {
   routeSequence: (method: string, pattern: string | RegExp, responses: FakeResponse[]) => void
   /** serves the combined commit status of `sha` under `repo` (`/repos/o/r`) and accepts status posts to it */
   commitStatuses: (repo: string, sha: string, statuses: { context: string, state: string }[]) => void
-  /** serves `POST /graphql`: the merge queue state query for one pull request, and the enqueue/dequeue mutations */
+  /** serves `POST /graphql`: the merge queue state query for one pull request, the enqueue/dequeue mutations and the token's viewer login */
   mergeQueue: (queue: MergeQueueFixture) => void
   /** like mergeQueue, but consulted after every other route, so a test's own mergeQueue route wins */
   mergeQueueFallback: (queue: MergeQueueFixture) => void
@@ -213,6 +216,12 @@ function mergeQueueRoute(queue: MergeQueueFixture): Route {
         ? { status: 200, body: { data: { enqueuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } } } }
         : { status: 200, body: { data: null, errors: [{ message: queue.enqueueError }] } }
     }
+    // the token's own login (tokenLogin): GITHUB_TOKEN's unless the scenario says otherwise
+    if (query.includes('viewer')) {
+      return queue.viewer === null
+        ? { status: 200, body: { data: null, errors: [{ message: 'viewer unavailable' }] } }
+        : { status: 200, body: { data: { viewer: { login: queue.viewer ?? 'github-actions[bot]' } } } }
+    }
     if (query.includes('dequeuePullRequest')) {
       return queue.dequeueError === undefined
         ? { status: 200, body: { data: { dequeuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } } } }
@@ -226,7 +235,7 @@ function mergeQueueRoute(queue: MergeQueueFixture): Route {
       headRefOid: queue.headOid,
       isMergeQueueEnabled: queue.enabled,
       isInMergeQueue: queue.inQueue ?? false,
-      mergeQueueEntry: entry === undefined ? null : { state: entry.state, position: entry.position, enqueuer: { login: entry.enqueuer } },
+      mergeQueueEntry: entry === undefined ? null : { state: entry.state, position: entry.position, enqueuer: { ...(entry.enqueuerType === undefined ? {} : { __typename: entry.enqueuerType }), login: entry.enqueuer } },
     } } } } }
   } }
 }

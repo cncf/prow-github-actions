@@ -4,6 +4,7 @@ import type { Context } from '../utils/context'
 import { platform } from '../platform'
 import { checkCollaborator, checkOrgMember } from '../utils/auth'
 import { getCommandArgs } from '../utils/command'
+import { createComment } from '../utils/comments'
 import { newOctokitFromInputs } from '../utils/octokit'
 
 /**
@@ -22,6 +23,11 @@ export async function uncc(context: Context = platform().context()): Promise<voi
     throw new Error(
       `github context payload missing pull number: ${JSON.stringify(context.payload)}`,
     )
+  }
+
+  if (context.payload.issue?.pull_request === undefined) {
+    await createComment(octokit, context, pullNumber, '`/uncc` only applies to pull requests.')
+    return
   }
 
   const commentArgs: string[] = getCommandArgs('/uncc', commentBody)

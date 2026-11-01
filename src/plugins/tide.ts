@@ -12,6 +12,7 @@ import { newOctokitFromInputs } from '../utils/octokit'
 import { branchHasOwners, repoHasOwners } from '../utils/owners'
 import { pullRequestsForSha } from '../utils/pulls'
 import { sleep } from '../utils/sleep'
+import { tokenLogin } from './approveReview'
 import { defaultLgtmSettings, hasLgtmLabel, isLgtmBound, lgtmSettings, shortSha, stripStaleLgtm } from './lgtmBinding'
 
 export interface Mergeability {
@@ -348,7 +349,7 @@ async function dequeueIfOurs(octokit: Octokit, context: Context, number: number,
   if (queue === undefined || !queue.inQueue) {
     return false
   }
-  if (!enqueuedByBot(queue.entry)) {
+  if (!enqueuedByBot(queue.entry, queue.entry?.enqueuer === undefined ? undefined : await tokenLogin(octokit))) {
     platform().log.debug(`pr #${number} was enqueued by ${queue.entry?.enqueuer ?? 'an unknown actor'}; leaving it in the queue`)
     return false
   }

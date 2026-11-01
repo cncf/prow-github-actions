@@ -24,54 +24,35 @@ beforeEach(() => server.use(...utils.noOrgOrRepoConfigExcept(), utils.defaultBra
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
+// /approve only applies to pull requests: the fixture's issue, made a pull request with no OWNERS files on its base branch
+function onPullRequest(fixture: typeof issueCommentEventAssignFixture) {
+  return { ...fixture, issue: { ...fixture.issue, pull_request: { url: `${repo}/pulls/1` } } }
+}
+
 describe('/approve', () => {
   // tests rewrite the comment body and commenter; a fresh copy per test keeps those edits from leaking into the next
-  let issueCommentEventAssign: typeof issueCommentEventAssignFixture
+  let issueCommentEventAssign: ReturnType<typeof onPullRequest>
   beforeEach(() => {
     utils.setupActionsEnv('/approve')
-    issueCommentEventAssign = structuredClone(issueCommentEventAssignFixture)
+    issueCommentEventAssign = onPullRequest(structuredClone(issueCommentEventAssignFixture))
+    server.use(...prHandlers({}, ['x.go']))
   })
 
-  it('fails if commenter is not an approver in OWNERS', async () => {
-    const owners = Buffer.from(
-      `
-reviewers:
-- Codertocat
-    `,
-    ).toString('base64')
-
-    const contentResponse = {
-      type: 'file',
-      encoding: 'base64',
-      size: 4096,
-      name: 'OWNERS',
-      path: 'OWNERS',
-      content: owners,
-    }
-
+  it.each(['/approve', '/approve cancel', '/remove-approve'])('%s on an issue only replies that it applies to pull requests', async (body) => {
+    const observeReply = new utils.ObserveRequest()
+    const observeReview = new utils.ObserveRequest()
     server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
-        utils.mockResponse(200, contentResponse),
-      ),
-    )
-    const wantErr = `Codertocat is not included in the approvers role in the OWNERS file`
-
-    // Mock the reply that the user is not authorized
-    const observeReq = new utils.ObserveRequest()
-    server.use(
-      http.post(
-        `${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`,
-        utils.mockResponse(200, null, observeReq),
-      ),
+      http.post(`${utils.api}/repos/Codertocat/Hello-World/issues/1/comments`, utils.mockResponse(200, null, observeReply)),
+      http.post(`${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`, utils.mockResponse(200, null, observeReview)),
     )
 
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.MockContext(issueCommentEventAssign)
+    const onIssue = structuredClone(issueCommentEventAssignFixture)
+    onIssue.comment.body = body
+    await handleIssueComment(new utils.MockContext(onIssue))
 
-    await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body().then(body => body.body)).toContain(wantErr)
+    await observeReply.called()
+    expect(await observeReply.body()).toEqual({ body: '`/approve` only applies to pull requests.' })
+    await expect(observeReview.notCalled()).resolves.toBe('not called')
   })
 
   it('fails if commenter is not an org member or collaborator', async () => {
@@ -107,47 +88,6 @@ reviewers:
     await handleIssueComment(commentContext)
     await observeReq.called()
     expect(await observeReq.body().then(body => body.body)).toContain(wantErr)
-  })
-
-  it('approves if commenter is an approver in OWNERS', async () => {
-    const owners = Buffer.from(
-      `
-    approvers:
-    - Codertocat
-        `,
-    ).toString('base64')
-
-    const contentResponse = {
-      type: 'file',
-      encoding: 'base64',
-      size: 4096,
-      name: 'OWNERS',
-      path: 'OWNERS',
-      content: owners,
-    }
-    server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
-        utils.mockResponse(200, contentResponse),
-      ),
-    )
-
-    const observeReq = new utils.ObserveRequest()
-    server.use(
-      http.post(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
-        utils.mockResponse(200, null, observeReq),
-      ),
-    )
-
-    issueCommentEventAssign.comment.body = '/approve'
-    const commentContext = new utils.MockContext(issueCommentEventAssign)
-
-    await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      event: 'APPROVE',
-    })
   })
 
   it('approves if commenter is an org member', async () => {
@@ -203,52 +143,6 @@ reviewers:
     expect(await observeReq.body()).toMatchObject({ event: 'APPROVE' })
     await expect(observeLabels.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
-  })
-
-  it('removes approval with the /approve cancel command if approver in OWNERS file', async () => {
-    const owners = Buffer.from(
-      `
-    approvers:
-    - some-user
-    `,
-    ).toString('base64')
-
-    const contentResponse = {
-      type: 'file',
-      encoding: 'base64',
-      size: 4096,
-      name: 'OWNERS',
-      path: 'OWNERS',
-      content: owners,
-    }
-    server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
-        utils.mockResponse(200, contentResponse),
-      ),
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
-        utils.mockResponse(200, pullReqListReviews),
-      ),
-    )
-
-    const observeReq = new utils.ObserveRequest()
-    server.use(
-      http.put(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews/80/dismissals`,
-        utils.mockResponse(200, null, observeReq),
-      ),
-    )
-
-    issueCommentEventAssign.comment.body = '/approve cancel'
-    issueCommentEventAssign.comment.user.login = 'some-user'
-    const commentContext = new utils.MockContext(issueCommentEventAssign)
-
-    await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      message: `Canceled through prow-github-actions by @some-user`,
-    })
   })
 
   it('fails /approve cancel when the bot has no approved review', async () => {
@@ -414,56 +308,6 @@ reviewers:
     expect(await observeReq.body()).toMatchObject({
       event: 'APPROVE',
     })
-  })
-
-  it('approves with /approve no-issue if commenter is an approver in OWNERS', async () => {
-    const owners = Buffer.from(
-      `
-    approvers:
-    - Codertocat
-        `,
-    ).toString('base64')
-
-    const contentResponse = {
-      type: 'file',
-      encoding: 'base64',
-      size: 4096,
-      name: 'OWNERS',
-      path: 'OWNERS',
-      content: owners,
-    }
-    const observeMembers = new utils.ObserveRequest()
-    server.use(
-      http.get(
-        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
-        utils.mockResponse(200, contentResponse),
-      ),
-      http.get(
-        `${utils.api}/orgs/Codertocat/members/Codertocat`,
-        utils.mockResponse(204, null, observeMembers),
-      ),
-    )
-
-    const observeReq = new utils.ObserveRequest()
-    server.use(
-      http.post(
-        `${utils.api}/repos/Codertocat/Hello-World/pulls/1/reviews`,
-        utils.mockResponse(200, null, observeReq),
-      ),
-    )
-
-    issueCommentEventAssign.comment.body = '/approve no-issue'
-    issueCommentEventAssign.comment.user.login = 'Codertocat'
-    const commentContext = new utils.MockContext(issueCommentEventAssign)
-
-    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
-    await handleIssueComment(commentContext)
-    await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({
-      event: 'APPROVE',
-    })
-    await expect(observeMembers.notCalled()).resolves.toBe('not called')
-    expect(setFailed).not.toHaveBeenCalled()
   })
 
   it('fails /remove-approve when the bot has no approved review', async () => {

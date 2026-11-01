@@ -267,11 +267,11 @@ same evaluation in the same run; the skip reads `skipping pr #<n>: missing lgtm 
 
 Rule | Why
 --- | ---
-only the bot's own entry (`enqueuer` is `github-actions` or ends with `[bot]`) | a human who clicked *Merge when ready* did so deliberately; never fight them
+only the bot's own entry: the `enqueuer` is the token's own login (GraphQL `viewer`: `github-actions`, a GitHub App's slug, a PAT's user); when that cannot be read, any `Bot` enqueuer, `github-actions` or a login ending with `[bot]` | a human who clicked *Merge when ready* did so deliberately, and another automation's entry (Mergify, a second App) is its own; never fight them
 only on events, never on `schedule` | the cron and the sweep would otherwise cost one GraphQL query per open PR that fails the gate
 a refused dequeue is a warning | the label, not the queue, is the gate
 
-With a custom `token` the enqueuer is that user, so its entries look human to a run on another
+With a custom `token` the enqueuer is that user, so its entries look foreign to a run on another
 token; keep one token for the bot.
 
 ### CI must subscribe to `merge_group`

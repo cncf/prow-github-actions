@@ -2,7 +2,7 @@ import type { FakeGithub } from './fakeGithub'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { start } from './fakeGithub'
-import { comment, helpersFor, memberReads, repo, token } from './helpers'
+import { comment, helpersFor, memberReads, prComment, repo, token } from './helpers'
 import { runBundle } from './runBundle'
 
 vi.setConfig({ testTimeout: 30_000 })
@@ -23,7 +23,7 @@ describe('dist/index.js review and lock command refused writes', () => {
   async function run(body: string, command: string) {
     return runBundle({
       eventName: 'issue_comment',
-      payload: comment(body),
+      payload: command === '/cc' || command === '/uncc' ? prComment(body) : comment(body),
       inputs: { ...token, 'prow-commands': command },
       apiUrl: gh.url,
     })

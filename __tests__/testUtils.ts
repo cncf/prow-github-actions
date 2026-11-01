@@ -323,7 +323,7 @@ export interface MergeQueueFixture {
   enabled?: boolean
   inQueue?: boolean
   /** the queue entry; `null` answers `isInMergeQueue: true` with `mergeQueueEntry: null`; `enqueuer: null` reports no enqueuer */
-  entry?: { state: string, position: number, enqueuer?: string | null } | null
+  entry?: { state: string, position: number, enqueuer?: string | null, enqueuerType?: string } | null
   /** the position the enqueue mutation reports; `null` answers `mergeQueueEntry: null`; default 3 */
   enqueuePosition?: number | null
   headOid?: string
@@ -333,6 +333,8 @@ export interface MergeQueueFixture {
   /** GraphQL error message for the state query */
   queryError?: string
   dequeueError?: string
+  /** the login the `viewer` query answers (the token's own, see tokenLogin); `null` fails that query; default `github-actions[bot]` */
+  viewer?: string | null
 }
 
 /**
@@ -355,6 +357,9 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
         ? respond({ enqueuePullRequest: { mergeQueueEntry: queue.enqueuePosition === null ? null : { state: 'QUEUED', position: queue.enqueuePosition ?? 3 } } })
         : respond(null, queue.enqueueError)
     }
+    if (body.query.includes('viewer')) {
+      return queue.viewer === null ? respond(null, 'viewer unavailable') : respond({ viewer: { login: queue.viewer ?? 'github-actions[bot]' } })
+    }
     if (body.query.includes('dequeuePullRequest')) {
       return queue.dequeueError === undefined
         ? respond({ dequeuePullRequest: { mergeQueueEntry: { state: 'QUEUED', position: 1 } } })
@@ -372,7 +377,7 @@ export function mergeQueueGraphql(queue: MergeQueueFixture = {}, calls: GraphqlC
           headRefOid: queue.headOid ?? 'headsha',
           isMergeQueueEnabled: queue.enabled ?? true,
           isInMergeQueue: inQueue,
-          mergeQueueEntry: entry === null ? null : { state: entry.state, position: entry.position, enqueuer: entry.enqueuer === null ? null : { login: entry.enqueuer ?? 'github-actions' } },
+          mergeQueueEntry: entry === null ? null : { state: entry.state, position: entry.position, enqueuer: entry.enqueuer === null ? null : { ...('enqueuerType' in entry ? { __typename: entry.enqueuerType } : {}), login: entry.enqueuer ?? 'github-actions' } },
         },
       },
     })

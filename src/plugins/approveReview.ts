@@ -4,7 +4,7 @@ import type { PullRequestOwners } from '../utils/pullRequestOwners'
 import type { ApprovalEvent, ApprovalState, ApproveSettings, Review } from './approve'
 
 import { platform } from '../platform'
-import { isBotUser } from '../utils/comments'
+import { isBotUser, normalizeLogin } from '../utils/comments'
 
 /** identifies the APPROVE review that mirrors the `approved` label (`approve.github_review`) */
 export const reviewMarker = '<!-- prow-github-actions/approve-review -->'
@@ -44,6 +44,40 @@ export function tokenIdentity(octokit: Octokit): Promise<TokenIdentity> {
     identities.set(octokit, pending)
   }
   return pending
+}
+
+const viewerQuery = 'query TokenLogin { viewer { login } }'
+
+/**
+ * tokenLogin is the login the token acts as, normalized by normalizeLogin,
+ * read from the GraphQL `viewer`, which answers for every kind of token, an
+ * installation token included where `GET /user` refuses (`github-actions` for
+ * `GITHUB_TOKEN`, the App's slug for a GitHub App). It is read at most once
+ * per event (RunState). Undefined when GitHub does not say, which callers
+ * treat as "unknown": a failure here is a debug message, never a failed run.
+ *
+ * @param octokit - a hydrated github client
+ */
+export function tokenLogin(octokit: Octokit): Promise<string | undefined> {
+  const cache = platform().state().tokenLogins
+  const key = platform().apiBaseUrl()
+  let pending = cache.get(key)
+  if (pending === undefined) {
+    pending = viewerLogin(octokit)
+    cache.set(key, pending)
+  }
+  return pending
+}
+
+async function viewerLogin(octokit: Octokit): Promise<string | undefined> {
+  try {
+    const { viewer } = await octokit.graphql<{ viewer: { login: string } }>(viewerQuery)
+    return normalizeLogin(viewer.login)
+  }
+  catch (e) {
+    platform().log.debug(`could not read the token's login from the GraphQL viewer: ${e}`)
+    return undefined
+  }
 }
 
 /**
