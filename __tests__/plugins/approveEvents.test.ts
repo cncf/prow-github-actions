@@ -227,6 +227,18 @@ describe('approveOnPullRequest', () => {
     expect(debug).toHaveBeenCalledWith(`approve: ${action} approved by this bot's own token; nothing to re-evaluate`)
   })
 
+  // GITHUB_TOKEN's own writes raise no event, so a payload without a sender is somebody else's label
+  it('labeled approved with no sender in the payload is evaluated without reading the token\'s login', async () => {
+    const graphqlCalls: utils.GraphqlCall[] = []
+    server.use(utils.mergeQueueGraphql({ enabled: false, viewer: 'my-app' }, graphqlCalls).handler)
+    const writes = serve({ labels: ['approved'], comments: [{ body: '/approve', user: { login: 'bob' } }] })
+
+    await approveOnPullRequest(prEvent('labeled', { label: { name: 'approved' }, sender: undefined }))
+
+    await expect(writes.removeLabel.called()).resolves.toBe('called')
+    expect(graphqlCalls.filter(call => call.query.includes('viewer'))).toEqual([])
+  })
+
   it('labeled approved by another login while the token\'s login is unreadable is evaluated', async () => {
     server.use(utils.mergeQueueGraphql({ enabled: false, viewer: null }).handler)
     const writes = serve({ labels: ['approved'], comments: [{ body: '/approve', user: { login: 'bob' } }] })
