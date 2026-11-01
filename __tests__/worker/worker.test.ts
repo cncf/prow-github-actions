@@ -20,7 +20,7 @@ interface Seen { method: string, path: string, auth: string | null, body: string
 // the fake GitHub: every request is logged under its own LOG key (seen:<ms>-<uuid>, so two in flight at once —
 // the org- and repo-tier config probes — cannot lose each other's write); LOG.prow.yaml, when set, is served as
 // the repository's .github/prow.yaml. LOG.fail names, comma-separated, the calls that answer 500: tokens,
-// repositories, pulls, labels. LOG.slow = 'patch' holds a PATCH for a second and logs PATCH-DONE as it answers.
+// repositories, pulls, labels, patch. LOG.slow = 'patch' holds a PATCH for a second and logs PATCH-DONE as it answers.
 const githubScript = `
 const log = (env, entry) => env.LOG.put('seen:' + String(Date.now()).padStart(15, '0') + '-' + crypto.randomUUID(), JSON.stringify(entry))
 export default {
@@ -42,6 +42,9 @@ export default {
       return new Response(null, { status: 204 })
     }
     if (request.method === 'PATCH' && /\\/issues\\/[12]$/.test(url.pathname)) {
+      if (failing.includes('patch')) {
+        return fail()
+      }
       if ((await env.LOG.get('slow')) === 'patch') {
         await new Promise(resolve => setTimeout(resolve, 1000))
         await log(env, { method: 'PATCH-DONE', path: url.pathname, auth: null, body: '' })
@@ -278,6 +281,25 @@ describe('the Worker', () => {
     expect((await githubSaw()).filter(s => s.method === 'PATCH')).toHaveLength(1)
     const deliveries = await mf.getKVNamespace('DELIVERIES', 'prow')
     expect(await deliveries.get('delivery:d-twice')).toBe('1')
+  })
+
+  it('forgets a pull request delivery whose run fails, so GitHub\'s redelivery runs it again', async () => {
+    await failing('patch')
+    const payload = closeComment()
+
+    expect((await deliver('issue_comment', payload, 'd-close-fails')).status).toBe(202)
+    await eventually(async () => (await githubSaw()).some(s => s.method === 'PATCH'))
+    await settle()
+
+    const deliveries = await mf.getKVNamespace('DELIVERIES', 'prow')
+    expect(await deliveries.get('delivery:d-close-fails')).toBeNull()
+
+    await failing()
+    expect((await deliver('issue_comment', payload, 'd-close-fails')).status).toBe(202)
+    await eventually(async () => (await githubSaw()).filter(s => s.method === 'PATCH').length === 2)
+    await settle()
+    expect(await deliveries.get('delivery:d-close-fails')).toBe('1')
+    expect((await deliver('issue_comment', payload, 'd-close-fails')).status).toBe(200)
   })
 
   it('scheduled(): one queue message per live installation, whose consumer runs the cron jobs for its unarchived repositories', async () => {
