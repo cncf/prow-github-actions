@@ -151,3 +151,56 @@ tests:
     template: pdb.yaml
     asserts:
       - equal: {path: 'spec.selector.matchLabels["app.kubernetes.io/component"]', value: server}
+  # The checksum annotations are sha256 of `toJson` over the inputs the ConfigMap and the inline Secret carry, so a
+  # changed input rolls the pods. Pinned digests: python3 -c 'import hashlib,json; print(hashlib.sha256(json.dumps(
+  # [{"commands":"","jobs":"lgtm","mergeMethod":"","config":"","dryRun":False},""],separators=(",",":"),sort_keys=True)
+  # .encode()).hexdigest())' for the default config; adding a prow.* value in values.yaml changes it on purpose.
+  - it: the pod checksums cover the whole prow block, the api url and the inline credentials
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/config"]'
+          value: 71e81b761032fc68b0e1de7c124cde478c718a66e7595a8555aa806fe1f49a38
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/secret"]'
+          value: 78c76bc2e5fa8c5be6224db7905ab340dc2baa392872ce605010616016c27fce
+  - it: a changed prow value rolls the pods through checksum/config and leaves checksum/secret alone
+    set:
+      prow.commands: lgtm
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/config"]'
+          value: f54ea32a9910e21460e366eaf798845ba8edd536dd65c8c912c8da0922a1f030
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/secret"]'
+          value: 78c76bc2e5fa8c5be6224db7905ab340dc2baa392872ce605010616016c27fce
+  - it: a changed github.apiUrl rolls the pods through checksum/config
+    set:
+      github.apiUrl: https://ghes.example/api/v3
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/config"]'
+          value: 9cd41ee8f031f59cae69aed6ba8a2d48b4403a424e379d56f796af8e15cf6f76
+  - it: a changed inline credential rolls the pods through checksum/secret only
+    set:
+      github.webhookSecret: t
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/config"]'
+          value: 71e81b761032fc68b0e1de7c124cde478c718a66e7595a8555aa806fe1f49a38
+      - equal:
+          path: 'spec.template.metadata.annotations["checksum/secret"]'
+          value: a40a40ea843d5efd8f509e8cd1e598d28888158779831f221fac0bfcd306fc49
+  - it: github.existingSecret drops checksum/secret, since the chart no longer owns those bytes
+    set:
+      github.existingSecret: mine
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    template: deployment.yaml
+    asserts:
+      - notExists: {path: 'spec.template.metadata.annotations["checksum/secret"]'}
+      - exists: {path: 'spec.template.metadata.annotations["checksum/config"]'}
