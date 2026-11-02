@@ -19,13 +19,13 @@ tests:
       name: platform-team-prow-automation-production-eu-west
     asserts:
       - matchRegex: {path: metadata.name, pattern: '^[a-z0-9]([-a-z0-9]{0,50}[a-z0-9])?$'}
-      - matchRegex: {path: metadata.name, pattern: '-jobs$'}
+      - matchRegex: {path: metadata.name, pattern: -jobs$}
   - it: bounds a maximum-length release name that already contains the chart name
     release:
       name: prow-github-app-abcdefghijklmnopqrstuvwxyz01234567890
     asserts:
       - matchRegex: {path: metadata.name, pattern: '^[a-z0-9]([-a-z0-9]{0,50}[a-z0-9])?$'}
-      - matchRegex: {path: metadata.name, pattern: '-jobs$'}
+      - matchRegex: {path: metadata.name, pattern: -jobs$}
   - it: trims a hyphen at the truncation boundary of a fullname override
     set:
       fullnameOverride: abcdefghijklmnopqrstuvwxyz01234567890123456789-override
