@@ -1,0 +1,109 @@
+suite: hardening
+templates:
+  - deployment.yaml
+  - cronjob.yaml
+values:
+  - ./values/creds.yaml
+tests:
+  - it: the probes hit the paths the server serves, on the named http port
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports
+          value: [{name: http, containerPort: 8080}]
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe
+          value:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe
+          value:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+  - it: the server pod runs as a non-root user with a read-only root and no capabilities
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext
+          value:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: {type: RuntimeDefault}
+      - equal:
+          path: spec.template.spec.containers[0].securityContext
+          value:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      - lengthEqual: {path: spec.template.spec.containers, count: 1}
+  - it: the cron pod carries the same hardening and never retries a run
+    template: cronjob.yaml
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.securityContext
+          value:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile: {type: RuntimeDefault}
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].securityContext
+          value:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      - equal: {path: spec.jobTemplate.spec.template.spec.restartPolicy, value: Never}
+      - equal: {path: spec.jobTemplate.spec.template.spec.automountServiceAccountToken, value: false}
+      - lengthEqual: {path: spec.jobTemplate.spec.template.spec.containers, count: 1}
+  - it: both containers get the default resources and pull policy
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources
+          value:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 256Mi}
+        template: deployment.yaml
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: IfNotPresent
+        template: deployment.yaml
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].resources
+          value:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 256Mi}
+        template: cronjob.yaml
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].imagePullPolicy
+          value: IfNotPresent
+        template: cronjob.yaml
+  - it: resources and image.pullPolicy pass through to both containers
+    set:
+      image.pullPolicy: Always
+      resources:
+        requests: {cpu: 250m, memory: 512Mi}
+        limits: {cpu: 1, memory: 1Gi}
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources
+          value:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: 1, memory: 1Gi}
+        template: deployment.yaml
+      - equal:
+          path: spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+        template: deployment.yaml
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].resources
+          value:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: 1, memory: 1Gi}
+        template: cronjob.yaml
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].imagePullPolicy
+          value: Always
+        template: cronjob.yaml

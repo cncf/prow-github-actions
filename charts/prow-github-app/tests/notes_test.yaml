@@ -1,0 +1,57 @@
+suite: notes
+templates: [NOTES.txt]
+values: [./values/creds.yaml]
+tests:
+  - it: without ingress the notes port-forward to the Service the chart creates, on service.port
+    set:
+      service.port: 9090
+    asserts:
+      - matchRegexRaw:
+          pattern: kubectl -n NAMESPACE port-forward svc/RELEASE-NAME-prow-github-app 8080:9090
+      - matchRegexRaw:
+          pattern: relay deliveries to http://localhost:8080/webhook
+      - notMatchRegexRaw:
+          pattern: 'https://[^<\s]+/webhook'
+  - it: with ingress the notes name one webhook url per host and no port-forward
+    set:
+      ingress.enabled: true
+      ingress.hosts:
+        - host: prow.example.com
+          paths: [{path: /webhook, pathType: Exact}]
+        - host: prow.example.org
+          paths: [{path: /webhook, pathType: Exact}]
+    asserts:
+      - matchRegexRaw:
+          pattern: https://prow.example.com/webhook
+      - matchRegexRaw:
+          pattern: https://prow.example.org/webhook
+      - notMatchRegexRaw:
+          pattern: port-forward
+  - it: a single replica without redis reports no shared state
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Replicas: 1\.'
+      - notMatchRegexRaw:
+          pattern: shared state through Redis
+  - it: several replicas on redis.url report the shared state
+    set:
+      replicaCount: 3
+      redis.url: redis://redis:6379
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Replicas: 3 \(shared state through Redis\)\.'
+  - it: redis.existingSecret alone also reports the shared state
+    set:
+      redis.existingSecret: prow-redis
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Replicas: 1 \(shared state through Redis\)\.'
+  - it: cronjob.enabled false reports the scheduled jobs as disabled
+    set:
+      cronjob.enabled: false
+      prow.jobs: lgtm,label-sync
+    asserts:
+      - matchRegexRaw:
+          pattern: 'Scheduled jobs \(lgtm,label-sync\): disabled\.'
+      - notMatchRegexRaw:
+          pattern: CronJob
