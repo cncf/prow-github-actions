@@ -170,3 +170,17 @@ tests:
             name: GITHUB_APP_ID
             valueFrom: {secretKeyRef: {name: prow, key: appId}}
         template: deployment.yaml
+  - it: a release named after the chart is not suffixed with the chart name again
+    release:
+      name: prow-github-app-prod
+    asserts:
+      - equal: {path: metadata.name, value: prow-github-app-prod}
+        template: deployment.yaml
+      - equal: {path: metadata.name, value: prow-github-app-prod}
+        template: service.yaml
+      - equal: {path: metadata.name, value: prow-github-app-prod-jobs}
+        template: cronjob.yaml
+      - equal:
+          path: spec.template.spec.containers[0].envFrom
+          value: [{configMapRef: {name: prow-github-app-prod}}]
+        template: deployment.yaml
