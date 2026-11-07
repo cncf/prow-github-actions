@@ -56,19 +56,19 @@
   },
   "devDependencies": {
     "@antfu/eslint-config": "^10.0.0",
-    "@cloudflare/workers-types": "^5.20261029.1",
+    "@cloudflare/workers-types": "^5.20261104.1",
     "@stryker-mutator/core": "^10.1.1",
     "@stryker-mutator/vitest-runner": "^10.1.1",
     "@types/node": "^24",
     "@vercel/ncc": "^0.45.0",
-    "@vitest/coverage-v8": "^5.0.5",
+    "@vitest/coverage-v8": "^5.1.0",
     "ajv": "^8.20.0",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "miniflare": "^4.20260730.0",
     "msw": "^3.0.3",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0",
-    "wrangler": "^4.155.0"
+    "wrangler": "^4.157.0"
   },
   "overrides": {
     "katex": "^0.19.1",
