@@ -90,12 +90,15 @@ a nullish throw fails `toThrow` and `.rejects.toThrow` whatever the argument;
 
 ### Phantom "uncovered" branches after an `await`
 
-The unit run lists four branches as uncovered that every test run in fact
-drives: `close.ts:37`, `reopen.ts:34`, `approve.ts:516` and `auth.ts:237`
-(it reports 1815/1819 branches because of them; the e2e run repeats the last
-two). Each is an `if` with no `else` whose condition was assigned from an
-expression in which an `await` is only sometimes reached (`a || (await b())`,
-or a ternary with an `await` in each arm). V8 opens a fresh block-count range
+The unit run lists two branches as uncovered that every test run in fact
+drives: `approve.ts:516` and `auth.ts:237` (it reports 1911/1913 branches
+because of them; the e2e run repeats both). `close.ts:37` and `reopen.ts:34`
+showed the same artefact until #642 inverted their guards into an early
+`throw`, so which sites it lands on depends on the shape of the code and on
+the mix of calls the tests make, not on a fixed list. Each is an `if` with no
+`else` whose condition was assigned from an expression in which an `await` is
+only sometimes reached (`a || (await b())`, or a ternary with an `await` in
+each arm). V8 opens a fresh block-count range
 at the point an async function resumes, so the range enclosing the `if` counts
 only the calls that resumed from that particular `await`, while the then-block
 is counted correctly; the implicit else that the v8 provider derives as
