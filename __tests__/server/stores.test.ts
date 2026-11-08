@@ -67,6 +67,21 @@ describe('storesFromEnv', () => {
     await stores.close()
     expect(client.close).toHaveBeenCalled()
   })
+
+  it('hands the sink to the redis locks, so a release that fails is logged rather than lost', async () => {
+    const lines: Record<string, unknown>[] = []
+    const stores = storesFromEnv({ REDIS_URL: 'redis://x' }, line => lines.push(line))
+    await stores.ready
+    const { createClient } = await import('redis')
+    const client = vi.mocked(createClient).mock.results.at(-1)!.value as { eval: () => Promise<unknown> }
+    client.eval = async () => {
+      throw new Error('offline')
+    }
+
+    await expect(stores.locks.withLock('o/r#1', async () => 'handled')).resolves.toBe('handled')
+
+    expect(lines).toContainEqual({ level: 'error', message: 'redis lock o/r#1: release failed: offline' })
+  })
 })
 
 describe('the server with stores', () => {
