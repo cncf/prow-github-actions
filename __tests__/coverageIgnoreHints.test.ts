@@ -39,14 +39,32 @@ const testTexts = new Map(testFiles.map(file => [file, readFileSync(path.join(ro
 
 const hintPattern = /\/\*\s*v8 ignore (next|start|stop)\b([^*]*)\*\//g
 
-function hintsIn(file: string): Hint[] {
-  const text = readFileSync(path.join(root, file), 'utf8')
+// Stryker's sandbox prepends this line to every file it copies (`disableTypeChecks`), which would
+// shift each hint down one line and miss every `file:line` key below whenever a probe mutates a
+// module __tests__/setup.ts imports (src/adapters/actions.ts, src/platform), as that makes this
+// file "related" to the mutants and part of the dry run
+const tsNocheckPrefix = /^\/\/ @ts-nocheck\r?\n/
+
+/** the text as the tree has it, whichever copy of the file it came from */
+function asInTree(raw: string): string {
+  return raw.replace(tsNocheckPrefix, '')
+}
+
+function sourceText(file: string): string {
+  return asInTree(readFileSync(path.join(root, file), 'utf8'))
+}
+
+function hintsInText(file: string, text: string): Hint[] {
   const hints: Hint[] = []
   for (const match of text.matchAll(hintPattern)) {
     const line = text.slice(0, match.index).split('\n').length
     hints.push({ file, line, kind: match[1] as Hint['kind'], reason: match[2].trim() })
   }
   return hints
+}
+
+function hintsIn(file: string): Hint[] {
+  return hintsInText(file, sourceText(file))
 }
 
 const hints = sourceFiles.flatMap(hintsIn)
@@ -83,7 +101,7 @@ function importsModule(testFile: string, sourceFile: string): boolean {
 
 /** the names exported between a `start` hint and its `stop` */
 function exportedNames(file: string, start: number, stop: number): string[] {
-  const lines = readFileSync(path.join(root, file), 'utf8').split('\n').slice(start, stop - 1)
+  const lines = sourceText(file).split('\n').slice(start, stop - 1)
   return lines.flatMap(line => /^export (?:async function|function|const|let) (\w+)\b/.exec(line)?.[1] ?? [])
 }
 
@@ -92,6 +110,16 @@ describe('v8 ignore hints in src/', () => {
     expect(hints.length).toBeGreaterThan(0)
     expect(armHints.length).toBeGreaterThan(0)
     expect(hints.some(hint => hint.kind === 'start')).toBe(true)
+  })
+
+  // `npm run test:mutation -- --mutate src/adapters/actions.ts` runs this file against the sandbox
+  // copy of src/, where every file starts with `// @ts-nocheck`; the keys of driversOutsideTheHint
+  // must still match
+  it('number the hints as the tree does when a Stryker sandbox has prepended // @ts-nocheck', () => {
+    const [file] = Object.keys(driversOutsideTheHint)[0].split(':')
+    const sandboxed = `// @ts-nocheck\n${sourceText(file)}`
+    expect(hintsInText(file, sandboxed).map(hint => hint.line)).toEqual(hintsIn(file).map(hint => hint.line + 1))
+    expect(hintsInText(file, asInTree(sandboxed))).toEqual(hintsIn(file))
   })
 
   // a `stop` only closes its block; the reason lives on the `start`
