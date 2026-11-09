@@ -78,7 +78,7 @@ the committed bundle, run `npm run pack` before it (`npm run all` does this).
 In CI the suite runs before the `dist/` freshness check, which is fine: the
 check then proves that the bundle the harness just exercised matches `src/`.
 
-`__tests__/setup.ts` tightens `toThrow`: out of the box, `toThrow(message)`
+`__tests__/setupToThrowGuard.ts` tightens `toThrow`: out of the box, `toThrow(message)`
 passes when the thrown value is `undefined` or `null`, because chai compares
 the message only against a truthy error
 ([vitest-dev/vitest#7260](https://github.com/vitest-dev/vitest/issues/7260)).
