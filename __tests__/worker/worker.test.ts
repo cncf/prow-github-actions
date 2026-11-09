@@ -16,6 +16,8 @@ const secret = 'worker-secret'
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } })
 
 interface Seen { method: string, path: string, auth: string | null, body: string }
+// `at` is the fake's own clock (the ms prefix of its LOG key), so two entries compare on one clock
+interface SeenAt extends Seen { at: number }
 
 // the fake GitHub: every request is logged under its own LOG key (seen:<ms>-<uuid>, so two in flight at once —
 // the org- and repo-tier config probes — cannot lose each other's write); LOG.prow.yaml, when set, is served as
@@ -150,10 +152,10 @@ function closeComment(id = 7, issue = 1): Payload<typeof issueCommentEvent> {
   return payload
 }
 
-async function githubSawIn(mf: Miniflare): Promise<Seen[]> {
+async function githubSawIn(mf: Miniflare): Promise<SeenAt[]> {
   const log = await mf.getKVNamespace('LOG', 'github')
   const keys = (await log.list({ prefix: 'seen:' })).keys.map(key => key.name)
-  return Promise.all(keys.map(async key => JSON.parse((await log.get(key))!) as Seen))
+  return Promise.all(keys.map(async key => ({ ...JSON.parse((await log.get(key))!) as Seen, at: Number(key.slice('seen:'.length, 'seen:'.length + 15)) })))
 }
 
 async function eventually(check: () => Promise<boolean>, ms = 10_000): Promise<void> {
@@ -283,6 +285,18 @@ describe('the Worker', () => {
     expect(await deliveries.get('delivery:d-twice')).toBe('1')
   })
 
+  it('remembers a delivery id for a day, so a redelivery after that runs again', async () => {
+    const before = Math.floor(Date.now() / 1000)
+    expect((await deliver('issue_comment', closeComment(), 'd-for-a-day')).status).toBe(202)
+    await eventually(async () => (await githubSaw()).some(s => s.method === 'PATCH'))
+
+    const deliveries = await mf.getKVNamespace('DELIVERIES', 'prow')
+    const key = (await deliveries.list()).keys.find(key => key.name === 'delivery:d-for-a-day')
+    // KV reports expiration in seconds since the epoch; a key written without one has none and never ages out
+    expect(key?.expiration).toBeGreaterThanOrEqual(before + 86_400)
+    expect(key?.expiration).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 86_400)
+  })
+
   it('forgets a pull request delivery whose run fails, so GitHub\'s redelivery runs it again', async () => {
     await failing('patch')
     const payload = closeComment()
@@ -362,6 +376,21 @@ describe('the Worker', () => {
     const labeled = seen.find(s => s.method === 'POST' && s.path.endsWith('/issues/1/labels'))
     expect(labeled?.auth).toBe('token ghs_worker')
     expect(JSON.parse(labeled!.body)).toEqual({ labels: ['needs-kind'] })
+  })
+
+  it('holds the deferred message for the grace period: the resumed run starts no sooner than the period after the deferring one', async () => {
+    const log = await mf.getKVNamespace('LOG', 'github')
+    await log.put('prow.yaml', requireKind.replace('grace_period_duration: 1s', 'grace_period_duration: 3s'))
+
+    expect((await deliver('pull_request', withInstallation(pullReqOpenedEvent), 'd-grace-held')).status).toBe(202)
+    await eventually(async () => (await githubSaw()).some(s => s.method === 'POST' && s.path.endsWith('/issues/1/labels')))
+
+    // the deferring run's config read and the resumed run's label, both stamped by the fake's clock: a message sent
+    // without its delay would resume within the queue's batch timeout, well under the period
+    const seen = await githubSaw()
+    const deferred = seen.find(s => s.path.endsWith('/contents/.github/prow.yaml'))!
+    const labeled = seen.find(s => s.method === 'POST' && s.path.endsWith('/issues/1/labels'))!
+    expect(labeled.at - deferred.at).toBeGreaterThanOrEqual(2_500)
   })
 
   it('a deferred check carries the delivery once, so a payload over half the queue\'s 128 KB limit still defers', async () => {
