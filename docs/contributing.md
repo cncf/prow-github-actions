@@ -66,7 +66,7 @@ label and reminder comment the bot left in the meantime.
 | `npx vitest run __tests__/bundle` | Only the bundle acceptance harness |
 | `npm run test:shuffle` | The whole suite with the tests of every file in a random order (`--sequence.shuffle`; pass `--sequence.seed=<n>` to repeat an order); the `shuffle` job runs it on every pull request; see "Test order" below |
 | `npm run test:mutation` | StrykerJS over the merge-decision code, locally; see "Mutation checks" below |
-| `npm run test:mutation:nightly` | The same set as the `mutation` job runs on the daily schedule (`stryker.nightly.config.mjs`): no incremental file, and a `break` score of 95 |
+| `npm run test:mutation:nightly` | The same set as the `mutation` job runs on the daily schedule (`stryker.nightly.config.mjs`): no incremental file, and a `break` score of 94 |
 | `npm run test:coverage:e2e` | Only the bundle acceptance harness, run against a source-mapped bundle built from `__tests__/bundle/coverageEntry/` into `.coverage-bundle/` so its hits are reported against `src/`, written to `coverage-e2e/` so it never overwrites the unit run's `coverage/` (ncc's map is line-only, so the build also emits tsc's per-file maps into `.coverage-bundle/tsc/` and `coverageEntry/remap.mjs` composes their columns into it; without that, inner lines of a multi-line expression that tsc flattens onto one JS line report 0 hits). This is end-to-end-only coverage and is deliberately reported separately from `test:coverage`: the unit run already reaches every line, so a union would say nothing about what the bundle exercises, and the two runs' statement and branch maps come from different transforms (vite vs. tsc+webpack) and do not combine. Fails below 99 % lines / 99 % branches / 99 % functions / 99 % statements (`vitest.e2e-coverage.config.mjs`), a floor set just under what `main` reaches so a scenario that stops driving a `src/` path is caught |
 
 Unit tests under `__tests__/` import `src/` directly and mock the GitHub API
@@ -184,9 +184,11 @@ gate: the suite takes minutes per mutant set, so the local run sets no `break`
 threshold and nothing fails a push. The `mutation` job of `test.yml` runs the
 same set on the daily schedule (and on `workflow_dispatch`) through
 `stryker.nightly.config.mjs`, together with `src/plugins/tide.ts` and
-`src/utils/mergeQueue.ts` — the code that performs the merge, left out of the
-local default only for its ~620 extra mutants — fails below a score of 95 —
-just under what `main` reaches with its equivalent survivors — and publishes
+`src/utils/mergeQueue.ts` — the code that performs the merge — and
+`src/plugins/approve.ts` — the code that decides the `approved` label the
+merge waits on — left out of the local default only for their ~1150 extra
+mutants — fails below a score of 94 — just under what `main` reaches with its
+equivalent survivors — and publishes
 the per-file tally in the job summary and `reports/mutation/` as an artifact.
 
 ```sh
@@ -233,6 +235,30 @@ by the `calls).toHaveLength(1)` assertions of the two enqueuer-less tests):
 | `tide.ts:537` `inputs.get('merge-method', { required: false })` → `{}` | `required` defaults to false |
 | `tide.ts:554` `numbers.length === 0 && lookup !== undefined` → `lookup` always taken | Every caller that can pass an empty list (`tideOnCheckSuite`) also passes `lookup`; the others pass one number |
 | `mergeQueue.ts:102` `entry.enqueuer.__typename === undefined ? {} : { enqueuerType }` → the `enqueuerType` key always spread | The spread then sets `enqueuerType: undefined`, which `enqueuedByBot` (`=== 'Bot'`) and `toEqual` cannot tell from an absent key |
+
+Reviewed survivors of `approve.ts` (`npm run test:mutation -- --mutate
+src/plugins/approve.ts` at 9aa12b8: 502 killed, 1 timeout, 33 survived, 93.84 %
+on its own; with the 762/31 of the scheduled job at the same commit the nightly
+set scores 95.18 %, hence the `break` of 94):
+
+| Mutant | Why it is left |
+|--------|----------------|
+| `approve.ts:99`, `:100` `comment.body ?? ''` and `body === ''` → a placeholder body / `false`; `:116` `review.body ?? ''`; `:464` `label?.name ?? ''`; `:490` `review?.body ?? ''` | A placeholder carries no `/approve` or `/lgtm` command, no review marker and is not the `approved` label, so `commandKind` returns `undefined` and the marker and label tests fail exactly as they do for the empty string |
+| `approve.ts:138` `'add'` → `''` | Both callers only compare the result with `'cancel'` |
+| `approve.ts:179` `default:` of the `effectiveKind` switch | The `default` arm and the `case 'remove'` arm before it both end in `break` |
+| `approve.ts:206` `settings.require_self_approval && author !== ''` → `true` / `\|\|` / placeholder | An author who may self-approve is already in `approving`, so if they cover a file they are already in `covering`, and if they cover none they appear in no `coverage` entry; an empty or placeholder login matches no approver either way |
+| `approve.ts:230`, `:232` `'ignore'` → `''` | The switch in `computeApproval` has no `''` arm, so it falls to `default` like `'ignore'` |
+| `approve.ts:241` `remaining.size > 0` → `>= 0` | With nothing remaining `coverage` is empty and the `coverage.size === 0` guard breaks before `[0]` is read |
+| `approve.ts:256` `excluded.add(best)` dropped | Every file `best` covers leaves `remaining` in the same iteration, so `best` appears in no later `coverage` map |
+| `approve.ts:335` `approvers: []` of an uncoverable file → a placeholder | `renderNotifier` prints a `path === undefined` entry without reading its `approvers` |
+| `approve.ts:341`, `:344-345` the `byPath` merge arm and its `.sort()` | Files under the same deepest OWNERS file share `set.approvers`, so every file's `coveredFiles` list is the same sorted list and overwriting, merging and re-sorting all produce it |
+| `approve.ts:378`, `:379` `[]` → a placeholder review list | `approvalEvents` skips an entry whose `user` has no login |
+| `approve.ts:383-384` the `log.info` text and its joiners | Log output is not asserted |
+| `approve.ts:398` `present.length > 0` → `true` / `>= 0` | `removeLabels` with an empty list issues no request, so the guard only saves a loop |
+| `approve.ts:414` `body.trim()` → `body` | The notifier `body` starts with text and ends with the marker, so it has nothing to trim |
+| `approve.ts:460`, `:486` `action === undefined` → `false` | `Set.has(undefined)` is false, so the second half of the `\|\|` skips the same payloads |
+| `approve.ts:491` `review?.id` → `review.id` in a debug line | Reached only after `review?.body` included the marker, so `review` is present |
+| `approve.ts:514` `pull_request?.base` → `pull_request.base` | Both callers pass `pull_request?.number`, and `evaluateOnOwnersRepo` throws on `undefined` before this line |
 
 Reviewed survivors of the default set:
 
