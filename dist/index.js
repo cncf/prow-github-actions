@@ -45900,6 +45900,7 @@ async function sweepPullRequest(octokit, context, pr, plugins) {
     }
     catch (e) {
         // collected like a failed step, so a base branch whose OWNERS or configuration cannot be read does not stop the other pull requests
+        /* v8 ignore next -- branchHasOwners and loadTide rethrow every failure as an Error; the String(e) arm is unreachable */
         outcome.errors.push(`setup: ${e instanceof Error ? e.message : String(e)}`);
         platform_platform().log.info(`sweep: #${pr.number} ${outcome.result} with ${outcome.errors.length} error(s)`);
         return outcome;

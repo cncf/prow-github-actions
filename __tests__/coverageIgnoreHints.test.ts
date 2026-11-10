@@ -60,6 +60,8 @@ const armHints = hints.filter(hint => hint.kind === 'next')
 const driversOutsideTheHint: Record<string, string> = {
   // "a binding refused with a non-Error value fails the command with its string form"
   'src/labels/lgtm.ts:66': '__tests__/label/lgtm.test.ts',
+  // "records a base branch setup that rejects with a non-Error value as its string form" — the sweep's per-pull-request setup catch
+  'src/cronJobs/sweep.ts:139': '__tests__/cronJobTest/sweep.test.ts',
 }
 
 /** `__tests__/**\/<name>.test.ts` for the `<name>.test.ts drives it` clause of a hint */
