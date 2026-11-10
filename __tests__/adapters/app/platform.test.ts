@@ -123,6 +123,12 @@ describe('settingsFromEnv', () => {
   it.each(['GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY', 'GITHUB_WEBHOOK_SECRET'])('requires %s', (name) => {
     expect(() => settingsFromEnv({ ...env, [name]: '' })).toThrow(`${name} must be set`)
   })
+
+  it('trims the newlines and spaces a secret file or heredoc leaves around the key', () => {
+    const s = settingsFromEnv({ ...env, GITHUB_APP_PRIVATE_KEY: '\n  -----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\n\n' })
+
+    expect(s.privateKey).toBe('-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----')
+  })
 })
 
 describe('memoryDeliveryStore', () => {
