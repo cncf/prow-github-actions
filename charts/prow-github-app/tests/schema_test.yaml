@@ -46,3 +46,55 @@ tests:
       cronjob.schedul: '0 * * * *'
     asserts:
       - failedTemplate: {}
+  - it: refuses zero replicas
+    set:
+      replicaCount: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty image.repository
+    set:
+      image.repository: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an image.pullPolicy the kubelet does not know
+    set:
+      image.pullPolicy: Sometimes
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a github.apiUrl without an http scheme
+    set:
+      github.apiUrl: ghe.example.com/api/v3
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a prow.mergeMethod GitHub does not offer
+    set:
+      prow.mergeMethod: fast-forward
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a quoted prow.dryRun, which the configmap would pass on as a string
+    set:
+      prow.dryRun: 'false'
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty redis.existingSecretKey
+    set:
+      replicaCount: 2
+      redis.existingSecret: r
+      redis.existingSecretKey: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a cron run with no time to finish
+    set:
+      cronjob.activeDeadlineSeconds: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a negative cronjob history limit
+    set:
+      cronjob.failedJobsHistoryLimit: -1
+    asserts:
+      - failedTemplate: {}
+  - it: refuses service.port 0
+    set:
+      service.port: 0
+    asserts:
+      - failedTemplate: {}
