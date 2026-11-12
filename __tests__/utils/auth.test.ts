@@ -415,6 +415,22 @@ describe('assertAuthorizedByOwnersOrMembership', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('a payload without an issue is authorized against the root OWNERS file, not rejected', async () => {
+    const observeOwners = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
+        utils.mockResponse(200, ownersResponse('approvers:\n- Codertocat\n'), observeOwners),
+      ),
+    )
+    const { issue: _issue, ...withoutIssue } = issueCommentEvent
+
+    await expect(
+      assertAuthorizedByOwnersOrMembership(octokit, new utils.MockContext(withoutIssue), 'approvers', 'Codertocat'),
+    ).resolves.toBeUndefined()
+    await expect(observeOwners.called()).resolves.toBe('called')
+  })
+
   it('falls back to membership when there is no OWNERS file', async () => {
     server.use(
       http.get(
