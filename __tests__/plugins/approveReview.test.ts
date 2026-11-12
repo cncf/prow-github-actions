@@ -547,6 +547,25 @@ describe('tokenIdentity', () => {
 
     await expect(tokenIdentity(octokit)).rejects.toThrow('could not identify the token for approve.github_review: boom')
   })
+
+  it('a null rejection is reported the same way, not as a TypeError from reading its status', async () => {
+    const octokit = { users: { getAuthenticated: vi.fn().mockRejectedValue(null) } } as unknown as Parameters<typeof tokenIdentity>[0]
+
+    await expect(tokenIdentity(octokit)).rejects.toThrow('could not identify the token for approve.github_review: null')
+  })
+})
+
+describe('reviewBody', () => {
+  it('names the approvers without a mention, explains the mirror on its own paragraph and ends with the marker', () => {
+    const body = reviewBody({ approvers: new Set(['bob', 'carol']) } as ApprovalState)
+
+    expect(body.split('\n')).toEqual([
+      'Approved via /approve by bob, carol (OWNERS).',
+      '',
+      'This review mirrors the `approved` label: it is submitted while the label is set and dismissed when the label goes away. Use `/approve` and `/approve cancel` to change it.',
+      reviewMarker,
+    ])
+  })
 })
 
 describe('tokenLogin', () => {
@@ -575,6 +594,19 @@ describe('syncApprovalReview', () => {
     }
 
     await expect(syncApprovalReview(octokit, prEvent('opened'), input)).rejects.toThrow('could not submit the approval review: boom')
+  })
+
+  it('a null rejection of the review is reported the same way, not as a TypeError from reading its status', async () => {
+    const octokit = { pulls: { createReview: vi.fn().mockRejectedValue(null) } } as unknown as Parameters<typeof syncApprovalReview>[0]
+    const input = {
+      owners: { number: 1, open: true, headSha: head, author: 'someone' } as PullRequestOwners,
+      state: { approved: true, approvers: new Set(['bob']) } as ApprovalState,
+      reviews: [],
+      identity: {},
+      reason: () => '',
+    }
+
+    await expect(syncApprovalReview(octokit, prEvent('opened'), input)).rejects.toThrow('could not submit the approval review: null')
   })
 })
 
