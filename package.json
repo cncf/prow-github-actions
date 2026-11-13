@@ -50,7 +50,7 @@
     "@octokit/request": "^10.0.16",
     "@octokit/rest": "^22.0.1",
     "@octokit/webhooks-methods": "^6.0.0",
-    "hono": "^4.13.14",
+    "hono": "^4.13.18",
     "js-yaml": "^5.5.0",
     "redis": "^6.3.1"
   },
