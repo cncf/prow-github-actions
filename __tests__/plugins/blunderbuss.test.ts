@@ -386,12 +386,20 @@ describe('blunderbuss handler', () => {
     await expect(observePull.notCalled()).resolves.toBe('not called')
   })
 
-  it('fails when the review request is refused', async () => {
+  it('fails when the review request is refused, without retrying each reviewer alone', async () => {
     serveConfig()
     servePr(owners, ['sdk/x.go'])
-    observeRequestReviewers(500)
+    const calls: string[][] = []
+    server.use(http.post(`${repo}/pulls/1/requested_reviewers`, async ({ request }) => {
+      calls.push((await request.json() as { reviewers: string[] }).reviewers)
+      return new Response(JSON.stringify({ message: 'boom' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }))
+    const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
 
-    await expect(blunderbuss(prEvent('opened'))).rejects.toThrow(/could not request reviewers: .*boom/)
+    await expect(blunderbuss(prEvent('opened'), first)).rejects.toThrow(/could not request reviewers: .*boom/)
+    // only a 422 means one login spoiled the batch; any other status is reported as is
+    expect(calls).toEqual([['alice', 'bob']])
+    expect(warning).not.toHaveBeenCalled()
   })
 
   it('when GitHub refuses the batch with a 422, requests each reviewer alone and keeps the ones it accepts', async () => {

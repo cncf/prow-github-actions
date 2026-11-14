@@ -73,7 +73,7 @@ interface Writes {
   deleteComment: utils.ObserveRequest
 }
 
-function serveIssue(labels: string[], comments: { id: number, body: string, user: { login: string, type: string } }[] = []): Writes {
+function serveIssue(labels: string[], comments: { id: number, body: string, user: { login: string, type: string } | null }[] = []): Writes {
   const writes: Writes = {
     addLabels: new utils.ObserveRequest(),
     removeLabel: new utils.ObserveRequest(),
@@ -116,6 +116,8 @@ const botComment = { id: 11, body: `Please add a kind label.\n\n${marker}`, user
 const humanComment = { id: 12, body: `I pasted the marker by hand ${marker}`, user: { login: 'Codertocat', type: 'User' } }
 // another GitHub App's bot: `type: 'Bot'` without the github-actions login
 const appBotComment = { id: 13, body: `Please add a kind label.\n\n${marker}`, user: { login: 'other-app[bot]', type: 'Bot' } }
+// a comment whose author deleted their account: GitHub answers `user: null`
+const ghostComment = { id: 14, body: `Please add a kind label.\n\n${marker}`, user: null }
 
 describe('evaluate', () => {
   it.each([
@@ -264,9 +266,9 @@ describe('requireMatchingLabel handler', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('deletes the marker comment of another app bot but not the human copy of the marker', async () => {
+  it('deletes the marker comment of another app bot but not the human or authorless copies of the marker', async () => {
     serveRules([kindRule])
-    serveIssue(['kind/bug', 'needs-kind'], [humanComment, appBotComment])
+    serveIssue(['kind/bug', 'needs-kind'], [humanComment, appBotComment, ghostComment])
     const deleted: string[] = []
     server.use(http.delete(`${repo}/issues/comments/:id`, ({ params }) => {
       deleted.push(String(params.id))
