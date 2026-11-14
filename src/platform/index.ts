@@ -56,7 +56,9 @@ export function setPlatform(next: Platform): void {
 }
 
 export function platform(): Platform {
+  /* v8 ignore next -- the process-wide scope answers with `current` itself, so the `?? current` fallback is unreachable from dist/index.js; platformGuards.test.ts drives it */
   const found = scope.get() ?? current
+  /* v8 ignore if -- main.ts installs the platform before anything dispatches, so the guard is unreachable from dist/index.js; platformGuards.test.ts drives it */
   if (!found) {
     throw new Error('no platform installed: the entry point must call setPlatform() or runWithPlatform() before dispatching an event')
   }

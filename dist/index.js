@@ -37488,7 +37488,9 @@ function setPlatform(next) {
     current = next;
 }
 function platform_platform() {
+    /* v8 ignore next -- the process-wide scope answers with `current` itself, so the `?? current` fallback is unreachable from dist/index.js; platformGuards.test.ts drives it */
     const found = scope.get() ?? current;
+    /* v8 ignore if -- main.ts installs the platform before anything dispatches, so the guard is unreachable from dist/index.js; platformGuards.test.ts drives it */
     if (!found) {
         throw new Error('no platform installed: the entry point must call setPlatform() or runWithPlatform() before dispatching an event');
     }
@@ -45687,6 +45689,7 @@ async function checkRequiredLabels(context = platform_platform().context()) {
  *
  * @param context - the github context of the deferred event
  */
+/* v8 ignore next -- only a platform whose defer answers 'deferred' resumes, and the action's sleeps in place, so this is unreachable from dist/index.js; requireMatchingLabel.test.ts drives it */
 async function resumeRequiredLabels(context) {
     await enforce(context, undefined, false);
 }
@@ -45719,6 +45722,7 @@ async function enforceRequiredLabels(octokit, context, target, options = {}) {
     const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))));
     if (withGracePeriod && graceMs > 0) {
         platform_platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`);
+        /* v8 ignore if -- the action's defer sleeps in place and never answers 'deferred', so this arm is unreachable from dist/index.js; requireMatchingLabel.test.ts drives it */
         if (await platform_platform().defer(graceMs, { kind: 'require-matching-label', context }) === 'deferred') {
             platform_platform().log.debug('require-matching-label: the check resumes after the grace period');
             return;
