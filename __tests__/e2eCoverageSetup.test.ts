@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+// the configs are .mjs files outside tsconfig's `include`, so they import as `any`
+// @ts-expect-error TS7016
 import unit from '../vitest.config.mjs'
+// @ts-expect-error TS7016
 import e2e from '../vitest.e2e-coverage.config.mjs'
 
 // `npm run test:coverage:e2e` reports what the bundle exercises, remapped onto
