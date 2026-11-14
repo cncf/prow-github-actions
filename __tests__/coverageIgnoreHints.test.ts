@@ -22,7 +22,7 @@ const testsDir = path.join(root, '__tests__')
 interface Hint {
   file: string
   line: number
-  kind: 'next' | 'start' | 'stop'
+  kind: 'next' | 'if' | 'else' | 'start' | 'stop'
   reason: string
 }
 
@@ -37,7 +37,7 @@ const sourceFiles = listFiles(srcDir, '.ts')
 const testFiles = listFiles(testsDir, '.ts')
 const testTexts = new Map(testFiles.map(file => [file, readFileSync(path.join(root, file), 'utf8')]))
 
-const hintPattern = /\/\*\s*v8 ignore (next|start|stop)\b([^*]*)\*\//g
+const hintPattern = /\/\*\s*v8 ignore (next|if|else|start|stop)\b([^*]*)\*\//g
 
 // Stryker's sandbox prepends this line to every file it copies (`disableTypeChecks`), which would
 // shift each hint down one line and miss every `file:line` key below whenever a probe mutates a
@@ -68,7 +68,8 @@ function hintsIn(file: string): Hint[] {
 }
 
 const hints = sourceFiles.flatMap(hintsIn)
-const armHints = hints.filter(hint => hint.kind === 'next')
+// `if` and `else` hide one arm of an if statement and leave its condition counted; they are arm-level like `next`
+const armHints = hints.filter(hint => hint.kind === 'next' || hint.kind === 'if' || hint.kind === 'else')
 
 /**
  * Arm-level hints whose driving test is not named in the hint text. The comment
@@ -95,10 +96,15 @@ function moduleSpecifier(file: string): string {
   return file.replace(/\.ts$/, '')
 }
 
+/** `src/platform/index.ts` is also imported as `src/platform` */
+function moduleSpecifiers(file: string): string[] {
+  const specifier = moduleSpecifier(file)
+  return specifier.endsWith('/index') ? [specifier, specifier.replace(/\/index$/, '')] : [specifier]
+}
+
 function importsModule(testFile: string, sourceFile: string): boolean {
   const text = testTexts.get(testFile) ?? ''
-  const specifier = moduleSpecifier(sourceFile)
-  return new RegExp(`from '(?:\\.\\./)+${specifier}'`).test(text)
+  return moduleSpecifiers(sourceFile).some(specifier => new RegExp(`from '(?:\\.\\./)+${specifier}'`).test(text))
 }
 
 /** the names exported between a `start` hint and its `stop` */
@@ -111,7 +117,21 @@ describe('v8 ignore hints in src/', () => {
   it('exist where this guard expects them, so a hint-free tree does not pass vacuously', () => {
     expect(hints.length).toBeGreaterThan(0)
     expect(armHints.length).toBeGreaterThan(0)
+    expect(hints.some(hint => hint.kind === 'next')).toBe(true)
+    expect(hints.some(hint => hint.kind === 'if')).toBe(true)
     expect(hints.some(hint => hint.kind === 'start')).toBe(true)
+  })
+
+  it('reads an `if` hint as arm-level, so one that names no test is reported', () => {
+    const text = `/* v8 ignore if -- guard unreachable from dist/index.js */\nif (x) {}\n`
+    const [hint] = hintsInText('src/example.ts', text)
+    expect(hint).toMatchObject({ kind: 'if', line: 1, reason: '-- guard unreachable from dist/index.js' })
+    expect(citedTest(hint)).toBeUndefined()
+  })
+
+  it('accepts the directory specifier for a module named index.ts', () => {
+    expect(moduleSpecifiers('src/platform/index.ts')).toEqual(['src/platform/index', 'src/platform'])
+    expect(moduleSpecifiers('src/utils/config.ts')).toEqual(['src/utils/config'])
   })
 
   // `npm run test:mutation -- --mutate src/adapters/actions.ts` runs this file against the sandbox

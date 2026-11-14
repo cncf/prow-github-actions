@@ -122,6 +122,7 @@ export async function checkRequiredLabels(context: Context = platform().context(
  *
  * @param context - the github context of the deferred event
  */
+/* v8 ignore next -- only a platform whose defer answers 'deferred' resumes, and the action's sleeps in place, so this is unreachable from dist/index.js; requireMatchingLabel.test.ts drives it */
 export async function resumeRequiredLabels(context: Context): Promise<void> {
   await enforce(context, undefined, false)
 }
@@ -159,6 +160,7 @@ export async function enforceRequiredLabels(octokit: Octokit, context: Context, 
   const graceMs = Math.min(maxGracePeriodMs, Math.max(0, ...rules.map(rule => parseDuration(rule.grace_period_duration))))
   if (withGracePeriod && graceMs > 0) {
     platform().log.debug(`require-matching-label: waiting ${graceMs}ms for other labelers`)
+    /* v8 ignore if -- the action's defer sleeps in place and never answers 'deferred', so this arm is unreachable from dist/index.js; requireMatchingLabel.test.ts drives it */
     if (await platform().defer(graceMs, { kind: 'require-matching-label', context }) === 'deferred') {
       platform().log.debug('require-matching-label: the check resumes after the grace period')
       return
