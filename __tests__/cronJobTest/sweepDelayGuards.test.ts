@@ -58,9 +58,10 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-// Pins three guards of `requestReviewersIfDue` (src/cronJobs/sweep.ts) that
+// Pins four guards of `requestReviewersIfDue` (src/cronJobs/sweep.ts) that
 // the other delayed-blunderbuss suites reach but never distinguish: the
-// `ready_for_review` filter on the timeline, the draft skip before any
+// `ready_for_review` filter on the timeline, a timeline without one leaving
+// the creation time as the review clock, the draft skip before any
 // timeline read, and `explicit: false` carrying `ignore_authors` into the
 // delayed path.
 describe('sweep with blunderbuss.delay: guards of requestReviewersIfDue', () => {
@@ -128,6 +129,18 @@ describe('sweep with blunderbuss.delay: guards of requestReviewersIfDue', () => 
     await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
     expect(timelineReads).toEqual([1])
     expect(requested).toEqual([1])
+  })
+
+  it('keeps the creation time as the review clock when the timeline has no ready_for_review', async () => {
+    // opened long before the due window and touched inside it; with nothing on the
+    // timeline to move the clock, the pull request was due an hour after it opened
+    // and is not due again now
+    servePulls([pull({ number: 1, createdMinutesAgo: 5 * 60, updatedMinutesAgo: 70 })])
+    timeline[1] = [{ event: 'labeled', created_at: ago(10) }]
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
+    expect(timelineReads).toEqual([1])
+    expect(requested).toEqual([])
   })
 
   it('leaves a draft alone before reading its timeline when ignore_drafts is on', async () => {
