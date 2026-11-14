@@ -46,3 +46,101 @@ tests:
       cronjob.schedul: '0 * * * *'
     asserts:
       - failedTemplate: {}
+  - it: refuses an unknown pull policy
+    set:
+      image.pullPolicy: Sometimes
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an unknown merge method
+    set:
+      prow.mergeMethod: fastforward
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a non-http api url
+    set:
+      github.apiUrl: ftp://example.com
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty redis secret key
+    set:
+      redis.existingSecretKey: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a zero active deadline
+    set:
+      cronjob.activeDeadlineSeconds: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a negative successful history limit
+    set:
+      cronjob.successfulJobsHistoryLimit: -1
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a negative failed history limit
+    set:
+      cronjob.failedJobsHistoryLimit: -1
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a zero service port
+    set:
+      service.port: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses zero replicas
+    set:
+      replicaCount: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty image repository
+    set:
+      image.repository: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled image value
+    set:
+      image.tga: v1
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty existing secret without app credentials
+    set:
+      github.existingSecret: ''
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled github value
+    set:
+      github.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled ingress value
+    set:
+      ingress.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled podDisruptionBudget value
+    set:
+      podDisruptionBudget.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled prow value
+    set:
+      prow.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled redis value
+    set:
+      redis.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled service value
+    set:
+      service.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled serviceAccount value
+    set:
+      serviceAccount.tpyo: x
+    asserts:
+      - failedTemplate: {}
