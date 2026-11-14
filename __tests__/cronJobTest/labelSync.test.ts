@@ -253,6 +253,20 @@ describe('label-sync job', () => {
     expect(setFailed).toHaveBeenCalledWith(expect.stringContaining('1 label(s) could not be synced'))
   })
 
+  it('names every refused label with its reason, comma-separated, when several writes fail', async () => {
+    serveConfig()
+    recordWrites([], name => (name === 'kind/bug' || name === 'lgtm' ? 422 : 201))
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+    await expect(handleCronJobs(dispatchContext())).resolves.toBeUndefined()
+
+    expect(debug).toHaveBeenCalledWith('running label-sync job')
+    expect(setFailed).toHaveBeenCalledTimes(1)
+    expect(setFailed).toHaveBeenCalledWith(expect.stringMatching(/2 label\(s\) could not be synced: kind\/bug \(Validation Failed[^)]*\), lgtm \(Validation Failed[^)]*\)$/))
+  })
+
   it('dry-run logs what would change and writes nothing', async () => {
     process.env['INPUT_DRY-RUN'] = 'true'
     serveConfig()
@@ -310,6 +324,21 @@ describe('label-sync job', () => {
     await labelSync(dispatchContext())
 
     expect(debug).toHaveBeenCalledWith(expect.stringContaining('labels from the built-in defaults only'))
+  })
+
+  it('names each configuration source the labels came from, comma-separated', async () => {
+    serveConfig()
+    // registered after serveConfig so this handler, not its 404, answers the org probe
+    const orgFile = structuredClone(labelFileContents)
+    orgFile.content = Buffer.from('labels:\n  labels:\n    - from-org\n').toString('base64')
+    server.use(http.get(utils.contentsUrl('Codertocat/.github:prow.yaml'), utils.mockResponse(200, orgFile)))
+    recordWrites([])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+    vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    await labelSync(dispatchContext())
+
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('labels from Codertocat/.github:prow.yaml, Codertocat/Hello-World:.github/prow.yaml'))
   })
 
   it('records a write refused with a non-Error value by its string form', async () => {
