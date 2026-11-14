@@ -13,7 +13,7 @@ import base from './vitest.config.mjs'
 // so a union would say nothing about what the bundle exercises, and the two runs'
 // statement and branch maps come from different transforms (vite vs. tsc+webpack)
 // and do not combine.
-export default mergeConfig(base, defineConfig({
+const config = mergeConfig(base, defineConfig({
   plugins: [
     {
       // The bundle only ever runs in a child process; vitest never imports it. But
@@ -48,7 +48,11 @@ export default mergeConfig(base, defineConfig({
       autoAttachSubprocess: true,
       excludeAfterRemap: true,
       // Regression floor for the bundle-only run, set just under what main reaches
-      // (100 / 99.88 / 100 / 100 once blunderbussDelayFailure.test.ts drives the
+      // (99.84 / 99.66 / 99.82 / 99.85 at 9aa12b8 once the worker stops loading
+      // src/ through the setup files, see the setupFiles note below — 572/573
+      // functions, the miss being resumeRequiredLabels, which only the App
+      // adapter's deferred path calls;
+      // 100 / 99.88 / 100 / 100 once blunderbussDelayFailure.test.ts drives the
       // delayed pass's catch, 1686/1688 branches, the two misses being the
       // negative-count await artifacts described in docs/contributing.md;
       // 100 / 99.46 / 100 / 100 at e3119ad; 99.95 / 97.96 / 100 / 99.96 at 1062ce7;
@@ -66,3 +70,18 @@ export default mergeConfig(base, defineConfig({
     },
   },
 }))
+
+// mergeConfig concatenates `setupFiles`, so the base list is replaced rather than
+// extended. `__tests__/setup.ts` imports src/adapters/actions.ts (and through it
+// src/platform/index.ts and src/utils/sleep.ts) into every vitest worker; in this
+// run the worker's own V8 hits on those vite-transformed modules were merged with
+// the bundle's remapped hits, and because the two transforms place a function's
+// declaration on different columns istanbul kept both copies. The worker never
+// calls platform(), actionsContext() or sleep(), so each was reported as an
+// uncovered function (587/591 at 9aa12b8) and platform/index.ts:59-60 carried
+// four phantom branch arms. Only the toThrow guard is installed here: the bundle
+// runs in a child process, so neither the @actions/core mock nor the platform the
+// unit suite installs is needed, and the guard imports nothing from src/.
+config.test.setupFiles = ['__tests__/setupToThrowGuard.ts']
+
+export default config

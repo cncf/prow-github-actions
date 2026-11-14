@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-// __tests__/setup.ts: a thrown nullish value must not satisfy toThrow, whatever
+// __tests__/setupToThrowGuard.ts: a thrown nullish value must not satisfy toThrow, whatever
 // the expected message, because chai skips the message comparison for it
 
 /* eslint-disable prefer-promise-reject-errors -- the nullish rejections are the subject */
