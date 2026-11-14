@@ -21,7 +21,9 @@ import { repo } from './ownersFixtures'
 // per-team group cache key, parseGroup's leading anchor, decode's
 // missing-content error, the repository-less payload fallback of
 // defaultBranch, isNotFound on a string or null rejection, the path-less tree
-// entry guard and the per-repository OWNERS-presence cache key.
+// entry guard, the per-repository OWNERS-presence cache key, the null-document
+// guard of parseOwners, the filters note being conditional and the truncated-tree
+// debug line of loadOwnersTree.
 
 const server = setupServer()
 beforeAll(() => server.listen(utils.failOnUnhandledRequest))
@@ -37,6 +39,18 @@ function treeResponse(entries: Array<{ path?: string, type: string, sha: string 
 describe('parseOwners', () => {
   it('treats a bare options key (yaml null) as no options', () => {
     expect(parseOwners('OWNERS', 'options:\napprovers:\n- alice\n')).toMatchObject({ approvers: ['alice'], noParentOwners: false })
+  })
+
+  // `typeof null === 'object'`: without the null guard the `'filters' in doc`
+  // probe throws a TypeError on a document that is just `null` or `~`
+  it.each(['null\n', '~\n', '---\n'])('treats a yaml null document as empty: %j', (contents) => {
+    expect(parseOwners('OWNERS', contents)).toMatchObject({ approvers: [], reviewers: [], labels: [], noParentOwners: false })
+  })
+
+  it('does not note ignored filters for a file without them', () => {
+    parseOwners('sdk/OWNERS', 'approvers:\n- alice\n')
+
+    expect(core.debug).not.toHaveBeenCalledWith(expect.stringContaining('filters are not supported'))
   })
 })
 
@@ -87,6 +101,16 @@ describe('loadOwnersTree', () => {
   beforeEach(() => {
     utils.setupActionsEnv()
     utils.newRun()
+  })
+
+  it('says which tree was truncated when it falls back to probing', async () => {
+    server.use(
+      http.get(`${repo}/git/trees/base-sha`, utils.mockResponse(200, treeResponse([], true))),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404, { message: 'Not Found' })),
+    )
+
+    await expect(loadOwnersTree(octokit, context, 'base-sha', ['README.md'])).resolves.toEqual({ owners: new Map(), hasOwners: false })
+    expect(core.debug).toHaveBeenCalledWith('tree at base-sha is truncated; probing for OWNERS files')
   })
 
   it('rejects a blob that names an encoding but carries no content as an invalid OWNERS file', async () => {
