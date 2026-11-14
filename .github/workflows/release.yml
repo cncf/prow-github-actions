@@ -109,7 +109,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       # the multi-arch index digest, not a per-platform one
       - name: Sign image
@@ -159,7 +159,7 @@ jobs:
           echo "digest=$(echo "$out" | grep -oE 'sha256:[a-f0-9]{64}')" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Sign chart
         run: cosign sign --yes "ghcr.io/${{ github.repository }}/charts/prow-github-app@${{ steps.push.outputs.digest }}"
@@ -207,7 +207,7 @@ jobs:
             --output "prow-github-actions-${VERSION}.spdx.json"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - name: Sign SBOM
         run: |
