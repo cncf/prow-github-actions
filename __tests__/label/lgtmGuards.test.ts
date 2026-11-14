@@ -74,4 +74,27 @@ describe('/lgtm guards', () => {
     expect(debug).toHaveBeenCalledWith('could not find lgtm to remove')
     await expect(observeRemove.notCalled()).resolves.toBe('not called')
   })
+
+  // the webhook schema allows `issue.user: null` (a deleted account); a reviewer's /lgtm on
+  // such an issue is nobody's own and is applied, not refused or failed on reading the author
+  it('a /lgtm by a reviewer on an issue whose author account is gone is applied', async () => {
+    const payload = structuredClone(issueCommentEvent)
+    payload.comment.body = '/lgtm'
+    Object.assign(payload.issue, { user: null })
+    const observeLabel = new utils.ObserveRequest()
+    const observeComment = new utils.ObserveRequest()
+    server.use(
+      http.get(`${utils.api}/orgs/Codertocat/members/Codertocat`, utils.mockResponse(204)),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`, utils.mockResponse(404)),
+      http.get(`${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`, utils.mockResponse(404)),
+      utils.repoHasLabels(['lgtm']),
+      http.post(`${issue}/labels`, utils.mockResponse(200, null, observeLabel)),
+      http.post(`${issue}/comments`, utils.mockResponse(200, null, observeComment)),
+    )
+
+    await expect(lgtm(new utils.MockContext(payload))).resolves.toBeUndefined()
+
+    expect(await observeLabel.body()).toEqual({ labels: ['lgtm'] })
+    await expect(observeComment.notCalled()).resolves.toBe('not called')
+  })
 })
