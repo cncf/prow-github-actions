@@ -138,7 +138,26 @@ describe('label-sync job', () => {
     expect(writes.find(w => (w.body as { name: string }).name === 'kind/cleanup')!.body).toEqual({ name: 'kind/cleanup' })
     expect(writes.find(w => (w.body as { name: string }).name === 'lgtm')!.body).toMatchObject({ name: 'lgtm', color: '15dd18' })
     expect(result).toEqual({ created: complete.map(l => l.name), updated: [], unchanged: 0, failures: [] })
-    expect(info).toHaveBeenCalledWith(expect.stringContaining(`created ${complete.length}`))
+    expect(info).toHaveBeenCalledWith(
+      `label-sync: created ${complete.length} [${complete.map(l => l.name).join(', ')}], updated 0 [], unchanged 0, failed 0`,
+    )
+  })
+
+  it('names every updated label, comma-separated, in the summary line', async () => {
+    serveConfig()
+    const writes = recordWrites(withChanges(
+      { name: 'kind/bug', color: 'd73a4a', description: null },
+      { name: 'lgtm', color: '000000', description: complete.find(l => l.name === 'lgtm')!.description },
+    ))
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    const result = await labelSync(dispatchContext())
+
+    expect(writes.map(w => w.name)).toEqual(['kind/bug', 'lgtm'])
+    expect(result.updated).toEqual(['kind/bug', 'lgtm'])
+    expect(info).toHaveBeenCalledWith(
+      `label-sync: created 0 [], updated 2 [kind/bug, lgtm], unchanged ${complete.length - 2}, failed 0`,
+    )
   })
 
   it('updates a label whose color differs and sends only that field', async () => {
@@ -282,6 +301,26 @@ describe('label-sync job', () => {
     // the fixture's lgtm carries neither the configured color nor any description, so both fields drift
     expect(lines).toEqual([
       `label-sync (dry-run): would create 1 [kind/bug], would update 1 [lgtm (color, description)], unchanged ${complete.length - 2}`,
+    ])
+  })
+
+  it('dry-run lists every label it would create or update, comma-separated', async () => {
+    process.env['INPUT_DRY-RUN'] = 'true'
+    serveConfig()
+    const writes = recordWrites(
+      withChanges(
+        { name: 'lgtm', color: '000000' },
+        { name: 'ok-to-test', color: '15dd18', description: 'an older wording' },
+      ).filter(l => l.name !== 'kind/bug' && l.name !== 'kind/cleanup'),
+    )
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+
+    const result = await labelSync(dispatchContext())
+
+    expect(writes).toEqual([])
+    expect(result).toEqual({ created: [], updated: [], unchanged: complete.length - 4, failures: [] })
+    expect(info.mock.calls.map(([line]) => String(line))).toEqual([
+      `label-sync (dry-run): would create 2 [kind/bug, kind/cleanup], would update 2 [lgtm (color, description), ok-to-test (description)], unchanged ${complete.length - 4}`,
     ])
   })
 

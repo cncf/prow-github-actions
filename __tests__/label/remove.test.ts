@@ -106,7 +106,9 @@ describe('remove', () => {
 
     const spy = vi.spyOn(core, 'setFailed')
     await handleIssueComment(commentContext)
-    expect(spy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining('commenter is not authorized to remove a label. Must be repo collaborator'),
+    )
   })
 
   it('fails when none of the requested labels are on the issue', async () => {
@@ -134,6 +136,34 @@ describe('remove', () => {
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).toHaveBeenCalledWith(
       expect.stringContaining('remove: none of not-present are on the issue'),
+    )
+  })
+
+  it('lists every requested label, comma-separated, when none of several are on the issue', async () => {
+    issueCommentEvent.comment.body = '/remove not-present also-missing'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/:name`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+    expect(setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('remove: none of not-present, also-missing are on the issue'),
     )
   })
 
