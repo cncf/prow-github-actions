@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream'
 import { generateKeyPairSync } from 'node:crypto'
 import path from 'node:path'
 import { sign } from '@octokit/webhooks-methods'
@@ -95,10 +96,40 @@ export default {
   },
 }`
 
-function startWorker(): Miniflare {
+// what the Worker wrote to the runtime's stdout, one entry per `console.info` line: Workers Logs is the only place
+// a deployed Worker's diagnostics go, and this is the only way the tests get to see them
+class RuntimeLog {
+  private chunks = ''
+  capture = (stdout: Readable): void => {
+    stdout.setEncoding('utf8')
+    stdout.on('data', (chunk: string) => {
+      this.chunks += chunk
+    })
+  }
+
+  lines(): string[] {
+    return this.chunks.split('\n').filter(line => line !== '')
+  }
+
+  clear(): void {
+    this.chunks = ''
+  }
+}
+
+function startWorker(runtime?: RuntimeLog): Miniflare {
   return new Miniflare({
     // lets a request to /cdn-cgi/handler/scheduled run the Worker's scheduled() handler
     unsafeTriggerHandlers: true,
+    // when given, keep the isolate's stdout for the tests instead of printing it; stderr (workerd's own request
+    // log) keeps the default
+    ...(runtime === undefined
+      ? {}
+      : {
+          handleRuntimeStdio: (stdout: Readable, stderr: Readable) => {
+            runtime.capture(stdout)
+            stderr.pipe(process.stderr)
+          },
+        }),
     workers: [
       {
         name: 'prow',
@@ -209,13 +240,15 @@ describe('the Worker in a fresh isolate', () => {
 
 describe('the Worker', () => {
   let mf: Miniflare
+  const runtime = new RuntimeLog()
 
   beforeAll(async () => {
-    mf = startWorker()
+    mf = startWorker(runtime)
     await mf.ready
   }, 60_000)
 
   afterEach(async () => {
+    runtime.clear()
     const log = await mf.getKVNamespace('LOG', 'github')
     for (const key of [...(await log.list({ prefix: 'seen:' })).keys.map(key => key.name), 'prow.yaml', 'fail', 'slow']) {
       await log.delete(key)
@@ -353,6 +386,19 @@ describe('the Worker', () => {
     await settle()
     expect(await listed()).toHaveLength(2)
     expect((await githubSaw()).some(s => s.path === '/api/v3/app/installations')).toBe(false)
+  })
+
+  it('a queue message whose run throws logs one error line per attempt, the only diagnostic Workers Logs will show', async () => {
+    await failing('repositories')
+
+    const queue = await mf.getQueueProducer<QueueMessage>('PROW_QUEUE', 'prow')
+    await queue.send({ kind: 'schedule', installationId: 7 })
+
+    await eventually(async () => (await githubSaw()).filter(s => s.path === '/api/v3/installation/repositories').length >= 2)
+    await settle()
+    // the fake answers the listing with GitHub's `{ "message": "Server Error" }`, which is what the consumer logs
+    const errors = runtime.lines().map(line => JSON.parse(line) as Record<string, unknown>).filter(line => line.level === 'error')
+    expect(errors).toEqual([{ level: 'error', message: 'Server Error' }, { level: 'error', message: 'Server Error' }])
   })
 
   it('a grace period defers require-matching-label through the queue, and the delayed message resumes it to the label', async () => {
