@@ -521,6 +521,29 @@ describe('sweep on a repository with OWNERS files', () => {
     await expect(sweep(context)).rejects.toThrow(/sweep: 1 pull request\(s\) failed: #1 \(owners-label: could not add labels/)
     await expect(merge.called()).resolves.toBe('called')
   })
+
+  it('lists every failing step of a pull request in order, and every failing pull request', async () => {
+    serveOwners(['sdk/x.go'])
+    servePulls([
+      { number: 1, created: ago(3 * hour), labels: ['lgtm', 'approved'], user: 'alice' },
+      { number: 2, created: ago(3 * hour), labels: ['lgtm', 'approved', 'area/sdk'], user: 'alice' },
+    ])
+    server.use(
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }, { name: 'approved' }] })),
+      http.get(`${repo}/issues/2`, utils.mockResponse(200, { labels: [{ name: 'lgtm' }, { name: 'approved' }, { name: 'area/sdk' }] })),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(500, { message: 'boom' })),
+      http.get(`${repo}/pulls/:number/reviews`, utils.mockResponse(200, [])),
+      http.put(`${repo}/pulls/:number/merge`, utils.mockResponse(405, { message: 'Pull Request is not mergeable' })),
+    )
+    vi.spyOn(core, 'error').mockImplementation(() => {})
+
+    const failure = await sweep(context).then(() => undefined, (e: Error) => e.message)
+
+    // the pull requests run concurrently, so their order in the list is not fixed; the steps of one run in sequence
+    expect(failure).toMatch(/^sweep: 2 pull request\(s\) failed: #\d \(.+\), #\d \(.+\)$/)
+    expect(failure).toContain('#1 (owners-label: could not add labels: HttpError: boom; tide: Pull Request is not mergeable)')
+    expect(failure).toContain('#2 (tide: Pull Request is not mergeable)')
+  })
 })
 
 describe('sweep with blunderbuss.delay', () => {
