@@ -185,6 +185,18 @@ describe('removeLabels', () => {
     await expect(removeLabels(octokit, context, 1, ['gone', 'kind/bug', 'still-there'])).resolves.toBeUndefined()
 
     expect(deleted).toEqual(['gone', 'kind/bug', 'still-there'])
+    expect(core.debug).toHaveBeenCalledWith(expect.stringMatching(/^label gone was already absent: /))
+  })
+
+  // isNotFound asks `'status' in error`, which throws a TypeError on a primitive or null; the guard in
+  // front of it must keep such a rejection on the "could not remove" path instead of replacing it
+  it.each([
+    ['a plain string', 'socket hang up', 'could not remove label kind/bug: socket hang up'],
+    ['null', null, 'could not remove label kind/bug: null'],
+  ])('reports a rejection that is not an object as a removal failure: %s', async (_, rejection, message) => {
+    vi.spyOn(octokit.issues, 'removeLabel').mockRejectedValueOnce(rejection)
+
+    await expect(removeLabels(octokit, context, 1, ['kind/bug'])).rejects.toThrow(message)
   })
 
   it('removes every label at once and names the first failure that is not a 404, in the given order', async () => {
