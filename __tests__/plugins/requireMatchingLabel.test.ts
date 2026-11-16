@@ -471,6 +471,21 @@ describe('requireMatchingLabel handler', () => {
     expect(await writes.addLabels.body()).toEqual({ labels: ['needs-area'] })
   })
 
+  it('reports every failing rule, joined with a semicolon, after trying each of them', async () => {
+    serveRules([kindRule, { regexp: '^area/', missing_label: 'needs-area', issues: true }])
+    const writes = serveIssue(['kind/bug', 'needs-kind'], [botComment])
+    server.use(
+      http.delete(`${repo}/issues/comments/:id`, utils.mockResponse(500, { message: 'boom' })),
+      http.post(`${repo}/issues/1/labels`, utils.mockResponse(500, { message: 'bang' })),
+    )
+
+    await expect(requireMatchingLabel(new utils.MockContext(issueEvent('opened', [])))).rejects.toThrow(
+      /^require-matching-label needs-kind: could not delete comment 11: .*boom; needs-area: could not add labels: .*bang$/,
+    )
+
+    await expect(writes.removeLabel.called()).resolves.toBe('called')
+  })
+
   it('reports a non-Error rejection from a rule verbatim', async () => {
     serveRules([kindRule])
     serveIssue([])
