@@ -119,8 +119,10 @@ describe('/approve', () => {
 
     await handleIssueComment(commentContext)
     await observeReq.called()
+    // an APPROVE review with inline comments is a different request: GitHub refuses entries without a path
     expect(await observeReq.body()).toMatchObject({
       event: 'APPROVE',
+      comments: [],
     })
   })
 
@@ -140,7 +142,7 @@ describe('/approve', () => {
     const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
     await handleIssueComment(commentContext)
     await observeReq.called()
-    expect(await observeReq.body()).toMatchObject({ event: 'APPROVE' })
+    expect(await observeReq.body()).toMatchObject({ event: 'APPROVE', comments: [] })
     await expect(observeLabels.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
   })
@@ -348,6 +350,7 @@ describe('/approve', () => {
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
       event: 'APPROVE',
+      comments: [],
     })
   })
 
@@ -701,7 +704,7 @@ describe('/approve', () => {
       await handleIssueComment(new utils.MockContext(prCommentEvent('/approve', 'alice')))
 
       await expect(writes.createReview.called()).resolves.toBe('called')
-      expect(await writes.createReview.body()).toMatchObject({ event: 'APPROVE' })
+      expect(await writes.createReview.body()).toMatchObject({ event: 'APPROVE', comments: [] })
       await expect(writes.addLabels.notCalled()).resolves.toBe('not called')
       await expect(writes.postComment.notCalled()).resolves.toBe('not called')
       await expect(writes.merge.called()).resolves.toBe('called')
@@ -740,6 +743,7 @@ describe('/approve', () => {
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
       event: 'APPROVE',
+      comments: [],
     })
   })
 
