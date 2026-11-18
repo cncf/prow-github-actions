@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import {
   assertAuthorizedByOwnersOrMembership,
+  checkCollaborator,
   checkIssueComments,
   checkOrgMember,
   policyAllows,
@@ -15,6 +16,7 @@ import {
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 
 import * as utils from '../testUtils'
+import { prCommentEvent, prHandlers } from './ownersFixtures'
 
 // Guards of src/utils/auth.ts that the rest of the suite reaches but never
 // distinguishes from their mutation: each case here fails when the guarded
@@ -157,5 +159,55 @@ describe('the root OWNERS read', () => {
 
     await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(true)
     await expect(policyAllows(octokit, otherContext, 'trusted', 'Alice', [])).resolves.toBe(false)
+  })
+})
+
+// The debug lines of src/utils/auth.ts are the only record, in a run's log,
+// of why a user was refused or which OWNERS file decided; each case here
+// fails when the line is emptied.
+describe('the debug lines', () => {
+  it('names the user and the API message when the membership check refuses', async () => {
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 404, message: 'Not Found' })
+
+    await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(core.debug).toHaveBeenCalledWith('some-user is not an org member: Not Found')
+  })
+
+  it('names the user, status and API message when the collaborator check refuses', async () => {
+    vi.spyOn(octokit.repos, 'checkCollaborator').mockRejectedValueOnce({ status: 404, message: 'Not Found' })
+
+    await expect(checkCollaborator(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(core.debug).toHaveBeenCalledWith('user some-user is not a collaborator: status=404, message=Not Found')
+  })
+
+  it('logs the authorization check, the root OWNERS lookup and its absence on an issue without one', async () => {
+    server.use(
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      http.get(`${utils.api}/orgs/Codertocat/members/some-user`, utils.mockResponse(204)),
+    )
+
+    await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'some-user')).resolves.toBeUndefined()
+    expect(core.debug).toHaveBeenCalledWith('Checking if the user is authorized to interact with prow')
+    expect(core.debug).toHaveBeenCalledWith('Looking for an OWNERS file at the root of the repository')
+    expect(core.debug).toHaveBeenCalledWith('No OWNERS file found')
+  })
+
+  it('logs the decoded root OWNERS file it authorized against', async () => {
+    const contents = 'reviewers:\n  - some-user\n'
+    server.use(rootOwners({ encoding: 'base64', content: Buffer.from(contents).toString('base64') }))
+
+    await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'some-user')).resolves.toBeUndefined()
+    expect(core.debug).toHaveBeenCalledWith(`OWNERS file contents: ${contents}`)
+  })
+
+  it('logs that a pull request whose base branch has no OWNERS files fell back to membership', async () => {
+    const prContext = new utils.MockContext(prCommentEvent('/approve'))
+    server.use(
+      ...prHandlers({}, ['src/file1.txt']),
+      http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(204)),
+    )
+
+    await expect(assertAuthorizedByOwnersOrMembership(octokit, prContext, 'approvers', 'alice')).resolves.toBeUndefined()
+    expect(core.debug).toHaveBeenCalledWith('No OWNERS files found')
   })
 })
