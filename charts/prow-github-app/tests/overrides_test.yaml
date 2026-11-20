@@ -1,0 +1,108 @@
+suite: value overrides
+templates:
+  - service.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - pdb.yaml
+  - cronjob.yaml
+values:
+  - ./values/creds.yaml
+tests:
+  - it: nameOverride renames app.kubernetes.io/name on every selector and pod label together, and suffixes the resource names
+    set:
+      nameOverride: bot
+      replicaCount: 2
+      redis.url: redis://r:6379
+    asserts:
+      - equal: {path: metadata.name, value: RELEASE-NAME-bot}
+        template: service.yaml
+      - equal: {path: metadata.name, value: RELEASE-NAME-bot}
+        template: deployment.yaml
+      - equal: {path: metadata.name, value: RELEASE-NAME-bot}
+        template: pdb.yaml
+      - equal: {path: metadata.name, value: RELEASE-NAME-bot-jobs}
+        template: cronjob.yaml
+      - equal: {path: 'spec.selector["app.kubernetes.io/name"]', value: bot}
+        template: service.yaml
+      - equal: {path: 'spec.selector.matchLabels["app.kubernetes.io/name"]', value: bot}
+        template: deployment.yaml
+      - equal: {path: 'spec.template.metadata.labels["app.kubernetes.io/name"]', value: bot}
+        template: deployment.yaml
+      - equal: {path: 'spec.selector.matchLabels["app.kubernetes.io/name"]', value: bot}
+        template: pdb.yaml
+      - equal: {path: 'spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/name"]', value: bot}
+        template: cronjob.yaml
+      - equal: {path: 'metadata.labels["app.kubernetes.io/name"]', value: bot}
+        template: configmap.yaml
+  - it: every resource carries the chart, version and managed-by labels, with the build metadata separator made label-safe
+    chart:
+      version: 1.2.3+build.7
+      appVersion: 3.5.0
+    set:
+      replicaCount: 2
+      redis.url: redis://r:6379
+    asserts:
+      - equal:
+          path: metadata.labels
+          value:
+            helm.sh/chart: prow-github-app-1.2.3_build.7
+            app.kubernetes.io/name: prow-github-app
+            app.kubernetes.io/instance: RELEASE-NAME
+            app.kubernetes.io/version: 3.5.0
+            app.kubernetes.io/managed-by: Helm
+        template: service.yaml
+      - equal: {path: 'metadata.labels["helm.sh/chart"]', value: prow-github-app-1.2.3_build.7}
+        template: serviceaccount.yaml
+      - equal: {path: 'metadata.labels["helm.sh/chart"]', value: prow-github-app-1.2.3_build.7}
+        template: configmap.yaml
+      - equal: {path: 'metadata.labels["helm.sh/chart"]', value: prow-github-app-1.2.3_build.7}
+        template: deployment.yaml
+      - equal: {path: 'metadata.labels["helm.sh/chart"]', value: prow-github-app-1.2.3_build.7}
+        template: pdb.yaml
+      - equal: {path: 'metadata.labels["helm.sh/chart"]', value: prow-github-app-1.2.3_build.7}
+        template: cronjob.yaml
+      - equal: {path: 'metadata.labels["app.kubernetes.io/version"]', value: 3.5.0}
+        template: cronjob.yaml
+  - it: service.type and service.port pass through while the target stays the named container port
+    set:
+      service.type: NodePort
+      service.port: 80
+    template: service.yaml
+    asserts:
+      - equal: {path: spec.type, value: NodePort}
+      - equal:
+          path: spec.ports
+          value: [{name: http, port: 80, targetPort: http}]
+  - it: podDisruptionBudget.minAvailable accepts a percentage
+    set:
+      replicaCount: 4
+      redis.url: redis://r:6379
+      podDisruptionBudget.minAvailable: 50%
+    template: pdb.yaml
+    asserts:
+      - equal: {path: spec.minAvailable, value: 50%}
+  - it: the cronjob history limits pass through and a run neither retries nor starts late
+    set:
+      cronjob.successfulJobsHistoryLimit: 0
+      cronjob.failedJobsHistoryLimit: 1
+    template: cronjob.yaml
+    asserts:
+      - equal: {path: spec.successfulJobsHistoryLimit, value: 0}
+      - equal: {path: spec.failedJobsHistoryLimit, value: 1}
+      - equal: {path: spec.startingDeadlineSeconds, value: 600}
+      - equal: {path: spec.jobTemplate.spec.backoffLimit, value: 0}
+      - equal: {path: spec.jobTemplate.spec.template.spec.restartPolicy, value: Never}
+  - it: by default the cronjob keeps three successful and three failed runs
+    template: cronjob.yaml
+    asserts:
+      - equal: {path: spec.successfulJobsHistoryLimit, value: 3}
+      - equal: {path: spec.failedJobsHistoryLimit, value: 3}
+  - it: prow.jobs and prow.config reach the configmap unchanged
+    set:
+      prow.jobs: lgtm sweep label-sync
+      prow.config: .github/prow.yaml
+    template: configmap.yaml
+    asserts:
+      - equal: {path: data.PROW_JOBS, value: lgtm sweep label-sync}
+      - equal: {path: data.PROW_CONFIG, value: .github/prow.yaml}

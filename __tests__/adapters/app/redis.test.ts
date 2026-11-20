@@ -125,7 +125,7 @@ describe('redisLocks', () => {
     expect(sleep.mock.calls).toEqual([[600], [1000], [1000]])
   })
 
-  it('waits five minutes for a held lock by default before giving up', async () => {
+  it('waits five minutes for a held lock by default before giving up, and never sleeps past that deadline', async () => {
     const client = fakeRedis()
     let now = 1_000_000
     vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -136,7 +136,8 @@ describe('redisLocks', () => {
 
     await expect(redisLocks(client).withLock('k', async () => {})).rejects.toThrow('could not lock k within 300000ms')
     expect(lockWaitMs).toBe(300_000)
-    expect(now).toBeGreaterThanOrEqual(1_000_000 + lockWaitMs)
+    // the last wait is cut to what is left of the deadline, so the wait ends on it, not up to a second after
+    expect(now).toBe(1_000_000 + lockWaitMs)
   })
 
   it('renews the lock every third of the ttl while fn runs, and stops once it returns', async () => {

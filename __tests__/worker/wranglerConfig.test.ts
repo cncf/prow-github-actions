@@ -75,6 +75,12 @@ describe('wrangler.toml', () => {
     expect(consumers.every(consumer => consumer.deadLetterQueue === 'prow-jobs-dlq')).toBe(true)
   })
 
+  it('hands the consumer one message per invocation, so an installation\'s scheduled run has the whole budget', () => {
+    const consumers = Object.values(workerOptions.queueConsumers ?? {}) as { maxBatchSize?: number }[]
+    expect(consumers.length).toBeGreaterThan(0)
+    expect(consumers.every(consumer => consumer.maxBatchSize === 1)).toBe(true)
+  })
+
   it('migrates every Durable Object class it binds', () => {
     const bound = Object.values(workerOptions.durableObjects ?? {}).map(binding => (typeof binding === 'string' ? binding : binding.className)).sort()
     const migrated = config.migrations.flatMap(migration => [...migration.new_classes ?? [], ...migration.new_sqlite_classes ?? []]).sort()

@@ -68,6 +68,26 @@ describe(`action.yml runs the bundle under ${action.runs.using}`, () => {
   it('is the runtime the README tells self-hosted runner operators to provide', () => {
     expect(read('README.md')).toContain(`\`${action.runs.using}\` runtime`)
   })
+
+  // The Dockerfile is the runtime the server and the chart's CronJob actually run on, and
+  // .github/dependabot.yml ignores its major on purpose ("bump them together"); nothing but
+  // this test notices when one of the two moves without the other.
+  describe('is the major of the node image the Dockerfile builds and runs on', () => {
+    const stages = read('Dockerfile').split('\n').filter(line => line.startsWith('FROM '))
+
+    it('has a build stage and a runtime stage', () => {
+      expect(stages).toHaveLength(2)
+    })
+
+    it.each(stages)('%s', (line) => {
+      expect(line).toMatch(new RegExp(`^FROM node:${runtimeMajor}-slim@sha256:[0-9a-f]{64}( AS \\w+)?$`))
+    })
+
+    it('runs on the same digest it was built on, so dependabot cannot move one stage alone', () => {
+      const digests = stages.map(line => /@(sha256:[0-9a-f]{64})/.exec(line)?.[1])
+      expect(new Set(digests).size).toBe(1)
+    })
+  })
 })
 
 describe('every setup-node step follows package.json', () => {

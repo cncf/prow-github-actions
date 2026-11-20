@@ -204,6 +204,19 @@ describe('approveOnPullRequest', () => {
     expect(await commentBody(writes.postComment)).toContain('This PR is **APPROVED**')
   })
 
+  it('a pull request payload without a base ref falls back to the default branch OWNERS instead of failing', async () => {
+    const writes = serve({ owners: { OWNERS: 'approvers:\n- some-author\n' }, files: ['src/a.go'] })
+    const observeDefault = new utils.ObserveRequest()
+    server.use(utils.defaultBranchTree(['OWNERS'], observeDefault))
+    const { base: _base, ...withoutBase } = pullReqOpenedEvent.pull_request
+
+    await approveOnPullRequest(prEvent('opened', { pull_request: withoutBase }))
+
+    await expect(observeDefault.called()).resolves.toBe('called')
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    expect(await commentBody(writes.postComment)).toContain('This PR is **APPROVED**')
+  })
+
   it('fails without the github-token input before reading anything', async () => {
     delete process.env['INPUT_GITHUB-TOKEN']
     const observeTree = new utils.ObserveRequest()

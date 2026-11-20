@@ -18,7 +18,8 @@ import * as utils from '../testUtils'
 
 // Guards of src/utils/auth.ts that the rest of the suite reaches but never
 // distinguishes from their mutation: each case here fails when the guarded
-// expression is replaced by a constant or its operator is flipped.
+// expression is replaced by a constant or its operator is flipped, or when a
+// memoization key loses the repository or issue that scopes it.
 
 const server = setupServer()
 beforeAll(() => {
@@ -53,9 +54,35 @@ describe('checkOrgMember', () => {
     expect(core.warning).not.toHaveBeenCalled()
     expect(core.debug).toHaveBeenCalledWith('checkOrgMember error: context payload repository undefined')
   })
+
+  it('refuses with a warning when the membership check rejects with null, instead of throwing on the guard', async () => {
+    // `typeof null` is 'object'; without the null check the error-detail read throws a TypeError
+    // inside the catch block and the rejection escapes the membership check
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce(null)
+
+    await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(core.warning).toHaveBeenCalledWith('encountered unexpected error: status=unknown, message=null')
+  })
+
+  it('renders a rejection whose message is not a string as the object, not as the message', async () => {
+    vi.spyOn(octokit.orgs, 'checkMembershipForUser').mockRejectedValueOnce({ status: 500, message: 42 })
+
+    await expect(checkOrgMember(octokit, context, 'some-user')).resolves.toBe(false)
+    expect(core.warning).toHaveBeenCalledWith('encountered unexpected error: status=500, message=[object Object]')
+  })
 })
 
 describe('checkIssueComments', () => {
+  it('memoizes per issue: a second issue in the repository is not answered from the first', async () => {
+    server.use(
+      http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, [{ id: 1, user: { login: 'some-user' }, body: 'here' }])),
+      http.get(`${repo}/issues/2/comments`, utils.mockResponse(200, [])),
+    )
+
+    await expect(checkIssueComments(octokit, context, 1, 'some-user')).resolves.toBe(true)
+    await expect(checkIssueComments(octokit, context, 2, 'some-user')).resolves.toBe(false)
+  })
+
   it('skips a comment whose user is gone and keeps scanning', async () => {
     server.use(
       http.get(`${repo}/issues/1/comments`, utils.mockResponse(200, [
@@ -114,5 +141,21 @@ describe('the root OWNERS read', () => {
     await expect(policyAllows(octokit, context, 'trusted', 'Alice', []))
       .rejects
       .toThrow('OWNERS at OWNERS: reviewers must be a list of GitHub usernames')
+  })
+
+  it('memoizes per repository: a second repository without a root OWNERS file is not answered from the first', async () => {
+    // the App server and a cron run authorize across repositories within one state; a key
+    // without the repository would let Hello-World's reviewers pass the trusted policy on Other
+    const other = `${utils.api}/repos/Codertocat/Other`
+    server.use(
+      ...membership('Alice'),
+      rootOwners({ encoding: 'base64', content: Buffer.from('reviewers:\n  - alice\n').toString('base64') }),
+      http.get(`${other}/collaborators/Alice`, utils.mockResponse(404)),
+      http.get(`${other}/contents/OWNERS`, utils.mockResponse(404)),
+    )
+    const otherContext = new utils.MockContext({ repository: { owner: { login: 'Codertocat' }, name: 'Other' } })
+
+    await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(true)
+    await expect(policyAllows(octokit, otherContext, 'trusted', 'Alice', [])).resolves.toBe(false)
   })
 })

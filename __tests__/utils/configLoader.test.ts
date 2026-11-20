@@ -379,6 +379,21 @@ describe('loadProwConfig', () => {
       )
     })
 
+    it('fails as not a file when the explicit repo body carries content but no encoding', async () => {
+      process.env.INPUT_CONFIG = 'cncf/prow-config:prow.yaml'
+      const { encoding: _, ...withoutEncoding } = contentsFile('labels:\n  labels: [bug]\n')
+      server.use(
+        http.get(`${utils.api}/repos/cncf/prow-config/contents/prow.yaml`, utils.mockResponse(200, withoutEncoding)),
+        ...utils.configFoundAt('.github/prow.yaml'),
+      )
+
+      // the encoding guard, not decodeContent, must answer: without it the error reads
+      // "unsupported content encoding undefined" and no longer names the path
+      await expect(loadProwConfig(octokit, context)).rejects.toThrow(
+        'could not load prow config from cncf/prow-config:prow.yaml: TypeError: prow.yaml is not a file',
+      )
+    })
+
     it('fails when the url cannot be fetched at all', async () => {
       process.env.INPUT_CONFIG = 'https://config.example.com/prow.yaml'
       server.use(

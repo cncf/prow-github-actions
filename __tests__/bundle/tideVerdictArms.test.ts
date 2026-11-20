@@ -225,6 +225,31 @@ describe('dist/index.js tide verdicts', () => {
         `GET ${repo}/pulls?state=open&per_page=100&page=1`,
       ])
     })
+
+    it('naming no pull request, for a commit whose open pull request is past a full first page, reads the next page and evaluates it', async () => {
+      const fullPage = Array.from({ length: 100 }, (_, i) => ({ number: i + 2, head: { sha: 'other' } }))
+      gh.route('GET', new RegExp(`^${repo}/pulls\\?`), (req) => {
+        const page = new URL(req.path, gh.url).searchParams.get('page') ?? '1'
+        return { status: 200, body: page === '1' ? fullPage : [{ number: 1, head: { sha: head } }] }
+      })
+      gh.route('GET', `${repo}/pulls/1`, { status: 200, body: pr('clean', { merged: true }) })
+
+      const result = await checkSuite([])
+
+      expect(result.status, result.stdout).toBe(0)
+      expect(result.errors).toEqual([])
+      // the pull request found on the second page is the one tide evaluates
+      expect(result.stdout).toContain('skipping pr #1: already merged')
+      expect(result.stdout).not.toContain('tide: no open pull request to evaluate')
+      // a full page is not known to be the last: the next one is asked for, and its short length ends the listing
+      expectRequests(configReads(), [
+        `GET ${repo}/pulls?state=open&per_page=100&page=1`,
+        `GET ${repo}/pulls?state=open&per_page=100&page=2`,
+        pullRead,
+        ownersProbe,
+        queueRead,
+      ])
+    })
   })
 
   it('issue_comment /hold on a closed pull request applies the label; tide skips the closed pull request without reading it', async () => {

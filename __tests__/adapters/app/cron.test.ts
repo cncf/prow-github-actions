@@ -188,9 +188,11 @@ describe('appInstallationLister', () => {
   const api = 'https://ghes.example/api/v3'
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'pkcs1', format: 'pem' } })
 
-  it('lists every repository of every installation over every page, skipping suspended installations and archived repositories', async () => {
+  it('lists every repository of every installation over every page, a hundred at a time, skipping suspended installations and archived repositories', async () => {
+    const pageSizes: string[] = []
     server.use(
       http.get(`${api}/app/installations`, ({ request }) => {
+        pageSizes.push(`installations ${new URL(request.url).searchParams.get('per_page')}`)
         const p = new URL(request.url).searchParams.get('page') ?? '1'
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (p === '1') {
@@ -203,6 +205,7 @@ describe('appInstallationLister', () => {
       }),
       http.post(`${api}/app/installations/:id/access_tokens`, ({ params }) => new Response(JSON.stringify({ token: `tok-${params.id}`, expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: {}, repository_selection: 'all' }), { status: 201, headers: { 'Content-Type': 'application/json' } })),
       http.get(`${api}/installation/repositories`, ({ request }) => {
+        pageSizes.push(`repositories ${new URL(request.url).searchParams.get('per_page')}`)
         const token = request.headers.get('authorization')
         const repos = token === 'token tok-1'
           ? [{ name: 'api', full_name: 'acme/api', owner: { login: 'acme' }, archived: false }, { name: 'old', full_name: 'acme/old', owner: { login: 'acme' }, archived: true }]
@@ -217,6 +220,8 @@ describe('appInstallationLister', () => {
     }
 
     expect(out.map(t => `${t.installationId}:${t.repository.full_name}`)).toEqual(['1:acme/api', '2:globex/core'])
+    // the largest page GitHub serves: an App on many installations or repositories lists them in the fewest requests
+    expect(pageSizes).toEqual(['installations 100', 'installations 100', 'repositories 100', 'repositories 100'])
   })
 
   it.each([

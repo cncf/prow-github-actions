@@ -1,0 +1,53 @@
+suite: placement
+templates: [deployment.yaml]
+values: [./values/creds.yaml]
+tests:
+  - it: by default the server pod carries no scheduling constraints
+    asserts:
+      - notExists: {path: spec.template.spec.nodeSelector}
+      - notExists: {path: spec.template.spec.tolerations}
+      - notExists: {path: spec.template.spec.affinity}
+      - notExists: {path: spec.template.spec.topologySpreadConstraints}
+  - it: nodeSelector, tolerations, affinity and topologySpreadConstraints pass through to the server pod
+    set:
+      nodeSelector: {kubernetes.io/arch: arm64}
+      tolerations:
+        - {key: dedicated, operator: Equal, value: prow, effect: NoSchedule}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions: [{key: topology.kubernetes.io/zone, operator: In, values: [eu-1a]}]
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {matchLabels: {app.kubernetes.io/component: server}}
+    asserts:
+      - equal: {path: spec.template.spec.nodeSelector, value: {kubernetes.io/arch: arm64}}
+      - equal:
+          path: spec.template.spec.tolerations
+          value: [{key: dedicated, operator: Equal, value: prow, effect: NoSchedule}]
+      - equal:
+          path: spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values
+          value: [eu-1a]
+      - lengthEqual: {path: spec.template.spec.topologySpreadConstraints, count: 1}
+      - equal: {path: 'spec.template.spec.topologySpreadConstraints[0].topologyKey', value: topology.kubernetes.io/zone}
+      - equal:
+          path: 'spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels'
+          value: {app.kubernetes.io/component: server}
+  - it: podLabels join the selector labels on the pod without touching the selector
+    set:
+      podLabels: {team: infra}
+    asserts:
+      - equal: {path: spec.template.metadata.labels.team, value: infra}
+      - equal: {path: 'spec.template.metadata.labels["app.kubernetes.io/component"]', value: server}
+      - notExists: {path: spec.selector.matchLabels.team}
+      - notExists: {path: metadata.labels.team}
+  - it: podAnnotations join the checksum annotations on the pod
+    set:
+      podAnnotations: {prometheus.io/scrape: 'true'}
+    asserts:
+      - equal: {path: 'spec.template.metadata.annotations["prometheus.io/scrape"]', value: 'true'}
+      - exists: {path: 'spec.template.metadata.annotations["checksum/config"]'}
+      - notExists: {path: 'metadata.annotations["prometheus.io/scrape"]'}
