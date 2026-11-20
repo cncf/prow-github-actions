@@ -542,6 +542,13 @@ describe('tokenIdentity', () => {
     expect(getAuthenticated).toHaveBeenCalledTimes(1)
   })
 
+  it('an installation token is reported on the debug log with the status GET /user answered', async () => {
+    const octokit = { users: { getAuthenticated: vi.fn().mockRejectedValue(Object.assign(new Error('Forbidden'), { status: 403 })) } } as unknown as Parameters<typeof tokenIdentity>[0]
+
+    await expect(tokenIdentity(octokit)).resolves.toEqual({})
+    expect(debug).toHaveBeenCalledWith('approve: GET /user answered 403; the token is an installation token')
+  })
+
   it('a rejection without a status fails', async () => {
     const octokit = { users: { getAuthenticated: vi.fn().mockRejectedValue('boom') } } as unknown as Parameters<typeof tokenIdentity>[0]
 
@@ -580,6 +587,14 @@ describe('tokenLogin', () => {
     await expect(first).resolves.toBe('prow-bot')
     expect(graphql).toHaveBeenCalledTimes(1)
   })
+
+  it('a failing viewer query answers undefined and says why on the debug log', async () => {
+    const graphql = vi.fn().mockRejectedValue(new Error('Bad credentials'))
+    const octokit = { graphql } as unknown as Parameters<typeof tokenLogin>[0]
+
+    await expect(tokenLogin(octokit)).resolves.toBeUndefined()
+    expect(debug).toHaveBeenCalledWith('could not read the token\'s login from the GraphQL viewer: Error: Bad credentials')
+  })
 })
 
 describe('syncApprovalReview', () => {
@@ -607,6 +622,38 @@ describe('syncApprovalReview', () => {
     }
 
     await expect(syncApprovalReview(octokit, prEvent('opened'), input)).rejects.toThrow('could not submit the approval review: null')
+  })
+
+  it('a submitted review is logged with the pull request and the head it was submitted on', async () => {
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+    const octokit = { pulls: { createReview: vi.fn().mockResolvedValue({ data: { id: 999 } }) } } as unknown as Parameters<typeof syncApprovalReview>[0]
+    const input = {
+      owners: { number: 1, open: true, headSha: head, author: 'someone' } as PullRequestOwners,
+      state: { approved: true, approvers: new Set(['bob']) } as ApprovalState,
+      reviews: [],
+      identity: {},
+      reason: () => '',
+    }
+
+    await syncApprovalReview(octokit, prEvent('opened'), input)
+
+    expect(info).toHaveBeenCalledWith(`approve: submitted the approval review on #1 at ${head}`)
+  })
+
+  it('a dismissed review is logged with its id, the pull request and the reason', async () => {
+    const info = vi.spyOn(core, 'info').mockImplementation(() => {})
+    const octokit = { pulls: { dismissReview: vi.fn().mockResolvedValue({ data: {} }) } } as unknown as Parameters<typeof syncApprovalReview>[0]
+    const input = {
+      owners: { number: 1, open: true, headSha: head, author: 'someone' } as PullRequestOwners,
+      state: { approved: false, approvers: new Set() } as ApprovalState,
+      reviews: [{ id: 42, state: 'APPROVED', user: bot, body: `x\n${reviewMarker}` }],
+      identity: {},
+      reason: () => 'no approver covers sdk/x.go',
+    }
+
+    await syncApprovalReview(octokit, prEvent('opened'), input)
+
+    expect(info).toHaveBeenCalledWith('approve: dismissed the approval review 42 on #1: approved removed: no approver covers sdk/x.go')
   })
 })
 
@@ -677,5 +724,14 @@ describe('isOwnReview', () => {
     expect(isOwnReview({ id: 1, state: 'APPROVED', body, user: { login: 'Prow-Bot' } }, { login: 'prow-bot' })).toBe(true)
     expect(isOwnReview({ id: 1, state: 'APPROVED', body, user: bot }, { login: 'prow-bot' })).toBe(false)
     expect(isOwnReview({ id: 1, state: 'APPROVED', body, user: null }, { login: 'prow-bot' })).toBe(false)
+  })
+
+  it('a review with a null body carries no marker', () => {
+    expect(isOwnReview({ id: 1, state: 'APPROVED', body: null, user: bot }, {})).toBe(false)
+    expect(isOwnReview({ id: 1, state: 'APPROVED', body: null, user: { login: 'prow-bot' } }, { login: 'prow-bot' })).toBe(false)
+  })
+
+  it('a marked review whose user has no login is not the user token\'s, and is no TypeError', () => {
+    expect(isOwnReview({ id: 1, state: 'APPROVED', body, user: {} }, { login: 'prow-bot' })).toBe(false)
   })
 })

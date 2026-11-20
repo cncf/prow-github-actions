@@ -59,6 +59,23 @@ describe('onPrLgtm', () => {
     await expect(observeReq.called()).resolves.toBe('called')
   })
 
+  it('logs the labels it read before deciding', async () => {
+    const prContext = new utils.MockContext(pullReqEvent)
+    const debug = vi.spyOn(core, 'debug')
+
+    server.use(
+      ...prHandlers({}, ['src/file1.txt']),
+      utils.defaultBranchTree(),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+    )
+
+    await expect(handlePullReq(prContext)).resolves.not.toThrow()
+    expect(debug).toHaveBeenCalledWith('remove-lgtm: found labels for issue some-label,some-other-label')
+  })
+
   it('does not issue a removal when lgtm is absent', async () => {
     const prContext = new utils.MockContext(pullReqEvent)
 
