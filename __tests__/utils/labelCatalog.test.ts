@@ -172,7 +172,20 @@ labels:
     const labels = desiredLabels(configFrom(''))
 
     for (const name of actionManaged) {
-      expect(labels.find(l => l.name === name)).toEqual({ name, ...builtinLabelDefaults[name] })
+      const label = labels.find(l => l.name === name)
+      expect(label).toEqual({ name, ...builtinLabelDefaults[name] })
+      // the table is the oracle above, so also check it says something: an
+      // emptied entry would otherwise agree with itself
+      expect(label?.color).toMatch(/^[0-9a-f]{6}$/)
+      expect(label?.description).toEqual(expect.stringMatching(/\S/))
     }
+  })
+
+  it('mirrors do-not-merge/hold onto the legacy hold label', () => {
+    const hold = { color: 'e11d21', description: 'Indicates that a PR should not merge because someone has issued a /hold command.' }
+
+    expect(builtinLabelDefaults.hold).toEqual(hold)
+    expect(builtinLabelDefaults['do-not-merge/hold']).toEqual(hold)
+    expect(desiredLabels(configFrom('')).find(l => l.name === 'hold')).toEqual({ name: 'hold', ...hold })
   })
 })
