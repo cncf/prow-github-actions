@@ -46,6 +46,11 @@ tests:
       cronjob.schedul: '0 * * * *'
     asserts:
       - failedTemplate: {}
+  - it: refuses a negative successful history limit
+    set:
+      cronjob.successfulJobsHistoryLimit: -1
+    asserts:
+      - failedTemplate: {}
   - it: refuses zero replicas
     set:
       replicaCount: 0
@@ -96,5 +101,53 @@ tests:
   - it: refuses service.port 0
     set:
       service.port: 0
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled image value
+    set:
+      image.tga: v1
+    asserts:
+      - failedTemplate: {}
+  - it: refuses an empty existing secret without app credentials
+    set:
+      github.existingSecret: ''
+      github.appId: ''
+      github.privateKey: ''
+      github.webhookSecret: ''
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled github value
+    set:
+      github.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled ingress value
+    set:
+      ingress.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled podDisruptionBudget value
+    set:
+      podDisruptionBudget.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled prow value
+    set:
+      prow.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled redis value
+    set:
+      redis.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled service value
+    set:
+      service.tpyo: x
+    asserts:
+      - failedTemplate: {}
+  - it: refuses a misspelled serviceAccount value
+    set:
+      serviceAccount.tpyo: x
     asserts:
       - failedTemplate: {}
