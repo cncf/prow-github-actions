@@ -206,6 +206,32 @@ describe('/retest', () => {
     expect((await reply.body()).body).toBe('No failed GitHub Actions workflow runs on `headsha`: 1 successful. Checks from other CI systems cannot be re-run here.')
   })
 
+  // a run being re-run reports its previous attempt's conclusion until it completes again; only a
+  // completed run is failed or successful, so a re-run in flight counts as in progress and is not
+  // re-run a second time
+  it('counts a run in progress with a stale conclusion as in progress, not as failed or successful', async () => {
+    const reply = new utils.ObserveRequest()
+    const reaction = new utils.ObserveRequest()
+    const rerun = new utils.ObserveRequest()
+    server.use(
+      ...memberAuth(),
+      serveRuns([
+        { id: 1, name: 'CI', status: 'in_progress', conclusion: 'failure' },
+        { id: 2, name: 'Lint', status: 'queued', conclusion: 'success' },
+      ]),
+      http.post(`${repo}/actions/runs/:id/rerun-failed-jobs`, utils.mockResponse(201, null, rerun)),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, reply)),
+      http.post(reactionUrl, utils.mockResponse(201, {}, reaction)),
+    )
+
+    await handleIssueComment(new utils.MockContext(prCommentEvent('/retest')))
+
+    await expect(reply.called()).resolves.toBe('called')
+    expect((await reply.body()).body).toBe('No failed GitHub Actions workflow runs on `headsha`: 2 in progress. Checks from other CI systems cannot be re-run here.')
+    await expect(rerun.notCalled()).resolves.toBe('not called')
+    await expect(reaction.notCalled()).resolves.toBe('not called')
+  })
+
   it('omits the summary entirely when the only runs are the current workflow and a completed run without a conclusion', async () => {
     const reply = new utils.ObserveRequest()
     server.use(
