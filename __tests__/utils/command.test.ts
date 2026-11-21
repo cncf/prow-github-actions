@@ -39,6 +39,16 @@ describe('strips at signs', () => {
 
     expect(output).toMatchObject(['user@name', 'other@username'])
   })
+
+  it('leaves an argument that does not start with one untouched', () => {
+    // a label such as `release@v1` or a reason with an address inside it carries
+    // its `@` through; only a leading mention marker is stripped
+    const body = `/command release@v1 @lead name@host plain`
+
+    const output = getCommandArgs('/command', body)
+
+    expect(output).toEqual(['release@v1', 'lead', 'name@host', 'plain'])
+  })
 })
 
 describe('hasCommand', () => {
