@@ -24,6 +24,8 @@ describe('skipReadOnlyForkRun on a payload missing the fields it compares', () =
 
   it.each([
     ['no pull_request at all', { action: 'opened' }],
+    // the base name is read first, so this is the one shape that reaches the head lookup without a pull_request
+    ['no pull_request but a repository', { action: 'opened', repository: pullReqOpenedEvent.repository }],
     ['a pull_request without head', { action: 'opened', pull_request: { number: 2 }, repository: pullReqOpenedEvent.repository }],
     ['a fork head but no repository', { action: 'opened', pull_request: forkHead }],
     ['a fork head but a repository without full_name', { action: 'opened', pull_request: forkHead, repository: { name: 'Hello-World' } }],
