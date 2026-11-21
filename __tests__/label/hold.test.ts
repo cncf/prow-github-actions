@@ -5,6 +5,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import { hold } from '../../src/labels/hold'
 import issuePayload from '../fixtures/issues/issue.json'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import labelFileContents from '../fixtures/labels/labelFileContentsResp.json'
@@ -98,6 +99,21 @@ describe('hold', () => {
     )
   })
 
+  // the optional chain on `comment.body`: a payload without a comment reaches the policy check
+  // with no commenter and is refused there, not by a TypeError reading the body
+  it('refuses a payload without a comment by the hold policy, without labeling', async () => {
+    const { comment: _comment, ...payload } = structuredClone(issueCommentEvent)
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.post(labelsUrl, utils.mockResponse(200, null, observeReq)),
+      utils.repoHasLabels([holdLabel, legacyHold]),
+    )
+
+    await expect(hold(new utils.MockContext(payload))).rejects.toThrow('is not authorized to run /hold: authorization.hold is anyone')
+    await expect(observeReq.notCalled()).resolves.toBe('not called')
+  })
+
   describe('cancel', () => {
     it.each(['/hold cancel', '/unhold', '/remove-hold', '/UNHOLD', '/Hold Cancel'])('%s removes do-not-merge/hold and the legacy hold label', async (body) => {
       issueCommentEvent.comment.body = body
@@ -137,6 +153,26 @@ describe('hold', () => {
       await observeAdd.called()
       expect(await observeAdd.body()).toEqual({ labels: [holdLabel] })
       await expect(observeNew.notCalled()).resolves.toBe('not called')
+    })
+
+    // the empty-present arm: removeLabels([]) would also send nothing, so only the debug line
+    // tells this return apart from a removal of zero labels
+    it('a cancel on an issue carrying neither hold label says so in the debug log and removes nothing', async () => {
+      issueCommentEvent.comment.body = '/hold cancel'
+      const commentContext = new utils.MockContext(issueCommentEvent)
+
+      server.use(http.get(issueUrl, utils.mockResponse(200, issueWithLabels('lgtm'))))
+      const observeNew = observeDelete(holdLabel)
+      const observeLegacy = observeDelete(legacyHold)
+      const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+      const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+
+      await handleIssueComment(commentContext)
+
+      expect(debug).toHaveBeenCalledWith(`could not find ${holdLabel} or ${legacyHold} to remove`)
+      await expect(observeNew.notCalled()).resolves.toBe('not called')
+      await expect(observeLegacy.notCalled()).resolves.toBe('not called')
+      expect(setFailed).not.toHaveBeenCalled()
     })
 
     it('removes only the legacy hold label when that is all the issue carries', async () => {
