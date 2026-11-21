@@ -18,17 +18,25 @@ const root = path.resolve(__dirname, '..')
 const contributing = readFileSync(path.join(root, 'docs/contributing.md'), 'utf8')
 
 // The nightly set is the local merge-decision set plus the code that performs
-// the merge (tide.ts, mergeQueue.ts) and the code that decides the `approved`
-// half of it (approve.ts); docs/contributing.md names the same files and the
+// the merge (tide.ts, mergeQueue.ts), the code that decides the `approved`
+// half of it (approve.ts) and the code that decides whether its `lgtm` half is
+// bound to the head (lgtmBinding.ts, labels/lgtm.ts); docs/contributing.md
+// names the same files and the
 // same `break` score, so a change to either must move the other.
 describe('stryker.nightly.config.mjs', () => {
   it('extends the local merge-decision set', () => {
     expect(nightlySet).toEqual(expect.arrayContaining(baseSet))
   })
 
-  it('adds the files that perform and approve the merge', () => {
+  it('adds the files that perform, approve and lgtm-bind the merge', () => {
     const added = nightlySet.filter(file => !baseSet.includes(file))
-    expect(added.sort()).toEqual(['src/plugins/approve.ts', 'src/plugins/tide.ts', 'src/utils/mergeQueue.ts'])
+    expect(added.sort()).toEqual([
+      'src/labels/lgtm.ts',
+      'src/plugins/approve.ts',
+      'src/plugins/lgtmBinding.ts',
+      'src/plugins/tide.ts',
+      'src/utils/mergeQueue.ts',
+    ])
   })
 
   it('sets the break score docs/contributing.md documents', () => {
