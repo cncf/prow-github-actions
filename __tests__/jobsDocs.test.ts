@@ -3,7 +3,10 @@ import * as path from 'node:path'
 import * as yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
-const root = path.resolve(__dirname, '..')
+import { treeRoot } from './treeRoot'
+
+// the tree's copy of the dispatchers: a Stryker sandbox holds instrumented ones switchCases cannot read
+const root = treeRoot(__dirname)
 const cronDoc = 'docs/cron-jobs.md'
 const prDoc = 'docs/pr-jobs.md'
 const cronDispatcher = 'src/cronJobs/handleCronJob.ts'

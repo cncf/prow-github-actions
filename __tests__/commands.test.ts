@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest'
 
 import { fixedLabelCommands } from '../src/labels/fixed'
 import { prefixedLabelCommands, removeCommandFor } from '../src/labels/prefixed'
+import { treeRoot } from './treeRoot'
 
-const root = path.resolve(__dirname, '..')
+// the tree's copy of the dispatcher: a Stryker sandbox holds an instrumented one the patterns below cannot read
+const root = treeRoot(__dirname)
 const commandsDoc = 'docs/commands.md'
 const dispatcher = 'src/issueComment/handleIssueComment.ts'
 const reusableWorkflowPath = '.github/workflows/prow.yml'
