@@ -13,6 +13,7 @@ describe('appPlatform', () => {
     const { platform } = appPlatform(settings, staticTokens(), delivery, () => {})
 
     expect(platform.inputs.get('prow-commands')).toBe('/close /lgtm')
+    expect(platform.inputs.get('prow-commands', { required: true })).toBe('/close /lgtm')
     expect(platform.inputs.get('jobs')).toBe('')
     expect(() => platform.inputs.get('jobs', { required: true })).toThrow('Input required and not supplied: jobs')
   })

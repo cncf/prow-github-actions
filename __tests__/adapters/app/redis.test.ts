@@ -6,6 +6,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { lockWaitMs, redisDeliveryStore, redisLocks } from '../../../src/adapters/app/redis'
 import * as sleepModule from '../../../src/utils/sleep'
 
+// the two scripts redisLocks sends, as redis.ts spells them: the fake emulates only these, so a
+// changed or emptied script fails here instead of being emulated as compare-and-delete anyway
+const releaseScript = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end'
+const renewScript = 'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end'
+
 /** an in-memory SET / DEL / EVAL that is good enough for the scripts the stores use: release (one argument) and renew (two) */
 function fakeRedis(): RedisLike & { store: Map<string, string>, calls: string[] } {
   const store = new Map<string, string>()
@@ -25,8 +30,11 @@ function fakeRedis(): RedisLike & { store: Map<string, string>, calls: string[] 
       calls.push(`del ${key}`)
       return store.delete(key) ? 1 : 0
     },
-    async eval(_script, { keys, arguments: args }) {
-      const renew = args.length === 2
+    async eval(script, { keys, arguments: args }) {
+      if (script !== releaseScript && script !== renewScript) {
+        throw new Error(`fakeRedis: unknown script ${JSON.stringify(script)}`)
+      }
+      const renew = script === renewScript
       calls.push(renew ? `renew ${keys[0]} ${args[1]}` : `eval ${keys[0]}`)
       if (store.get(keys[0]!) === args[0]) {
         if (!renew) {
