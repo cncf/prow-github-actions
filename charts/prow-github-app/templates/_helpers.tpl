@@ -15,6 +15,11 @@
 {{- end -}}
 {{- end -}}
 
+{{/* CronJob names leave 11 characters for the Job controller's suffix. */}}
+{{- define "prow-github-app.cronjobName" -}}
+{{- printf "%s-jobs" (include "prow-github-app.fullname" . | trunc 47 | trimSuffix "-") -}}
+{{- end -}}
+
 {{- define "prow-github-app.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "prow-github-app.selectorLabels" . }}

@@ -12,6 +12,6 @@ Point the App's webhook at this release:
 {{- end }}
 
 Replicas: {{ .Values.replicaCount }}{{ if include "prow-github-app.redisConfigured" . }} (shared state through Redis){{ end }}.
-Scheduled jobs ({{ .Values.prow.jobs }}): {{ if .Values.cronjob.enabled }}CronJob {{ include "prow-github-app.fullname" . }}-jobs, {{ .Values.cronjob.schedule | quote }}{{ else }}disabled{{ end }}.
+Scheduled jobs ({{ .Values.prow.jobs }}): {{ if .Values.cronjob.enabled }}CronJob {{ include "prow-github-app.cronjobName" . }}, {{ .Values.cronjob.schedule | quote }}{{ else }}disabled{{ end }}.
 
 Docs: https://github.com/cncf/prow-github-actions/blob/main/docs/github-app.md
