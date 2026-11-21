@@ -1,4 +1,4 @@
-FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
@@ -7,7 +7,7 @@ COPY src ./src
 # the server bundle only; the action and the Worker have their own builds and type checks in CI
 RUN npx tsc --noEmit && npm run pack:server
 
-FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+FROM node:24-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54
 LABEL org.opencontainers.image.source="https://github.com/cncf/prow-github-actions" \
       org.opencontainers.image.description="Prow-style chat-ops for GitHub, as a GitHub App" \
       org.opencontainers.image.licenses="MIT"
