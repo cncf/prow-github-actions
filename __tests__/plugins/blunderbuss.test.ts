@@ -104,6 +104,13 @@ describe('pickReviewers', () => {
     expect(pickReviewers(scores, 3, last).sort()).toEqual(['alice', 'bob', 'dave'])
   })
 
+  it('takes a tier that fits exactly in login order, without drawing', () => {
+    const rng = vi.fn(last)
+
+    expect(pickReviewers(scores, 2, rng)).toEqual(['alice', 'bob'])
+    expect(rng).not.toHaveBeenCalled()
+  })
+
   it('returns everyone, highest tier first, when there are fewer candidates than requested', () => {
     const picked = pickReviewers(scores, 10, first)
 
@@ -513,6 +520,16 @@ describe('/auto-cc', () => {
     expect(debug).toHaveBeenCalledWith('blunderbuss: /auto-cc only applies to pull requests')
     await expect(observePull.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('does nothing on a payload without an issue', async () => {
+    const observePull = new utils.ObserveRequest()
+    server.use(http.get(`${repo}/pulls/1`, utils.mockResponse(200, {}, observePull)))
+
+    await expect(autoCc(new utils.MockContext({ action: 'created' }))).resolves.toBeUndefined()
+
+    expect(debug).toHaveBeenCalledWith('blunderbuss: /auto-cc only applies to pull requests')
+    await expect(observePull.notCalled()).resolves.toBe('not called')
   })
 
   it('has no /remove- form and does not run when not configured', async () => {
