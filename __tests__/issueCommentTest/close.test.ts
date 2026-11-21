@@ -107,6 +107,32 @@ describe('/close', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
+  // the webhook schema allows `issue.user: null` (a deleted account); a collaborator's /close
+  // on such an issue is checked as a collaborator, not failed on reading the author
+  it('lets a collaborator close an issue whose author account is gone', async () => {
+    const payload = structuredClone(issueCommentEvent)
+    payload.comment.body = '/close'
+    Object.assign(payload.issue, { user: null })
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(new utils.MockContext(payload))
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({ state: 'closed' })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
   it.each(['/close not-planned', '/close NOT-PLANNED', '/CLOSE Not-Planned'])('closes as not planned with %s', async (body) => {
     issueCommentEvent.comment.body = body
 

@@ -106,6 +106,32 @@ describe('/reopen', () => {
     await expect(observeAuth.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
   })
+
+  // the webhook schema allows `issue.user: null` (a deleted account); a collaborator's /reopen
+  // on such an issue is checked as a collaborator, not failed on reading the author
+  it('lets a collaborator reopen an issue whose author account is gone', async () => {
+    const payload = structuredClone(issueCommentEvent)
+    payload.comment.body = '/reopen'
+    Object.assign(payload.issue, { user: null })
+
+    const observeReq = new utils.ObserveRequest()
+    server.use(
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+      http.patch(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, null, observeReq),
+      ),
+    )
+
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(new utils.MockContext(payload))
+    await observeReq.called()
+    expect(await observeReq.body()).toEqual({ state: 'open' })
+    expect(setFailed).not.toHaveBeenCalled()
+  })
 })
 
 describe('authorization.close for /reopen', () => {
