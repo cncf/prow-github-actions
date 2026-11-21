@@ -2,7 +2,7 @@ import { http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { createComment, createCommentOnce, isBotUser } from '../../src/utils/comments'
+import { createComment, createCommentOnce, isBotUser, normalizeLogin } from '../../src/utils/comments'
 import { newOctokit } from '../../src/utils/octokit'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
 import * as utils from '../testUtils'
@@ -27,6 +27,18 @@ describe('isBotUser', () => {
     ['undefined', undefined, false],
   ])('%s', (_name, user, expected) => {
     expect(isBotUser(user)).toBe(expected)
+  })
+})
+
+describe('normalizeLogin', () => {
+  it.each([
+    ['lowercases and drops a trailing [bot]', 'My-App[bot]', 'my-app'],
+    ['leaves a login without the suffix as it is, lowercased', 'Codertocat', 'codertocat'],
+    // only the suffix is dropped: the two logins that compare equal are `x[bot]` and `x`
+    ['leaves an interior [bot] untouched', 'my[bot]app', 'my[bot]app'],
+    ['drops only the last of two suffixes', 'my-app[bot][bot]', 'my-app[bot]'],
+  ])('%s', (_name, login, expected) => {
+    expect(normalizeLogin(login)).toBe(expected)
   })
 })
 
