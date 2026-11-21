@@ -262,6 +262,8 @@ set scores 95.18 %, hence the `break` of 94):
 | `approve.ts:398` `present.length > 0` → `true` / `>= 0` | `removeLabels` with an empty list issues no request, so the guard only saves a loop |
 | `approve.ts:414` `body.trim()` → `body` | The notifier `body` starts with text and ends with the marker, so it has nothing to trim |
 | `approve.ts:460`, `:486` `action === undefined` → `false` | `Set.has(undefined)` is false, so the second half of the `\|\|` skips the same payloads |
+| `approve.ts:491` `review?.id` → `review.id` in a debug line | Reached only after `review?.body` included the marker, so `review` is present |
+| `approve.ts:514` `pull_request?.base` → `pull_request.base` | Both callers pass `pull_request?.number`, and `evaluateOnOwnersRepo` throws on `undefined` before this line |
 
 Reviewed survivors of `lgtmBinding.ts` and `labels/lgtm.ts` (`npm run
 test:mutation -- --mutate src/plugins/lgtmBinding.ts,src/labels/lgtm.ts` at
@@ -274,8 +276,6 @@ test:mutation -- --mutate src/plugins/lgtmBinding.ts,src/labels/lgtm.ts` at
 | `lgtmBinding.ts:154` `label?.name ?? ''` → a placeholder | A placeholder is not `lgtm`, so the handler returns exactly as it does for an unnamed label |
 | `lgtmBinding.ts:160`, `:175`, `:176` `sender?.login`, `pull_request?.html_url`, `pull_request?.number` → `.login`, `.html_url`, `.number` | The `labeled` payload always carries `sender` and `pull_request`; the `sha` guard before them already throws on a payload without `pull_request` |
 | `lgtm.ts:31`, `:32`, `:63` `comment?.body`, `comment?.user?.login`, `comment?.html_url` → `.body`, `.user.login`, `.html_url` | `lgtm` runs on `issue_comment` events, which always carry `comment` and its `user`; the two differ only on a payload GitHub never sends |
-| `approve.ts:491` `review?.id` → `review.id` in a debug line | Reached only after `review?.body` included the marker, so `review` is present |
-| `approve.ts:514` `pull_request?.base` → `pull_request.base` | Both callers pass `pull_request?.number`, and `evaluateOnOwnersRepo` throws on `undefined` before this line |
 
 Reviewed survivors of the default set:
 
