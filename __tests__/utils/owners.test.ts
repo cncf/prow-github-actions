@@ -51,6 +51,24 @@ describe('parseOwners', () => {
     expect(parseOwners('OWNERS', '')).toMatchObject({ approvers: [], reviewers: [] })
   })
 
+  // js-yaml 5 rejects whitespace-only input ("expected a document, but the
+  // input is empty") where 4.x returned undefined, so a file holding only a
+  // newline parses as empty solely because the contents are trimmed first.
+  it.each([
+    ['a single newline', '\n'],
+    ['blank lines', '\n\n\n'],
+    ['spaces and tabs', '  \t  '],
+    ['spaces around a newline', '  \n  '],
+  ])('treats a whitespace-only file (%s) as an empty file rather than invalid YAML', (_name, contents) => {
+    expect(parseOwners('OWNERS', contents)).toEqual({
+      path: 'OWNERS',
+      approvers: [],
+      reviewers: [],
+      labels: [],
+      noParentOwners: false,
+    })
+  })
+
   it('lowercases logins', () => {
     const owners = parseOwners('OWNERS', 'approvers:\n- Alice\nreviewers:\n- BOB\n')
 
