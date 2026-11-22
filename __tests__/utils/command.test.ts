@@ -257,6 +257,29 @@ describe('code blocks', () => {
     expect(hasCommand('/approve', '> quoted\n> /approve')).toBe(false)
   })
 
+  it('treats a whitespace-only line as a blank line before indented code', () => {
+    // CommonMark: a line of only spaces or tabs is blank, so the indented line after it is code
+    expect(hasCommand('/approve', 'try this:\n  \n    /approve')).toBe(false)
+    expect(hasCommand('/approve', 'try this:\n    \n    /approve')).toBe(false)
+    expect(hasCommand('/approve', 'try this:\n\t\n\t/approve')).toBe(false)
+  })
+
+  it('does not treat a fence preceded by text on its line as an opener or a closer', () => {
+    // the fence pattern is anchored to the line start (after up to 3 spaces)
+    expect(hasCommand('/lgtm', 'like this: ```\n/lgtm')).toBe(true)
+
+    const body = '```\n/approve\nnot a closer ```\n/lgtm\n```\n/hold'
+
+    expect(hasCommand('/approve', body)).toBe(false)
+    expect(hasCommand('/lgtm', body)).toBe(false)
+    expect(hasCommand('/hold', body)).toBe(true)
+  })
+
+  it('handles a body with bare CR line endings', () => {
+    expect(getCommandArgs('/kind', '/kind bug\r/kind cleanup')).toEqual(['bug', 'cleanup'])
+    expect(commandLines('a\rb\r\nc')).toEqual(['a', 'b', 'c'])
+  })
+
   it('handles fences in a CRLF body', () => {
     const body = 'try:\r\n```\r\n/kind bug\r\n```\r\n/kind cleanup\r\n'
 
