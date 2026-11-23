@@ -43,6 +43,20 @@ describe('/label-sync', () => {
     expect((await observeComment.body()).body).toBe('label-sync: created 2, updated 1, unchanged 7.\nCreated: `kind/bug`, `lgtm`\nUpdated: `approved`')
   })
 
+  it('lists two or more updated labels comma-separated and omits the Created line when nothing was created', async () => {
+    vi.mocked(job.labelSync).mockResolvedValue({ created: [], updated: ['approved', 'lgtm'], unchanged: 5, failures: [] })
+    const observeComment = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/collaborators/Codertocat`, utils.mockResponse(204)),
+      http.post(`${repo}/issues/1/comments`, utils.mockResponse(201, {}, observeComment)),
+    )
+
+    await handleIssueComment(commentContext())
+
+    await observeComment.called()
+    expect((await observeComment.body()).body).toBe('label-sync: created 0, updated 2, unchanged 5.\nUpdated: `approved`, `lgtm`')
+  })
+
   it('reports a run that changed nothing in one line', async () => {
     vi.mocked(job.labelSync).mockResolvedValue({ created: [], updated: [], unchanged: 19, failures: [] })
     const observeComment = new utils.ObserveRequest()
