@@ -439,6 +439,22 @@ describe('the Worker', () => {
     expect(labeled.at - deferred.at).toBeGreaterThanOrEqual(2_500)
   })
 
+  it('rounds a grace period up to the queue\'s whole-second delay, so the resumed run never starts before the period ends', async () => {
+    // Queues take delaySeconds as an integer; deferViaQueue rounds 1400ms up to 2s (Math.ceil). The 3s case above
+    // cannot tell that from rounding down or to the nearest, either of which would resume a 1400ms grace after one
+    // second, inside the period
+    const log = await mf.getKVNamespace('LOG', 'github')
+    await log.put('prow.yaml', requireKind.replace('grace_period_duration: 1s', 'grace_period_duration: 1400ms'))
+
+    expect((await deliver('pull_request', withInstallation(pullReqOpenedEvent), 'd-grace-rounded')).status).toBe(202)
+    await eventually(async () => (await githubSaw()).some(s => s.method === 'POST' && s.path.endsWith('/issues/1/labels')))
+
+    const seen = await githubSaw()
+    const deferred = seen.find(s => s.path.endsWith('/contents/.github/prow.yaml'))!
+    const labeled = seen.find(s => s.method === 'POST' && s.path.endsWith('/issues/1/labels'))!
+    expect(labeled.at - deferred.at).toBeGreaterThanOrEqual(1_400)
+  })
+
   it('a deferred check carries the delivery once, so a payload over half the queue\'s 128 KB limit still defers', async () => {
     const log = await mf.getKVNamespace('LOG', 'github')
     await log.put('prow.yaml', requireKind)
