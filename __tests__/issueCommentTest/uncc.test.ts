@@ -244,7 +244,7 @@ describe('/uncc', () => {
   })
 
   it('does not uncc another user when commenter is not authorized', async () => {
-    issueCommentEvent.comment.body = '/uncc @some-user'
+    issueCommentEvent.comment.body = '/uncc @some-user @other-user'
 
     server.use(
       http.get(
@@ -275,6 +275,8 @@ describe('/uncc', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
+    // the info line is the run's only record of the refusal; it names the commenter and every reviewer left requested
+    expect(core.info).toHaveBeenCalledWith('uncc: Codertocat is not an org member or repo collaborator; not removing some-user, other-user')
   })
 
   it('does not self uncc when commenter is not a collaborator', async () => {

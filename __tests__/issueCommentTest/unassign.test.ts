@@ -185,7 +185,7 @@ describe('/unassign', () => {
   })
 
   it('does not unassign another user when commenter is not authorized', async () => {
-    issueCommentEventUnassign.comment.body = '/unassign @some-user'
+    issueCommentEventUnassign.comment.body = '/unassign @some-user @other-user'
 
     server.use(
       http.get(
@@ -216,6 +216,8 @@ describe('/unassign', () => {
     await handleIssueComment(commentContext)
     await expect(observeReq.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
+    // the info line is the run's only record of the refusal; it names the commenter and every user left assigned
+    expect(core.info).toHaveBeenCalledWith('unassign: Codertocat is not an org member or repo collaborator; not unassigning some-user, other-user')
   })
 
   it('does not unassign another user when the commenter has only commented before', async () => {
