@@ -147,6 +147,22 @@ describe('labelIssue refuses labels the repository does not have', () => {
     expect(new URL(observeLabels.ref!.url).searchParams.get('per_page')).toBe('100')
   })
 
+  it('memoizes per repository: a second repository without the label is not answered from the first', async () => {
+    // the App server and a cron run label across repositories within one state; a key
+    // without the repository would let Hello-World's labels pass the existence check on Other
+    const other = `${utils.api}/repos/Codertocat/Other`
+    server.use(
+      utils.repoHasLabels(['kind/bug']),
+      http.get(`${other}/labels`, utils.mockResponse(200, [{ name: 'area/api' }])),
+    )
+    const otherContext = new utils.MockContext({ repository: { owner: { login: 'Codertocat' }, name: 'Other' } })
+
+    await expect(assertLabelsExist(octokit, context, ['kind/bug'])).resolves.toBeUndefined()
+    await expect(assertLabelsExist(octokit, otherContext, ['kind/bug'])).rejects.toThrow(
+      `the label(s) kind/bug cannot be applied because the repository doesn't have them. Run the label-sync job or create them.`,
+    )
+  })
+
   it('assertLabelsExist follows pagination', async () => {
     server.use(
       http.get(`${repo}/labels`, ({ request }) => {
