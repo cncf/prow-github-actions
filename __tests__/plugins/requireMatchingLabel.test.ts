@@ -118,6 +118,8 @@ const humanComment = { id: 12, body: `I pasted the marker by hand ${marker}`, us
 const appBotComment = { id: 13, body: `Please add a kind label.\n\n${marker}`, user: { login: 'other-app[bot]', type: 'Bot' } }
 // a comment whose author deleted their account: GitHub answers `user: null`
 const ghostComment = { id: 14, body: `Please add a kind label.\n\n${marker}`, user: null }
+// the github-actions login reported under another user type: isBot's login arm, not its type arm
+const actionsUserComment = { id: 15, body: `Please add a kind label.\n\n${marker}`, user: { login: 'github-actions[bot]', type: 'User' } }
 
 describe('evaluate', () => {
   it.each([
@@ -278,6 +280,33 @@ describe('requireMatchingLabel handler', () => {
     await requireMatchingLabel(new utils.MockContext(issueEvent('labeled', ['kind/bug', 'needs-kind'], 'kind/bug')))
 
     expect(deleted).toEqual(['13'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('treats a github-actions[bot] comment as its own by login alone when the user type is not Bot', async () => {
+    serveRules([kindRule])
+    serveIssue(['kind/bug', 'needs-kind'], [humanComment, actionsUserComment])
+    const deleted: string[] = []
+    server.use(http.delete(`${repo}/issues/comments/:id`, ({ params }) => {
+      deleted.push(String(params.id))
+      return new Response(null, { status: 204 })
+    }))
+
+    await requireMatchingLabel(new utils.MockContext(issueEvent('labeled', ['kind/bug', 'needs-kind'], 'kind/bug')))
+
+    expect(deleted).toEqual(['15'])
+    expect(setFailed).not.toHaveBeenCalled()
+  })
+
+  it('does not post a second comment when the existing marker comment is github-actions[bot] under another user type', async () => {
+    serveRules([kindRule])
+    const writes = serveIssue([], [actionsUserComment])
+
+    await requireMatchingLabel(new utils.MockContext(issueEvent('opened', [])))
+
+    await expect(writes.addLabels.called()).resolves.toBe('called')
+    await expect(writes.listComments.called()).resolves.toBe('called')
+    await expect(writes.postComment.notCalled()).resolves.toBe('not called')
     expect(setFailed).not.toHaveBeenCalled()
   })
 
