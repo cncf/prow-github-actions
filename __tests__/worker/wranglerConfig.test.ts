@@ -8,14 +8,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { unstable_getMiniflareWorkerOptions, unstable_readConfig } from 'wrangler'
 
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
+import { treeRoot } from '../treeRoot'
 
 // wrangler.toml is what `wrangler deploy` ships, yet `wrangler deploy --dry-run` accepts a binding the
 // Worker never reads, a read the file never binds, and a Durable Object with no migration. worker.test.ts
 // spells its own miniflare bindings out, so it cannot see the file drift either. This suite reads the
 // committed file through wrangler itself: statically against the names src/server/worker.ts dereferences
 // and docs/github-app.md tells the operator to create, then by running the bundle under exactly the
-// bindings the file declares.
-const root = path.resolve(__dirname, '..', '..')
+// bindings the file declares. The sources are the tree's copies: a Stryker sandbox holds instrumented
+// ones the name patterns below cannot read.
+const root = treeRoot(path.resolve(__dirname, '..'))
 const configPath = path.join(root, 'wrangler.toml')
 const workerSource = readFileSync(path.join(root, 'src/server/worker.ts'), 'utf8')
 const settingsSource = readFileSync(path.join(root, 'src/adapters/app/settings.ts'), 'utf8')
