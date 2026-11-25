@@ -49,6 +49,31 @@ describe('parseProwConfig type guards', () => {
   })
 })
 
+// A bare key (`tide:` with nothing under it, as a file is left after its
+// nested lines are commented out) loads as null, which is not undefined, so
+// it reaches the section's normalizer. The null half of isMapping is the only
+// thing standing between that and a TypeError on the first property read; the
+// cases above all pass a list, string, number or boolean instead.
+describe('parseProwConfig on a bare key, which yaml loads as null', () => {
+  it.each(['tide', 'hold', 'blunderbuss', 'approve', 'lgtm', 'sweep', 'authorization'])('rejects a bare %s: as not a mapping', (key) => {
+    expect(() => parseProwConfig('x', `${key}:\n`)).toThrow(`x: ${key} must be a mapping`)
+  })
+
+  it('rejects a bare require_matching_label: as not a list', () => {
+    expect(() => parseProwConfig('x', 'require_matching_label:\n')).toThrow('x: require_matching_label must be a list')
+  })
+
+  it('rejects a bare section under labels, and a bare top-level labels:, as a malformed section', () => {
+    const malformed = 'yaml malformed, expected a list of values or { values: [...], exclusive: bool }'
+
+    expect(() => parseProwConfig('x', 'labels:\n  kind:\n')).toThrow(`kind: ${malformed}`)
+    // a null `labels` is neither a mapping nor absent, so the file is read in
+    // the legacy form, where `labels` is itself a section
+    expect(() => parseProwConfig('x', 'labels:\n')).toThrow(`labels: ${malformed}`)
+    expect(() => parseProwConfig('x', 'labels:\ntide:\n  merge_method: squash\n')).toThrow(`labels: ${malformed}`)
+  })
+})
+
 describe('an https:// config source', () => {
   const server = setupServer()
   utils.failTestOnUnhandledRequests(server)
