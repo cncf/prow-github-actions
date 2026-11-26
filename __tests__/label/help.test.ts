@@ -86,12 +86,14 @@ describe('/help and /good-first-issue', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('/remove-help removes both labels when present', async () => {
+  it('/remove-help removes both labels when present and logs the issue labels under the command name without its slash', async () => {
     const { mutations } = serveIssueAndRecordMutations(['help wanted', 'good first issue'])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 
     const setFailed = await run('/help', '/remove-help')
 
     expect(mutations).toEqual(['DELETE help%20wanted', 'DELETE good%20first%20issue'])
+    expect(debug).toHaveBeenCalledWith('help: found labels for issue some-label,some-other-label,help wanted,good first issue')
     expect(setFailed).not.toHaveBeenCalled()
   })
 
@@ -113,12 +115,15 @@ describe('/help and /good-first-issue', () => {
     expect(setFailed).not.toHaveBeenCalled()
   })
 
-  it('/remove-help is a no-op when neither label is on the issue', async () => {
+  // removeLabels([]) would also send nothing, so the early return is pinned by its debug line
+  it('/remove-help is a no-op when neither label is on the issue and says so in the debug log', async () => {
     const { mutations } = serveIssueAndRecordMutations([])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 
     const setFailed = await run('/help', '/remove-help')
 
     expect(mutations).toEqual([])
+    expect(debug).toHaveBeenCalledWith('help: none of help wanted,good first issue are on the issue')
     expect(setFailed).not.toHaveBeenCalled()
   })
 

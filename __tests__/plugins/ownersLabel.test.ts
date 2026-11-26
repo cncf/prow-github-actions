@@ -80,11 +80,14 @@ describe('ownersLabel', () => {
   it('skips labels already on the pull request, compared case-insensitively, and posts nothing when none is missing', async () => {
     server.use(...prHandlers({ 'sdk/OWNERS': sdkOwners }, ['sdk/x.go']))
     const reads = serveIssue(['AREA/SDK', 'area/shared'], ['area/sdk', 'area/shared'])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 
     await ownersLabel(prEvent('opened'))
 
     await expect(reads.addLabels.notCalled()).resolves.toBe('not called')
     expect(reads.repoLabels.ref).toBeNull()
+    // the declared labels, as OWNERS spells them, comma-separated
+    expect(debug).toHaveBeenCalledWith('owners-label: #1 already carries area/sdk, Area/Shared')
   })
 
   it('adds only the missing label when some are already present', async () => {
@@ -121,12 +124,14 @@ describe('ownersLabel', () => {
   it('does nothing beyond the OWNERS reads when no covering OWNERS declares labels', async () => {
     server.use(...prHandlers({ OWNERS: 'approvers:\n- alice\n' }, ['src/file1.txt']))
     const reads = serveIssue([], ['kind/root'])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
 
     await ownersLabel(prEvent('opened'))
 
     await expect(reads.addLabels.notCalled()).resolves.toBe('not called')
     expect(reads.issue.ref).toBeNull()
     expect(reads.repoLabels.ref).toBeNull()
+    expect(debug).toHaveBeenCalledWith('owners-label: no OWNERS file covering the changed files declares labels')
   })
 
   it('ignores labels of OWNERS files that cover none of the changed files', async () => {
