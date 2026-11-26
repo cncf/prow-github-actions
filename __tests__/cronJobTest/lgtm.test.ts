@@ -366,6 +366,25 @@ describe('cronLgtm', () => {
     expect(error).not.toHaveBeenCalled()
   })
 
+  it('logs the start of the run, the listing and each pr it processes', async () => {
+    utils.setupJobsEnv('lgtm')
+    const context = new utils.MockContext(pullReqOpenedEvent)
+    routePulls([lgtmPr(2), lgtmPr(9)])
+    observeMerge(2)
+    observeMerge(9)
+
+    const info = vi.spyOn(core, 'info')
+    const debug = vi.spyOn(core, 'debug')
+    await expect(handleCronJobs(context)).resolves.not.toThrow()
+
+    expect(info).toHaveBeenCalledWith('starting lgtm merger')
+    expect(debug).toHaveBeenCalledWith('getting open prs...')
+    expect(debug).toHaveBeenCalledWith('got: 2 open prs')
+    // one line per listed pr, naming its number
+    expect(info).toHaveBeenCalledWith('processing pr: 2')
+    expect(info).toHaveBeenCalledWith('processing pr: 9')
+  })
+
   it('attempts every PR and fails the run listing the merge that failed', async () => {
     utils.setupJobsEnv('lgtm')
     const context = new utils.MockContext(pullReqOpenedEvent)
