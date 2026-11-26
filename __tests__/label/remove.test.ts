@@ -111,6 +111,33 @@ describe('remove', () => {
     )
   })
 
+  it('logs the labels read from the issue before removing', async () => {
+    issueCommentEvent.comment.body = '/remove some-label'
+    const commentContext = new utils.MockContext(issueCommentEvent)
+
+    server.use(
+      http.delete(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1/labels/some-label`,
+        utils.mockResponse(200),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/issues/1`,
+        utils.mockResponse(200, issuePayload),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/collaborators/Codertocat`,
+        utils.mockResponse(204),
+      ),
+    )
+
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+    const setFailed = vi.spyOn(core, 'setFailed').mockImplementation(() => {})
+    await handleIssueComment(commentContext)
+    expect(setFailed).not.toHaveBeenCalled()
+    // the issue's labels, comma-joined, as read from the issue before the filter
+    expect(debug).toHaveBeenCalledWith('remove: found labels for issue some-label,some-other-label')
+  })
+
   it('fails when none of the requested labels are on the issue', async () => {
     issueCommentEvent.comment.body = '/remove not-present'
     const commentContext = new utils.MockContext(issueCommentEvent)

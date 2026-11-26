@@ -51,11 +51,13 @@ describe('/assign', () => {
 
     const commentContext = new utils.MockContext(issueCommentEventAssign)
 
+    const debug = vi.spyOn(core, 'debug')
     await handleIssueComment(commentContext)
     await observeReq.called()
     expect(await observeReq.body()).toMatchObject({
       assignees: ['Codertocat'],
     })
+    expect(debug).toHaveBeenCalledWith('starting assign job')
   })
 
   it('handles assigning another user with /assign @username', async () => {
