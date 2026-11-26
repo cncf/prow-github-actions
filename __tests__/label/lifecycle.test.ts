@@ -263,4 +263,48 @@ describe('built-in lifecycle, stage and status commands', () => {
       })
     })
   })
+
+  // the same yaml override applies to the other two built-in sections, each under its own key
+  describe.each([
+    ['/stage', 'stage', 'beta', 'ga'],
+    ['/status', 'status', 'in-review', 'blocked'],
+  ])('with a %s section in the yaml', (command, key, builtIn, configured) => {
+    const override = yamlFile(`${key}:\n  - ${configured}\n`)
+
+    it(`${command} refuses a built-in value the yaml section left out`, async () => {
+      const mutations = serveIssueAndRecordMutations([], override)
+
+      const setFailed = await run(command, `${command} ${builtIn}`)
+
+      expect(mutations).toEqual([])
+      expect(setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(`${key}: no allowed value in "${builtIn}"; allowed: ${configured}`),
+      )
+    })
+
+    it(`${command} applies a yaml value and reads the section from the yaml, not the built-ins`, async () => {
+      const mutations = serveIssueAndRecordMutations([], override)
+      server.use(utils.repoHasLabels([`${key}/${configured}`]))
+      const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+
+      const setFailed = await run(command, `${command} ${configured}`)
+
+      expect(mutations).toEqual([`POST ${key}/${configured}`])
+      expect(setFailed).not.toHaveBeenCalled()
+      expect(debug).toHaveBeenCalledWith(`${key}: found labels ${configured}`)
+    })
+  })
+
+  it.each([
+    ['/stage', 'stage', 'beta', 'alpha,beta,stable'],
+    ['/status', 'status', 'in-review', 'approved-for-milestone,in-progress,in-review'],
+  ])('%s reads the built-in section when the yaml has no %s key', async (command, key, value, builtIns) => {
+    serveIssueAndRecordMutations([])
+    const debug = vi.spyOn(core, 'debug').mockImplementation(() => {})
+
+    const setFailed = await run(command, `${command} ${value}`)
+
+    expect(setFailed).not.toHaveBeenCalled()
+    expect(debug).toHaveBeenCalledWith(`${key}: using built-in labels ${builtIns}`)
+  })
 })

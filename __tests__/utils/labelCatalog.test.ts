@@ -73,6 +73,19 @@ labels:
     expect(result).toContain('stage/alpha')
   })
 
+  it.each([
+    ['stage', 'ga', ['stage/alpha', 'stage/beta', 'stage/stable']],
+    ['status', 'blocked', ['status/approved-for-milestone', 'status/in-progress', 'status/in-review']],
+  ])('a yaml %s section replaces that key\'s built-ins and leaves the other sections alone', (key, value, builtIns) => {
+    const result = names(configFrom(`labels:\n  ${key}: [${value}]\n`))
+
+    expect(result).toContain(`${key}/${value}`)
+    for (const builtIn of builtIns) {
+      expect(result).not.toContain(builtIn)
+    }
+    expect(result).toContain('lifecycle/stale')
+  })
+
   it('includes dynamic sections outside the registry', () => {
     expect(names(configFrom('labels:\n  level:\n    values: [sandbox, incubation]\n    exclusive: true\n'))).toEqual(
       expect.arrayContaining(['level/sandbox', 'level/incubation']),
