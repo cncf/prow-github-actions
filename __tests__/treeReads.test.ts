@@ -17,14 +17,21 @@ import { treeRoot } from './treeRoot'
 const root = treeRoot(__dirname)
 const testsDir = path.join(root, '__tests__')
 
-/** the suites that read src/ as text, each with the module that defines the `root` they read from */
-const srcTextReaders: Record<string, string> = {
-  '__tests__/commands.test.ts': '__tests__/commands.test.ts',
-  '__tests__/jobsDocs.test.ts': '__tests__/jobsDocs.test.ts',
-  '__tests__/workflows.test.ts': '__tests__/utils/workflowYaml.ts',
-  '__tests__/worker/entryPoints.test.ts': '__tests__/utils/workflowYaml.ts',
-  '__tests__/worker/wranglerConfig.test.ts': '__tests__/worker/wranglerConfig.test.ts',
-}
+/**
+ * the suites known to read src/ as text: a floor for the scan below, so a regex that stops
+ * matching them cannot make the gate pass with nothing to check
+ */
+const knownReaders = [
+  '__tests__/commands.test.ts',
+  '__tests__/jobsDocs.test.ts',
+  '__tests__/worker/entryPoints.test.ts',
+  '__tests__/worker/wranglerConfig.test.ts',
+  '__tests__/workflows.test.ts',
+]
+
+/** the one module a suite may take `root` from instead of defining it, and the import that does so */
+const sharedRoot = '__tests__/utils/workflowYaml.ts'
+const importsSharedRoot = /import \{[^}]*\broot\b[^}]*\} from '(?:\.\.\/)*(?:\.\/)?utils\/workflowYaml'/
 
 /** suites that name src/ files and read files, but do not match code patterns against a src/ file */
 const notPatternReaders = [
@@ -52,32 +59,31 @@ function text(file: string): string {
 
 const readsFiles = /\bread(?:File|dir)Sync\(/
 const namesSrc = /'src(?:\/[^']*\.ts)?'/
+const importsTreeRoot = /import \{ treeRoot \} from '(?:\.\.\/)*(?:\.\/)?treeRoot'/
+const definesRoot = /\bconst root = treeRoot\(/
+
+/** every suite outside the bundle harness that names a src/ file and reads files, itself or through the shared root */
+const srcTextReaders = testFiles(testsDir)
+  .filter(file => !file.startsWith('__tests__/bundle/'))
+  .filter(file => !notPatternReaders.includes(file))
+  .filter((file) => {
+    const source = text(file)
+    return namesSrc.test(source) && (readsFiles.test(source) || importsSharedRoot.test(source))
+  })
 
 describe('tests that read src/ as text', () => {
-  it('each take their root from treeRoot()', () => {
-    for (const [suite, rootModule] of Object.entries(srcTextReaders)) {
-      const source = text(rootModule)
-      expect(source, `${rootModule} (root of ${suite}) must import treeRoot`).toMatch(/import \{ treeRoot \} from '(?:\.\.\/)*(?:\.\/)?treeRoot'/)
-      expect(source, `${rootModule} (root of ${suite}) must define root through treeRoot()`).toMatch(/\bconst root = treeRoot\(/)
-    }
+  it('include the known readers, so the scan cannot go quiet', () => {
+    expect(srcTextReaders).toEqual(expect.arrayContaining(knownReaders))
   })
 
-  it('each still read src/ as text, so the list above does not go stale', () => {
-    for (const [suite, rootModule] of Object.entries(srcTextReaders)) {
+  it('each take their root from treeRoot(), directly or through the shared root', () => {
+    for (const suite of srcTextReaders) {
       const source = text(suite)
-      expect(source, `${suite} no longer names a src/ file`).toMatch(namesSrc)
-      expect(readsFiles.test(source) || readsFiles.test(text(rootModule)), `${suite} no longer reads files`).toBe(true)
+      const rootModule = definesRoot.test(source) ? suite : importsSharedRoot.test(source) ? sharedRoot : undefined
+      expect(rootModule, `${suite} reads src/ as text but neither defines root through treeRoot() nor imports it from ${sharedRoot}`).toBeDefined()
+      const rootSource = text(rootModule as string)
+      expect(rootSource, `${rootModule} (root of ${suite}) must import treeRoot`).toMatch(importsTreeRoot)
+      expect(rootSource, `${rootModule} (root of ${suite}) must define root through treeRoot()`).toMatch(definesRoot)
     }
-  })
-
-  it('are all listed, so a new one cannot read the Stryker sandbox copy unnoticed', () => {
-    const readers = testFiles(testsDir)
-      .filter(file => !file.startsWith('__tests__/bundle/'))
-      .filter(file => !notPatternReaders.includes(file))
-      .filter((file) => {
-        const source = text(file)
-        return namesSrc.test(source) && (readsFiles.test(source) || source.includes(`from './utils/workflowYaml'`) || source.includes(`from '../utils/workflowYaml'`))
-      })
-    expect(readers).toEqual(Object.keys(srcTextReaders).sort())
   })
 })
