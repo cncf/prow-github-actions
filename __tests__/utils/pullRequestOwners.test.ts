@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { Octokit } from '@octokit/rest'
 import { http } from 'msw'
@@ -356,6 +357,96 @@ describe('loadPullRequestOwners', () => {
       await loadPullRequestOwners(octokit, context, 1)
 
       await observeBranch.called()
+    })
+
+    it('memoizes OWNERS_ALIASES per repository and base tip across pull requests', async () => {
+      let aliasBlobs = 0
+      const aliasesYaml = 'aliases:\n  api-approvers:\n    - alice\n'
+      const ownersYaml = 'approvers:\n- api-approvers\n'
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      server.use(
+        http.get(`${repo}/pulls/:number`, ({ params }) => json({ number: Number(params.number), base: { ref: baseBranch, sha: baseSha }, head: { sha: 'headsha' } })),
+        http.get(`${repo}/pulls/:number/files`, utils.mockResponse(200, changedFiles('src/file1.txt'))),
+        branchHandler(baseSha),
+        http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(200, {
+          sha: baseSha,
+          truncated: false,
+          tree: [
+            { path: 'OWNERS', mode: '100644', type: 'blob', sha: blobSha('OWNERS') },
+            { path: 'OWNERS_ALIASES', mode: '100644', type: 'blob', sha: blobSha('OWNERS_ALIASES') },
+          ],
+        })),
+        http.get(`${repo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(200, {
+          sha: blobSha('OWNERS'),
+          encoding: 'base64',
+          content: Buffer.from(ownersYaml).toString('base64'),
+        })),
+        http.get(`${repo}/git/blobs/${blobSha('OWNERS_ALIASES')}`, () => {
+          aliasBlobs++
+          return json({
+            sha: blobSha('OWNERS_ALIASES'),
+            encoding: 'base64',
+            content: Buffer.from(aliasesYaml).toString('base64'),
+          })
+        }),
+      )
+
+      const [one, two] = await Promise.all([loadPullRequestOwners(octokit, context, 1), loadPullRequestOwners(octokit, context, 2)])
+
+      expect([...one.perFile.get('src/file1.txt')!.approvers]).toEqual(['alice'])
+      expect([...two.perFile.get('src/file1.txt')!.approvers]).toEqual(['alice'])
+      expect(aliasBlobs).toBe(1)
+
+      // a second repository at the same base sha does not reuse the first repository's aliases
+      server.use(
+        http.get(`${otherRepo}/pulls/1`, utils.mockResponse(200, { base: { ref: baseBranch, sha: baseSha }, head: { sha: 'headsha' } })),
+        http.get(`${otherRepo}/pulls/1/files`, utils.mockResponse(200, changedFiles('src/file1.txt'))),
+        http.get(`${otherRepo}/branches/${baseBranch}`, utils.mockResponse(200, { name: baseBranch, commit: { sha: baseSha } })),
+        http.get(`${otherRepo}/git/trees/${baseSha}`, utils.mockResponse(200, {
+          sha: baseSha,
+          truncated: false,
+          tree: [
+            { path: 'OWNERS', mode: '100644', type: 'blob', sha: blobSha('OWNERS') },
+            { path: 'OWNERS_ALIASES', mode: '100644', type: 'blob', sha: blobSha('OWNERS_ALIASES') },
+          ],
+        })),
+        http.get(`${otherRepo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(200, {
+          sha: blobSha('OWNERS'),
+          encoding: 'base64',
+          content: Buffer.from(ownersYaml).toString('base64'),
+        })),
+        http.get(`${otherRepo}/git/blobs/${blobSha('OWNERS_ALIASES')}`, utils.mockResponse(200, {
+          sha: blobSha('OWNERS_ALIASES'),
+          encoding: 'base64',
+          content: Buffer.from('aliases:\n  api-approvers:\n    - bob\n').toString('base64'),
+        })),
+      )
+
+      const other = await loadPullRequestOwners(octokit, otherContext, 1)
+      expect([...other.perFile.get('src/file1.txt')!.approvers]).toEqual(['bob'])
+
+      // a second base branch / ref in the same repository does not reuse the first ref's aliases
+      server.use(
+        http.get(`${repo}/pulls/3`, utils.mockResponse(200, { base: { ref: 'release-1', sha: 'release-sha' }, head: { sha: 'headsha' } })),
+        http.get(`${repo}/pulls/3/files`, utils.mockResponse(200, changedFiles('src/file1.txt'))),
+        http.get(`${repo}/branches/release-1`, utils.mockResponse(200, { name: 'release-1', commit: { sha: 'release-sha' } })),
+        http.get(`${repo}/git/trees/release-sha`, utils.mockResponse(200, {
+          sha: 'release-sha',
+          truncated: false,
+          tree: [
+            { path: 'OWNERS', mode: '100644', type: 'blob', sha: blobSha('OWNERS') },
+            { path: 'OWNERS_ALIASES', mode: '100644', type: 'blob', sha: 'release-aliases-sha' },
+          ],
+        })),
+        http.get(`${repo}/git/blobs/release-aliases-sha`, utils.mockResponse(200, {
+          sha: 'release-aliases-sha',
+          encoding: 'base64',
+          content: Buffer.from('aliases:\n  api-approvers:\n    - carol\n').toString('base64'),
+        })),
+      )
+
+      const release = await loadPullRequestOwners(octokit, context, 3)
+      expect([...release.perFile.get('src/file1.txt')!.approvers]).toEqual(['carol'])
     })
   })
 })

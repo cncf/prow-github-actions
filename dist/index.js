@@ -37434,6 +37434,7 @@ function newRunState() {
         configs: new Map(),
         repoLabels: new Map(),
         ownerGroups: new Map(),
+        ownerAliases: new Map(),
         ownerWarnings: new Set(),
         trees: new Map(),
         hasOwners: new Map(),
@@ -42318,6 +42319,7 @@ function isForbidden(error) {
 
 
 
+const ownersAliasesPath = 'OWNERS_ALIASES';
 /**
  * Parse the contents of an OWNERS file. Logins are lowercased because GitHub
  * logins are case-insensitive.
@@ -42357,6 +42359,64 @@ function stringList(path, doc, key, what) {
         throw new Error(`OWNERS at ${path}: ${key} must be a list of ${what}`);
     }
     return value;
+}
+/**
+ * Parse the contents of a root OWNERS_ALIASES file. Alias names and member
+ * logins are lowercased because GitHub logins are case-insensitive.
+ *
+ * @param contents - the yaml contents
+ */
+function parseOwnersAliases(contents) {
+    // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+    const documents = loadAll(contents);
+    if (documents.length > 1) {
+        throw new YAMLException('expected a single document in the stream, but found more');
+    }
+    const loaded = documents[0];
+    const doc = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
+        ? loaded
+        : {};
+    const raw = doc.aliases;
+    if (raw === undefined || raw === null) {
+        return new Map();
+    }
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new TypeError(`${ownersAliasesPath}: aliases must be a mapping of alias names to lists of GitHub usernames`);
+    }
+    const aliases = new Map();
+    for (const [name, value] of Object.entries(raw)) {
+        if (value === null) {
+            aliases.set(name.toLowerCase(), []);
+            continue;
+        }
+        if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
+            throw new Error(`${ownersAliasesPath}: alias ${name} must be a list of GitHub usernames`);
+        }
+        aliases.set(name.toLowerCase(), value.map(v => v.toLowerCase()));
+    }
+    return aliases;
+}
+/**
+ * Replace each non-`@` entry that matches an OWNERS_ALIASES key with that
+ * alias's members (single-level, matching Prow's RepoAliases.ExpandAliases).
+ * Entries not in `aliases`, and entries starting with `@`, pass through unchanged.
+ *
+ * @param entries - lowercased OWNERS entries
+ * @param aliases - lowercased alias map from OWNERS_ALIASES
+ */
+function expandAliases(entries, aliases) {
+    const result = [];
+    for (const entry of entries) {
+        if (!entry.startsWith('@')) {
+            const members = aliases.get(entry);
+            if (members !== undefined) {
+                result.push(...members);
+                continue;
+            }
+        }
+        result.push(entry);
+    }
+    return result;
 }
 /**
  * Parse an `@org/team-slug` entry of an approvers or reviewers list.
@@ -42425,8 +42485,10 @@ async function expandGroups(octokit, context, entries) {
     return result;
 }
 /**
- * Whether a list of OWNERS entries names a login, directly or through one of
- * its groups. A direct listing answers without reading any team.
+ * Whether a list of OWNERS entries names a login, directly, through an
+ * OWNERS_ALIASES entry, or through a GitHub group. Entries that are all `@…`
+ * groups skip reading OWNERS_ALIASES; a login matched directly or through an
+ * alias answers without reading any team.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -42435,19 +42497,23 @@ async function expandGroups(octokit, context, entries) {
  */
 async function ownersInclude(octokit, context, entries, login) {
     const list = [...entries];
-    if (list.includes(login)) {
-        return true;
+    let expanded = list;
+    if (list.some(entry => !entry.startsWith('@'))) {
+        expanded = expandAliases(list, await probeOwnersAliases(octokit, context));
+        if (expanded.includes(login)) {
+            return true;
+        }
     }
-    return (await expandGroups(octokit, context, list)).has(login);
+    return (await expandGroups(octokit, context, expanded)).has(login);
 }
 /** an OwnersSet whose approvers and reviewers hold logins only */
-async function expandOwnersSet(octokit, context, set) {
+async function expandOwnersSet(octokit, context, set, aliases) {
     if (set === undefined) {
         return undefined;
     }
     const [approvers, reviewers] = await Promise.all([
-        expandGroups(octokit, context, set.approvers),
-        expandGroups(octokit, context, set.reviewers),
+        expandGroups(octokit, context, expandAliases(set.approvers, aliases)),
+        expandGroups(octokit, context, expandAliases(set.reviewers, aliases)),
     ]);
     return { ...set, approvers, reviewers };
 }
@@ -42542,29 +42608,49 @@ async function loadOwnersTree(octokit, context, ref, pathsOfInterest) {
     }
     const entries = listedOwners(tree);
     const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)));
-    let files;
+    const aliasesEntry = wanted.length > 0 ? findAliasesBlob(tree) : undefined;
     try {
-        files = await Promise.all(wanted.map(async (entry) => {
-            const blob = await octokit.git.getBlob({
-                ...context.repo,
-                file_sha: entry.sha,
-            });
-            return parseOwners(entry.path, decode(blob.data, entry.path));
-        }));
+        const [files, aliases] = await Promise.all([
+            Promise.all(wanted.map(async (entry) => {
+                const blob = await octokit.git.getBlob({
+                    ...context.repo,
+                    file_sha: entry.sha,
+                });
+                return parseOwners(entry.path, decode(blob.data, entry.path));
+            })),
+            aliasesEntry === undefined
+                ? Promise.resolve(new Map())
+                : loadAliasesBlob(octokit, context, ref, aliasesEntry.sha),
+        ]);
+        return {
+            owners: new Map(files.map(file => [ownersDir(file.path), file])),
+            aliases,
+            hasOwners: entries.length > 0,
+        };
     }
     catch (e) {
         throw new Error(`error loading OWNERS files at ${ref}: ${e}`);
     }
-    return {
-        owners: new Map(files.map(file => [ownersDir(file.path), file])),
-        hasOwners: entries.length > 0,
-    };
 }
 function listedOwners(tree) {
     return tree.tree.filter(entry => entry.type === 'blob'
         && entry.path !== undefined
         && entry.sha !== undefined
         && isOwnersPath(entry.path));
+}
+function findAliasesBlob(tree) {
+    return tree.tree.find(entry => entry.type === 'blob'
+        && entry.path === ownersAliasesPath
+        && entry.sha !== undefined);
+}
+function loadAliasesBlob(octokit, context, ref, sha) {
+    return memoized(platform_platform().state().ownerAliases, `${context.repo.owner}/${context.repo.repo}@${ref}`, async () => {
+        const blob = await octokit.git.getBlob({
+            ...context.repo,
+            file_sha: sha,
+        });
+        return parseOwnersAliases(decode(blob.data, ownersAliasesPath));
+    });
 }
 /**
  * probeOwners reads the OWNERS file of each directory in dirs through the
@@ -42596,7 +42682,33 @@ async function probeOwners(octokit, context, ref, dirs, listed) {
         return [dir, parseOwners(path, decode(data, path))];
     }));
     const owners = new Map(found.filter(entry => entry !== undefined));
-    return { owners, hasOwners: listed || owners.size > 0 };
+    const aliases = owners.size > 0
+        ? await probeOwnersAliases(octokit, context, ref)
+        : new Map();
+    return { owners, aliases, hasOwners: listed || owners.size > 0 };
+}
+function probeOwnersAliases(octokit, context, ref) {
+    const [key, where] = ref === undefined
+        ? [`${context.repo.owner}/${context.repo.repo}`, '']
+        : [`${context.repo.owner}/${context.repo.repo}@${ref}`, ` at ${ref}`];
+    return memoized(platform_platform().state().ownerAliases, key, async () => {
+        let data;
+        try {
+            const response = await octokit.repos.getContent({
+                ...context.repo,
+                path: ownersAliasesPath,
+                ref,
+            });
+            data = response.data;
+        }
+        catch (e) {
+            if (owners_isNotFound(e)) {
+                return new Map();
+            }
+            throw new Error(`error loading OWNERS files${where}: ${e}`);
+        }
+        return parseOwnersAliases(decode(data, ownersAliasesPath));
+    });
 }
 /**
  * repoHasOwners reports whether the default branch carries any OWNERS file.
@@ -42724,7 +42836,7 @@ async function pullRequestOwners_load(octokit, context, pullNumber) {
         return pull.base.sha;
     });
     const tree = await loadOwnersTree(octokit, context, baseSha, files);
-    const perFile = new Map(await Promise.all(files.map(async (file) => [file, await expandOwnersSet(octokit, context, effectiveOwners(file, tree.owners))])));
+    const perFile = new Map(await Promise.all(files.map(async (file) => [file, await expandOwnersSet(octokit, context, effectiveOwners(file, tree.owners), tree.aliases)])));
     return {
         number: pullNumber,
         baseSha,

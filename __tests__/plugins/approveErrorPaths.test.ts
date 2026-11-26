@@ -24,7 +24,7 @@ const link = (path: string) => `https://github.com/Codertocat/Hello-World/blob/b
 
 function pullOwners(ownersFiles: Record<string, string>, files: string[], author = 'author'): PullRequestOwners {
   const parsed = Object.entries(ownersFiles).map(([path, contents]) => parseOwners(path, contents))
-  const tree = { owners: new Map(parsed.map(file => [ownersDir(file.path), file])), hasOwners: parsed.length > 0 }
+  const tree = { owners: new Map(parsed.map(file => [ownersDir(file.path), file])), aliases: new Map(), hasOwners: parsed.length > 0 }
   return {
     number: 1,
     baseSha: 'basesha',

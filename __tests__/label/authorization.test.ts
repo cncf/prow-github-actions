@@ -69,12 +69,15 @@ function serveMembership(login: string, { member = false, collaborator = false }
 }
 
 function serveRootOwners(owners?: string) {
-  server.use(http.get(
-    `${repo}/contents/OWNERS`,
-    owners === undefined
-      ? utils.mockResponse(404)
-      : utils.mockResponse(200, { type: 'file', encoding: 'base64', content: Buffer.from(owners).toString('base64') }),
-  ))
+  server.use(
+    http.get(
+      `${repo}/contents/OWNERS`,
+      owners === undefined
+        ? utils.mockResponse(404)
+        : utils.mockResponse(200, { type: 'file', encoding: 'base64', content: Buffer.from(owners).toString('base64') }),
+    ),
+    http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
+  )
 }
 
 async function run(commands: string, body: string, login: string) {

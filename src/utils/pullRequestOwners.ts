@@ -81,7 +81,7 @@ async function load(
   })
   const tree = await loadOwnersTree(octokit, context, baseSha, files)
   const perFile = new Map(await Promise.all(files.map(async file =>
-    [file, await expandOwnersSet(octokit, context, effectiveOwners(file, tree.owners))] as const)))
+    [file, await expandOwnersSet(octokit, context, effectiveOwners(file, tree.owners), tree.aliases)] as const)))
 
   return {
     number: pullNumber,

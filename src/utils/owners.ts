@@ -7,6 +7,10 @@ import { decodeContent } from './base64'
 
 export type OwnersRole = 'approvers' | 'reviewers'
 
+export type OwnersAliases = Map<string, string[]>
+
+const ownersAliasesPath = 'OWNERS_ALIASES'
+
 export interface OwnersFile {
   path: string
   approvers: string[]
@@ -25,6 +29,7 @@ export interface OwnersSet {
 
 export interface OwnersTree {
   owners: Map<string, OwnersFile>
+  aliases: OwnersAliases
   hasOwners: boolean
 }
 
@@ -87,6 +92,73 @@ function stringList(
   }
 
   return value
+}
+
+/**
+ * Parse the contents of a root OWNERS_ALIASES file. Alias names and member
+ * logins are lowercased because GitHub logins are case-insensitive.
+ *
+ * @param contents - the yaml contents
+ */
+export function parseOwnersAliases(contents: string): OwnersAliases {
+  // a comment-only file holds zero documents, which yaml.load rejects; more than one is refused as yaml.load does
+  const documents: unknown[] = yaml.loadAll(contents)
+  if (documents.length > 1) {
+    throw new yaml.YAMLException('expected a single document in the stream, but found more')
+  }
+  const loaded = documents[0]
+  const doc: Record<string, unknown>
+    = typeof loaded === 'object' && loaded !== null && !Array.isArray(loaded)
+      ? (loaded as Record<string, unknown>)
+      : {}
+
+  const raw = doc.aliases
+  if (raw === undefined || raw === null) {
+    return new Map()
+  }
+
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new TypeError(`${ownersAliasesPath}: aliases must be a mapping of alias names to lists of GitHub usernames`)
+  }
+
+  const aliases: OwnersAliases = new Map()
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (value === null) {
+      aliases.set(name.toLowerCase(), [])
+      continue
+    }
+    if (!Array.isArray(value) || !value.every(v => typeof v === 'string')) {
+      throw new Error(`${ownersAliasesPath}: alias ${name} must be a list of GitHub usernames`)
+    }
+    aliases.set(name.toLowerCase(), value.map(v => v.toLowerCase()))
+  }
+  return aliases
+}
+
+/**
+ * Replace each non-`@` entry that matches an OWNERS_ALIASES key with that
+ * alias's members (single-level, matching Prow's RepoAliases.ExpandAliases).
+ * Entries not in `aliases`, and entries starting with `@`, pass through unchanged.
+ *
+ * @param entries - lowercased OWNERS entries
+ * @param aliases - lowercased alias map from OWNERS_ALIASES
+ */
+export function expandAliases(
+  entries: Iterable<string>,
+  aliases: OwnersAliases,
+): string[] {
+  const result: string[] = []
+  for (const entry of entries) {
+    if (!entry.startsWith('@')) {
+      const members = aliases.get(entry)
+      if (members !== undefined) {
+        result.push(...members)
+        continue
+      }
+    }
+    result.push(entry)
+  }
+  return result
 }
 
 /**
@@ -165,8 +237,10 @@ export async function expandGroups(
 }
 
 /**
- * Whether a list of OWNERS entries names a login, directly or through one of
- * its groups. A direct listing answers without reading any team.
+ * Whether a list of OWNERS entries names a login, directly, through an
+ * OWNERS_ALIASES entry, or through a GitHub group. Entries that are all `@…`
+ * groups skip reading OWNERS_ALIASES; a login matched directly or through an
+ * alias answers without reading any team.
  *
  * @param octokit - a hydrated github client
  * @param context - the github actions event context
@@ -180,10 +254,14 @@ export async function ownersInclude(
   login: string,
 ): Promise<boolean> {
   const list = [...entries]
-  if (list.includes(login)) {
-    return true
+  let expanded = list
+  if (list.some(entry => !entry.startsWith('@'))) {
+    expanded = expandAliases(list, await probeOwnersAliases(octokit, context))
+    if (expanded.includes(login)) {
+      return true
+    }
   }
-  return (await expandGroups(octokit, context, list)).has(login)
+  return (await expandGroups(octokit, context, expanded)).has(login)
 }
 
 /** an OwnersSet whose approvers and reviewers hold logins only */
@@ -191,13 +269,14 @@ export async function expandOwnersSet(
   octokit: Octokit,
   context: Context,
   set: OwnersSet | undefined,
+  aliases: OwnersAliases,
 ): Promise<OwnersSet | undefined> {
   if (set === undefined) {
     return undefined
   }
   const [approvers, reviewers] = await Promise.all([
-    expandGroups(octokit, context, set.approvers),
-    expandGroups(octokit, context, set.reviewers),
+    expandGroups(octokit, context, expandAliases(set.approvers, aliases)),
+    expandGroups(octokit, context, expandAliases(set.reviewers, aliases)),
   ])
   return { ...set, approvers, reviewers }
 }
@@ -317,26 +396,32 @@ export async function loadOwnersTree(
   const entries = listedOwners(tree)
 
   const wanted = entries.filter(entry => dirs.has(ownersDir(entry.path)))
+  const aliasesEntry = wanted.length > 0 ? findAliasesBlob(tree) : undefined
 
-  let files: OwnersFile[]
   try {
-    files = await Promise.all(
-      wanted.map(async (entry) => {
-        const blob = await octokit.git.getBlob({
-          ...context.repo,
-          file_sha: entry.sha,
-        })
-        return parseOwners(entry.path, decode(blob.data, entry.path))
-      }),
-    )
+    const [files, aliases] = await Promise.all([
+      Promise.all(
+        wanted.map(async (entry) => {
+          const blob = await octokit.git.getBlob({
+            ...context.repo,
+            file_sha: entry.sha,
+          })
+          return parseOwners(entry.path, decode(blob.data, entry.path))
+        }),
+      ),
+      aliasesEntry === undefined
+        ? Promise.resolve(new Map<string, string[]>())
+        : loadAliasesBlob(octokit, context, ref, aliasesEntry.sha),
+    ])
+
+    return {
+      owners: new Map(files.map(file => [ownersDir(file.path), file])),
+      aliases,
+      hasOwners: entries.length > 0,
+    }
   }
   catch (e) {
     throw new Error(`error loading OWNERS files at ${ref}: ${e}`)
-  }
-
-  return {
-    owners: new Map(files.map(file => [ownersDir(file.path), file])),
-    hasOwners: entries.length > 0,
   }
 }
 
@@ -348,6 +433,34 @@ function listedOwners(tree: TreeListing): { path: string, sha: string }[] {
       && entry.sha !== undefined
       && isOwnersPath(entry.path),
   ) as { path: string, sha: string }[]
+}
+
+function findAliasesBlob(tree: TreeListing): { sha: string } | undefined {
+  return tree.tree.find(
+    entry =>
+      entry.type === 'blob'
+      && entry.path === ownersAliasesPath
+      && entry.sha !== undefined,
+  ) as { sha: string } | undefined
+}
+
+function loadAliasesBlob(
+  octokit: Octokit,
+  context: Context,
+  ref: string,
+  sha: string,
+): Promise<OwnersAliases> {
+  return memoized(
+    platform().state().ownerAliases as Map<string, Promise<OwnersAliases>>,
+    `${context.repo.owner}/${context.repo.repo}@${ref}`,
+    async () => {
+      const blob = await octokit.git.getBlob({
+        ...context.repo,
+        file_sha: sha,
+      })
+      return parseOwnersAliases(decode(blob.data, ownersAliasesPath))
+    },
+  )
 }
 
 /**
@@ -388,7 +501,43 @@ async function probeOwners(
   }))
 
   const owners = new Map(found.filter(entry => entry !== undefined))
-  return { owners, hasOwners: listed || owners.size > 0 }
+  const aliases = owners.size > 0
+    ? await probeOwnersAliases(octokit, context, ref)
+    : new Map<string, string[]>()
+  return { owners, aliases, hasOwners: listed || owners.size > 0 }
+}
+
+function probeOwnersAliases(
+  octokit: Octokit,
+  context: Context,
+  ref?: string,
+): Promise<OwnersAliases> {
+  const [key, where] = ref === undefined
+    ? [`${context.repo.owner}/${context.repo.repo}`, '']
+    : [`${context.repo.owner}/${context.repo.repo}@${ref}`, ` at ${ref}`]
+  return memoized(
+    platform().state().ownerAliases as Map<string, Promise<OwnersAliases>>,
+    key,
+    async () => {
+      let data
+      try {
+        const response = await octokit.repos.getContent({
+          ...context.repo,
+          path: ownersAliasesPath,
+          ref,
+        })
+        data = response.data
+      }
+      catch (e) {
+        if (isNotFound(e)) {
+          return new Map()
+        }
+        throw new Error(`error loading OWNERS files${where}: ${e}`)
+      }
+
+      return parseOwnersAliases(decode(data, ownersAliasesPath))
+    },
+  )
 }
 
 /**

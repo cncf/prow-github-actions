@@ -16,6 +16,7 @@ vi.setConfig({ testTimeout: 30_000 })
 describe('dist/index.js OWNERS groups', () => {
   const teamRead = `GET /orgs/Codertocat/teams/reviewers/members?per_page=100`
   const rootOwnersRead = `GET ${repo}/contents/OWNERS`
+  const rootAliasesRead = `GET ${repo}/contents/OWNERS_ALIASES`
   const labelsRead = `GET ${repo}/labels?per_page=100`
   const labelsPost = `POST ${repo}/issues/1/labels`
   const commentPost = `POST ${repo}/issues/1/comments`
@@ -118,7 +119,7 @@ describe('dist/index.js OWNERS groups', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('GET', /\/teams\//)).toEqual([])
-    expectCommandThenConfig([rootOwnersRead, labelsRead, labelsPost])
+    expectCommandThenConfig([rootOwnersRead, rootAliasesRead, labelsRead, labelsPost])
   })
 
   it('a member present only on the second team page can approve a pull request', async () => {

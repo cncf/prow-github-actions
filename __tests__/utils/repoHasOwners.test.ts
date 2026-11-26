@@ -145,6 +145,15 @@ describe('repoHasOwners', () => {
     await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(true)
     await expect(observeContents.notCalled()).resolves.toBe('not called')
   })
+
+  it('does not treat OWNERS_ALIASES alone as an OWNERS file', async () => {
+    server.use(
+      http.get(`${repo}/git/trees/master`, utils.mockResponse(200, treeResponse(['OWNERS_ALIASES', 'README.md']))),
+    )
+
+    await expect(repoHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent))).resolves.toBe(false)
+    await expect(branchHasOwners(octokit, new utils.MockContext(pullReqOpenedEvent), 'master')).resolves.toBe(false)
+  })
 })
 
 describe('branchHasOwners', () => {

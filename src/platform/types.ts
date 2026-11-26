@@ -91,6 +91,7 @@ export interface RunState {
   configs: Map<string, Promise<unknown>>
   repoLabels: Map<string, Promise<string[]>>
   ownerGroups: Map<string, Promise<string[]>>
+  ownerAliases: Map<string, Promise<unknown>>
   ownerWarnings: Set<string>
   trees: Map<string, Promise<unknown>>
   hasOwners: Map<string, Promise<boolean>>
@@ -115,6 +116,7 @@ export function newRunState(): RunState {
     configs: new Map(),
     repoLabels: new Map(),
     ownerGroups: new Map(),
+    ownerAliases: new Map(),
     ownerWarnings: new Set(),
     trees: new Map(),
     hasOwners: new Map(),

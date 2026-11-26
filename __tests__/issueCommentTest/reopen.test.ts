@@ -188,6 +188,7 @@ describe('authorization.close for /reopen', () => {
       ...prowYaml('authorization:\n  close: trusted\n'),
       ...membership('rita'),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, { type: 'file', encoding: 'base64', content: Buffer.from('reviewers:\n  - rita\n').toString('base64') })),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
     )
 
     const { update } = await run('rita')

@@ -12,7 +12,7 @@ const defaults: ApproveSettings = { require_self_approval: false, ignore_review_
 // the OWNERS of a pull request as loadPullRequestOwners would resolve them, without the network
 function pullOwners(ownersFiles: Record<string, string>, files: string[], author = 'author'): PullRequestOwners {
   const parsed = Object.entries(ownersFiles).map(([path, contents]) => parseOwners(path, contents))
-  const tree = { owners: new Map(parsed.map(file => [ownersDir(file.path), file])), hasOwners: parsed.length > 0 }
+  const tree = { owners: new Map(parsed.map(file => [ownersDir(file.path), file])), aliases: new Map(), hasOwners: parsed.length > 0 }
   return {
     number: 1,
     baseSha: 'basesha',

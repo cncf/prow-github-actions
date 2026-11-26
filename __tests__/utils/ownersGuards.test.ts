@@ -14,7 +14,7 @@ import {
   repoHasOwners,
 } from '../../src/utils/owners'
 import * as utils from '../testUtils'
-import { repo } from './ownersFixtures'
+import { contentsResponse, repo } from './ownersFixtures'
 
 // Each test here pins a contract of src/utils/owners.ts that a mutation of the
 // source survived under the rest of the suite: a bare `options:` key, the
@@ -109,7 +109,7 @@ describe('loadOwnersTree', () => {
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404, { message: 'Not Found' })),
     )
 
-    await expect(loadOwnersTree(octokit, context, 'base-sha', ['README.md'])).resolves.toEqual({ owners: new Map(), hasOwners: false })
+    await expect(loadOwnersTree(octokit, context, 'base-sha', ['README.md'])).resolves.toEqual({ owners: new Map(), aliases: new Map(), hasOwners: false })
     expect(core.debug).toHaveBeenCalledWith('tree at base-sha is truncated; probing for OWNERS files')
   })
 
@@ -122,6 +122,39 @@ describe('loadOwnersTree', () => {
     await expect(loadOwnersTree(octokit, context, 'base-sha', ['README.md'])).rejects.toThrow(
       'error loading OWNERS files at base-sha: Error: invalid OWNERS file returned from GitHub API for OWNERS',
     )
+  })
+
+  it('memoizes probed OWNERS_ALIASES on a truncated tree per repository and ref', async () => {
+    let baseReads = 0
+    const otherRepo = `${utils.api}/repos/Other/Repo`
+    const otherContext = new utils.MockContext({ repository: { owner: { login: 'Other' }, name: 'Repo' } })
+    server.use(
+      http.get(`${repo}/git/trees/base-sha`, utils.mockResponse(200, treeResponse([], true))),
+      http.get(`${repo}/git/trees/other-sha`, utils.mockResponse(200, treeResponse([], true))),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', 'approvers:\n- api\n'))),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, ({ request }) => {
+        const ref = new URL(request.url).searchParams.get('ref')
+        if (ref === 'base-sha') {
+          baseReads++
+          return new Response(JSON.stringify(contentsResponse('OWNERS_ALIASES', 'aliases:\n  api:\n    - alice\n')), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        return new Response(JSON.stringify(contentsResponse('OWNERS_ALIASES', 'aliases:\n  api:\n    - bob\n')), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+      http.get(`${otherRepo}/git/trees/base-sha`, utils.mockResponse(200, treeResponse([], true))),
+      http.get(`${otherRepo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', 'approvers:\n- api\n'))),
+      http.get(`${otherRepo}/contents/OWNERS_ALIASES`, utils.mockResponse(200, contentsResponse('OWNERS_ALIASES', 'aliases:\n  api:\n    - carol\n'))),
+    )
+
+    const first = await loadOwnersTree(octokit, context, 'base-sha', ['README.md'])
+    const second = await loadOwnersTree(octokit, context, 'base-sha', ['README.md'])
+    const otherRef = await loadOwnersTree(octokit, context, 'other-sha', ['README.md'])
+    const other = await loadOwnersTree(octokit, otherContext, 'base-sha', ['README.md'])
+
+    expect(first.aliases).toEqual(new Map([['api', ['alice']]]))
+    expect(second.aliases).toEqual(new Map([['api', ['alice']]]))
+    expect(baseReads).toBe(1)
+    expect(otherRef.aliases).toEqual(new Map([['api', ['bob']]]))
+    expect(other.aliases).toEqual(new Map([['api', ['carol']]]))
   })
 })
 

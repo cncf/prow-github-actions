@@ -182,6 +182,26 @@ An `OWNERS` file may be placed in any directory. It applies to the files in that
 
 Setting `options.no_parent_owners: true` in an `OWNERS` file stops the walk there, so only that file (and any below it) applies and the parents' approvers and reviewers are not inherited.
 
+### OWNERS_ALIASES
+
+A root `OWNERS_ALIASES` file may define named groups of GitHub usernames in Prow's YAML format:
+
+```yaml
+# OWNERS_ALIASES
+aliases:
+  sig-api-approvers:
+    - alice
+    - bob
+  sig-api-reviewers:
+    - carol
+```
+
+Any `OWNERS` file may list an alias name under `approvers` or `reviewers`. Alias names and member logins are matched case-insensitively. Expansion is single-level, matching Prow: an entry matching an alias key is replaced by that alias's members, and nested alias references are not expanded. An alias may list `@<org>/<team-slug>` entries, which are expanded as [GitHub groups](#github-groups). Entries starting with `@` are never treated as aliases.
+
+Like `OWNERS`, `OWNERS_ALIASES` is read from the current tip of the pull request's base branch (or the default branch for issues and the `trusted` authorization policy) and memoized per ref for the run. Reading it needs only repository read access (`GITHUB_TOKEN` is sufficient). A missing `OWNERS_ALIASES` file is ignored. An `OWNERS_ALIASES` file alone does not enable OWNERS mode. A malformed `OWNERS_ALIASES` file fails closed like a malformed `OWNERS` file.
+
+Only `OWNERS_ALIASES` at the repository root is read. Files with that name in subdirectories are ignored. Because alias names share the same namespace as GitHub logins, a defined alias replaces its key everywhere `OWNERS` files are evaluated, so a GitHub user with that login is excluded unless listed inside the alias. Any entry in `OWNERS` that does not match a key in root `OWNERS_ALIASES` (such as a removed, misspelled, or nested alias) is treated as a literal GitHub username and would admit a GitHub account with that handle. Remove references from `OWNERS` files before deleting an alias, or leave the alias empty (`alias: []`) so it still expands to nobody.
+
 ### GitHub groups
 
 `approvers` and `reviewers` may list a GitHub team of the repository's own organization as `@<org>/<team-slug>` (quote it in YAML, since a plain `@` cannot start a scalar):
@@ -328,21 +348,21 @@ The pull request plugins resolve the same set of OWNERS files per changed file. 
 Authorization fails closed:
 
 - a changed file with no covering `OWNERS` file fails the command with an error naming the file;
-- an `OWNERS` file that cannot be fetched or parsed (for example `approvers` is not a list) fails the command;
+- an `OWNERS` or `OWNERS_ALIASES` file that cannot be fetched or parsed (for example `approvers` or an alias is not a list) fails the command;
 - the org-member/collaborator fallback (and [`authorization.review`](./configuration.md#authorization), which only widens it) applies only when the repository has **no** `OWNERS` file at all.
 
 ### File format
 
-The OWNERS file must be in YAML format. All entries are expected to be GitHub usernames (compared case-insensitively); teams are not supported.
+The OWNERS file must be in YAML format. Entries may be GitHub usernames (compared case-insensitively), alias names from [`OWNERS_ALIASES`](#owners_aliases), or [GitHub groups](#github-groups) (`@<org>/<team-slug>`).
 
 Key | Meaning
 --- | ---
-`approvers` | list of usernames whose `/approve` (or approving review, or authorship) covers the files under this directory; may also `/lgtm` on a pull request; reviewer candidates for `blunderbuss` unless `exclude_approvers`
-`reviewers` | list of usernames who may use `/lgtm`; reviewer candidates for `blunderbuss`
+`approvers` | list of usernames, aliases, or groups whose `/approve` (or approving review, or authorship) covers the files under this directory; may also `/lgtm` on a pull request; reviewer candidates for `blunderbuss` unless `exclude_approvers`
+`reviewers` | list of usernames, aliases, or groups who may use `/lgtm`; reviewer candidates for `blunderbuss`
 `labels` | list of labels `owners-label` adds to a pull request touching this directory; applied verbatim, must [exist in the repository](./labeling.md#labels-from-owners-files)
 `options.no_parent_owners` | `true` stops inheritance from parent directories
 
-`emeritus_approvers`, `emeritus_reviewers` and `filters` are accepted but ignored (`filters` is noted in the debug log). `OWNERS_ALIASES` files and aliases are not supported. Unknown keys are tolerated. `labels` must be a list of strings; anything else fails like a malformed role.
+`emeritus_approvers`, `emeritus_reviewers` and `filters` are accepted but ignored (`filters` is noted in the debug log). Unknown keys in an `OWNERS` file are tolerated. `labels` must be a list of strings; anything else fails like a malformed role.
 
 ```yaml
 # List of usernames who may use /lgtm and get review requests

@@ -184,6 +184,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     const observeTree = new utils.ObserveRequest()
     server.use(
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', rootOwners))),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
       pullHandler(observePull),
       ...treeHandlers({ OWNERS: rootOwners }, { observeTree }),
     )
@@ -201,6 +202,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
       http.get(`${repo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(500, null, observeBlob)),
       http.get(`${repo}/contents/sdk%2FOWNERS`, utils.mockResponse(200, contentsResponse('sdk/OWNERS', sdkOwners), observeSdk)),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', rootOwners), observeRoot)),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
       pullHandler(),
       filesHandler(changedFiles('sdk/x.go')),
       ...treeHandlers({ 'OWNERS': rootOwners, 'sdk/OWNERS': sdkOwners }, { truncated: true }),
@@ -221,6 +223,7 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
       ...treeHandlers({}, { truncated: true }),
       http.get(`${repo}/contents/sdk%2FOWNERS`, utils.mockResponse(404)),
       http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', rootOwners))),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
     )
     await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
 
@@ -399,5 +402,123 @@ describe('assertAuthorizedByOwnersOrMembership on a pull request', () => {
     await observeTree.called()
     expect(new URL(observeTree.ref!.url).searchParams.get('recursive')).toBe('true')
     await expect(observeDocsBlob.notCalled()).resolves.toBe('not called')
+  })
+
+  it('expands root OWNERS_ALIASES entries on a pull request and ignores head edits', async () => {
+    const observeContents = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(500, null, observeContents)),
+      ...prHandlers({
+        OWNERS: 'approvers:\n- api-approvers\nreviewers:\n- api-reviewers\n',
+        OWNERS_ALIASES: 'aliases:\n  api-approvers:\n    - Alice\n  api-reviewers:\n    - Rita\n',
+      }, ['OWNERS_ALIASES', 'src/file1.txt']),
+    )
+
+    await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
+    server.use(...prHandlers({
+      OWNERS: 'approvers:\n- api-approvers\nreviewers:\n- api-reviewers\n',
+      OWNERS_ALIASES: 'aliases:\n  api-approvers:\n    - Alice\n  api-reviewers:\n    - Rita\n',
+    }, ['OWNERS_ALIASES', 'src/file1.txt']))
+    await expect(authorize('reviewers', 'rita')).resolves.toBeUndefined()
+    server.use(...prHandlers({
+      OWNERS: 'approvers:\n- api-approvers\n',
+      OWNERS_ALIASES: 'aliases:\n  api-approvers:\n    - Alice\n',
+    }, ['OWNERS_ALIASES', 'src/file1.txt']))
+    await expect(authorize('approvers', 'api-approvers')).rejects.toThrow(
+      'api-approvers is not an approver for any changed file',
+    )
+    await expect(observeContents.notCalled()).resolves.toBe('not called')
+  })
+
+  it('falls back to membership when a repository has only OWNERS_ALIASES and no OWNERS files', async () => {
+    const observeAliasBlob = new utils.ObserveRequest()
+    const observeMember = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/git/blobs/${blobSha('OWNERS_ALIASES')}`, utils.mockResponse(500, null, observeAliasBlob)),
+      ...prHandlers({ OWNERS_ALIASES: 'aliases:\n  maintainers:\n    - bob\n' }, ['src/file1.txt']),
+      http.get(`${utils.api}/orgs/Codertocat/members/alice`, utils.mockResponse(204, null, observeMember)),
+      http.get(`${repo}/collaborators/alice`, utils.mockResponse(404)),
+    )
+
+    await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
+    await observeMember.called()
+    await expect(observeAliasBlob.notCalled()).resolves.toBe('not called')
+  })
+
+  it('ignores a directory named OWNERS_ALIASES and never fetches it as a blob', async () => {
+    const observeDirBlob = new utils.ObserveRequest()
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('src/file1.txt')),
+      branchHandler(),
+      http.get(`${repo}/git/trees/${baseSha}`, utils.mockResponse(200, {
+        sha: baseSha,
+        truncated: false,
+        tree: [
+          { path: 'OWNERS', mode: '100644', type: 'blob', sha: blobSha('OWNERS') },
+          { path: 'OWNERS_ALIASES', mode: '040000', type: 'tree', sha: 'dir-aliases' },
+        ],
+      })),
+      http.get(`${repo}/git/blobs/${blobSha('OWNERS')}`, utils.mockResponse(200, {
+        sha: blobSha('OWNERS'),
+        encoding: 'base64',
+        content: Buffer.from(rootOwners).toString('base64'),
+      })),
+      http.get(`${repo}/git/blobs/dir-aliases`, utils.mockResponse(500, null, observeDirBlob)),
+    )
+
+    await expect(authorize('approvers', 'alice')).resolves.toBeUndefined()
+    await expect(observeDirBlob.notCalled()).resolves.toBe('not called')
+  })
+
+  it('fails closed when OWNERS_ALIASES is malformed in the base tree', async () => {
+    server.use(...prHandlers({
+      OWNERS: 'approvers:\n- api-approvers\n',
+      OWNERS_ALIASES: 'aliases:\n  api-approvers: alice\n',
+    }, ['src/file1.txt']))
+
+    await expect(authorize('approvers', 'alice')).rejects.toThrow(
+      `error loading OWNERS files at ${baseSha}: Error: OWNERS_ALIASES: alias api-approvers must be a list of GitHub usernames`,
+    )
+  })
+
+  it('probes OWNERS_ALIASES on a truncated tree and fails closed on non-404 errors', async () => {
+    const observeAliases = new utils.ObserveRequest()
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('sdk/x.go')),
+      ...treeHandlers({}, { truncated: true }),
+      http.get(`${repo}/contents/sdk%2FOWNERS`, utils.mockResponse(200, contentsResponse('sdk/OWNERS', 'approvers:\n- sdk-team\n'))),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(200, contentsResponse('OWNERS_ALIASES', 'aliases:\n  sdk-team:\n    - bob\n'), observeAliases)),
+    )
+    await expect(authorize('approvers', 'bob')).resolves.toBeUndefined()
+    await observeAliases.called()
+    expect(new URL(observeAliases.ref!.url).searchParams.get('ref')).toBe(baseSha)
+
+    server.use(
+      pullHandler(),
+      filesHandler(changedFiles('sdk/x.go')),
+      ...treeHandlers({}, { truncated: true }),
+      http.get(`${repo}/contents/sdk%2FOWNERS`, utils.mockResponse(200, contentsResponse('sdk/OWNERS', 'approvers:\n- sdk-team\n'))),
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(404)),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(500, { message: 'boom' })),
+    )
+    await expect(authorize('approvers', 'bob')).rejects.toThrow(
+      `error loading OWNERS files at ${baseSha}`,
+    )
+  })
+
+  it('authorizes an issue commenter through root OWNERS_ALIASES without touching pulls or trees', async () => {
+    const issueContext = new utils.MockContext(issueCommentEvent)
+    const observePull = new utils.ObserveRequest()
+    server.use(
+      http.get(`${repo}/contents/OWNERS`, utils.mockResponse(200, contentsResponse('OWNERS', 'approvers:\n- maintainers\n'))),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(200, contentsResponse('OWNERS_ALIASES', 'aliases:\n  maintainers:\n    - alice\n'))),
+      pullHandler(observePull),
+    )
+
+    await expect(authorize('approvers', 'alice', issueContext)).resolves.toBeUndefined()
+    await expect(observePull.notCalled()).resolves.toBe('not called')
   })
 })
