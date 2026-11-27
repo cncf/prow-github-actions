@@ -8,11 +8,14 @@ import * as approve from '../../src/issueComment/approve'
 import * as assign from '../../src/issueComment/assign'
 import * as cc from '../../src/issueComment/cc'
 import { handleIssueComment } from '../../src/issueComment/handleIssueComment'
+import * as retitle from '../../src/issueComment/retitle'
+import * as trigger from '../../src/issueComment/trigger'
 import * as unassign from '../../src/issueComment/unassign'
 import * as fixed from '../../src/labels/fixed'
 import * as hold from '../../src/labels/hold'
 import * as lgtm from '../../src/labels/lgtm'
 import * as prefixed from '../../src/labels/prefixed'
+import * as remove from '../../src/labels/remove'
 import * as requireMatchingLabel from '../../src/plugins/requireMatchingLabel'
 import * as tide from '../../src/plugins/tide'
 import issueCommentEvent from '../fixtures/issues/issueCommentEvent.json'
@@ -818,6 +821,38 @@ describe('the sweep after a label-writing command', () => {
 
     expect(requireMatchingLabel.checkRequiredLabels).toHaveBeenCalledTimes(1)
     expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  // every hand-written command that may write a label is followed by the sweep, not only /lgtm
+  it.each([
+    ['/hold', () => vi.spyOn(hold, 'hold').mockResolvedValue()],
+    ['/remove', () => vi.spyOn(remove, 'remove').mockResolvedValue()],
+    ['/ok-to-test', () => vi.spyOn(trigger, 'okToTest').mockResolvedValue()],
+    ['/approve', () => vi.spyOn(approve, 'approve').mockResolvedValue()],
+  ])('%s runs the sweep once', async (command, stubHandler) => {
+    const handler = stubHandler()
+    utils.setupActionsEnv(command)
+    issueCommentEvent.comment.body = command
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(requireMatchingLabel.checkRequiredLabels).toHaveBeenCalledTimes(1)
+    expect(tide.tideOnComment).toHaveBeenCalledTimes(1)
+    expect(core.setFailed).not.toHaveBeenCalled()
+  })
+
+  it('a hand-written command that writes no label runs no sweep', async () => {
+    const handler = vi.spyOn(retitle, 'retitle').mockResolvedValue()
+    utils.setupActionsEnv('/retitle')
+    issueCommentEvent.comment.body = '/retitle a new title'
+
+    await handleIssueComment(new utils.MockContext(issueCommentEvent))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(requireMatchingLabel.checkRequiredLabels).not.toHaveBeenCalled()
+    expect(tide.tideOnComment).not.toHaveBeenCalled()
     expect(core.setFailed).not.toHaveBeenCalled()
   })
 
