@@ -16,6 +16,7 @@ vi.setConfig({ testTimeout: 30_000 })
 // needs-* re-check reads the configuration after the command either way
 describe('dist/index.js /lgtm authorized by OWNERS files', () => {
   const rootOwnersRead = `GET ${repo}/contents/OWNERS`
+  const rootAliasesRead = `GET ${repo}/contents/OWNERS_ALIASES`
   const blobOWNERS = `GET ${repo}/git/blobs/${blobSha('OWNERS')}`
   const blobSdkOWNERS = `GET ${repo}/git/blobs/${blobSha('sdk/OWNERS')}`
   const commentPost = `POST ${repo}/issues/1/comments`
@@ -56,7 +57,7 @@ describe('dist/index.js /lgtm authorized by OWNERS files', () => {
     expect(result.status, result.stdout).toBe(0)
     expect(result.errors).toEqual([])
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['lgtm'] }])
-    expectCommandThenConfig([rootOwnersRead, labelsRead, labelsPost])
+    expectCommandThenConfig([rootOwnersRead, rootAliasesRead, labelsRead, labelsPost])
   })
 
   it('on an issue, a commenter the root OWNERS file does not list is refused by name, with no membership fallback', async () => {
@@ -69,7 +70,7 @@ describe('dist/index.js /lgtm authorized by OWNERS files', () => {
     expect(result.errors.some(e => e.includes('Codertocat is not included in the reviewers role in the OWNERS file'))).toBe(true)
     expect(comments().some(c => c.includes('Codertocat is not included in the reviewers role in the OWNERS file'))).toBe(true)
     expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)).toEqual([])
-    expectCommandThenConfig([rootOwnersRead, commentPost])
+    expectCommandThenConfig([rootOwnersRead, rootAliasesRead, commentPost])
   })
 
   it('on a pull request, a reviewer the covering OWNERS file lists is authorized by that file alone: labels and binds, no membership read', async () => {

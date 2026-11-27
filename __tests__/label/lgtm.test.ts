@@ -507,6 +507,10 @@ reviewers:
         `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
         utils.mockResponse(200, contentResponse),
       ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS_ALIASES`,
+        utils.mockResponse(404),
+      ),
     )
 
     await handleIssueComment(commentContext)

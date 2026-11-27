@@ -20,6 +20,7 @@ describe('dist/index.js OWNERS probes', () => {
   const rootOwners = 'approvers:\n- bob\n'
   const rootOwnersRead = `GET ${repo}/contents/OWNERS?ref=basesha`
   const sdkOwnersRead = `GET ${repo}/contents/sdk%2FOWNERS?ref=basesha`
+  const aliasesRead = `GET ${repo}/contents/OWNERS_ALIASES?ref=basesha`
   const baseProbe = `GET ${repo}/contents/OWNERS?ref=master`
   const lgtmBindingRead = `GET ${repo}/commits/headsha/status?per_page=100`
   const merge = `PUT ${repo}/pulls/1/merge`
@@ -86,6 +87,7 @@ describe('dist/index.js OWNERS probes', () => {
       routeTruncatedBase()
       gh.route('GET', `${repo}/contents/OWNERS`, contents(rootOwners))
       gh.allowUnmatched('GET', `${repo}/contents/sdk%2FOWNERS`)
+      gh.allowUnmatched('GET', `${repo}/contents/OWNERS_ALIASES`)
       routeApprove(['lgtm'])
       gh.route('GET', `${repo}/git/trees/master`, { status: 200, body: { sha: 'master', truncated: false, tree: [{ path: 'OWNERS', type: 'blob', sha: 'o' }] } })
 
@@ -96,8 +98,8 @@ describe('dist/index.js OWNERS probes', () => {
       expect(result.stdout).toContain('approve: #1 is approved by bob')
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/).map(r => r.body)).toEqual([{ labels: ['approved'] }])
       expect(gh.requestsMatching('GET', /\/git\/blobs\//)).toEqual([])
-      // the root is probed first, then the changed file's directory, one at a time
-      expectCommandThenConfig([...ownersReads, rootOwnersRead, sdkOwnersRead], [
+      // the root is probed first, then the changed file's directory, then OWNERS_ALIASES
+      expectCommandThenConfig([...ownersReads, rootOwnersRead, sdkOwnersRead, aliasesRead], [
         ...approval,
         `GET ${repo}/pulls/1`,
         ownersProbe,

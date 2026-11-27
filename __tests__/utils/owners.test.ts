@@ -1,14 +1,17 @@
+import { Buffer } from 'node:buffer'
 import * as core from '@actions/core'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   effectiveOwners,
+  expandAliases,
   expandGroups,
   expandOwnersSet,
   ownersDir,
   ownersInclude,
   parseGroup,
   parseOwners,
+  parseOwnersAliases,
 } from '../../src/utils/owners'
 
 describe('parseOwners', () => {
@@ -270,6 +273,101 @@ describe('expandGroups', () => {
   })
 })
 
+describe('parseOwnersAliases', () => {
+  it('reads aliases and lowercases both alias names and member logins', () => {
+    const aliases = parseOwnersAliases('aliases:\n  SIG-API-Approvers:\n    - Alice\n    - bob\n  reviewers-team:\n    - "@MyOrg/Team"\n')
+
+    expect(aliases).toEqual(new Map([
+      ['sig-api-approvers', ['alice', 'bob']],
+      ['reviewers-team', ['@myorg/team']],
+    ]))
+  })
+
+  it.each([
+    '',
+    '   \n\n',
+    '# OWNERS_ALIASES\n# none yet\n',
+    'null\n',
+    '~\n',
+    '- alice\n',
+    'just text\n',
+    'other: 42\n',
+    'aliases:\n',
+  ])('treats empty, comment-only, non-mapping or missing-aliases content as no aliases: %j', (contents) => {
+    expect(parseOwnersAliases(contents)).toEqual(new Map())
+  })
+
+  it('rejects syntactically invalid YAML and multi-document streams', () => {
+    expect(() => parseOwnersAliases('aliases:\n  api: [unclosed\n')).toThrow()
+    expect(() => parseOwnersAliases('aliases:\n  a:\n    - alice\n---\naliases:\n  b:\n    - bob\n')).toThrow(
+      'expected a single document in the stream, but found more',
+    )
+  })
+
+  it('treats an empty alias entry (yaml null) as an empty member list', () => {
+    expect(parseOwnersAliases('aliases:\n  empty-group:\n  filled:\n    - alice\n')).toEqual(new Map([
+      ['empty-group', []],
+      ['filled', ['alice']],
+    ]))
+  })
+
+  it.each([
+    'aliases: alice\n',
+    'aliases:\n  - alice\n',
+    'aliases: 42\n',
+  ])('rejects aliases that is not a mapping: %j', (contents) => {
+    expect(() => parseOwnersAliases(contents)).toThrow(
+      'OWNERS_ALIASES: aliases must be a mapping of alias names to lists of GitHub usernames',
+    )
+  })
+
+  it.each([
+    ['aliases:\n  sig-api: alice\n', 'sig-api'],
+    ['aliases:\n  sig-api:\n    alice: true\n', 'sig-api'],
+    ['aliases:\n  sig-api:\n    - alice\n    - 7\n', 'sig-api'],
+  ])('rejects an alias whose value is not a list of strings: %j', (contents, name) => {
+    expect(() => parseOwnersAliases(contents)).toThrow(
+      `OWNERS_ALIASES: alias ${name} must be a list of GitHub usernames`,
+    )
+  })
+})
+
+describe('expandAliases', () => {
+  const aliases = parseOwnersAliases([
+    'aliases:',
+    '  sig-api:',
+    '    - alice',
+    '    - bob',
+    '  nested-outer:',
+    '    - sig-api',
+    '    - carol',
+    '  team-alias:',
+    '    - "@myorg/maintainers"',
+    '  empty-alias:',
+    '  dan:',
+    '    - erin',
+    '  "@myorg/shadow":',
+    '    - mallory',
+  ].join('\n'))
+
+  it('replaces matching alias entries with their members and preserves plain logins', () => {
+    expect(expandAliases(['sig-api', 'frank'], aliases)).toEqual(['alice', 'bob', 'frank'])
+  })
+
+  it('does not expand nested aliases (single-level Prow parity)', () => {
+    expect(expandAliases(['nested-outer'], aliases)).toEqual(['sig-api', 'carol'])
+  })
+
+  it('replaces an entry that collides with an alias name rather than keeping the alias name', () => {
+    expect(expandAliases(['dan'], aliases)).toEqual(['erin'])
+    expect(expandAliases(['empty-alias', 'frank'], aliases)).toEqual(['frank'])
+  })
+
+  it('never expands @-prefixed entries as aliases, while allowing aliases to expand to @org/team groups', () => {
+    expect(expandAliases(['@myorg/shadow', 'team-alias'], aliases)).toEqual(['@myorg/shadow', '@myorg/maintainers'])
+  })
+})
+
 describe('expandOwnersSet', () => {
   const context = { repo: { owner: 'myorg', repo: 'r' } } as never
   const octokit = {
@@ -283,7 +381,7 @@ describe('expandOwnersSet', () => {
       reviewers: new Set(['alice', '@myorg/maintainers']),
       labels: new Set(['area/sdk']),
       sources: ['sdk/OWNERS'],
-    })
+    }, new Map())
 
     expect(set).toEqual({
       approvers: new Set(['bob']),
@@ -293,33 +391,105 @@ describe('expandOwnersSet', () => {
     })
   })
 
+  it('expands aliases before GitHub groups in both roles', async () => {
+    const aliases = parseOwnersAliases('aliases:\n  api-approvers:\n    - "@myorg/maintainers"\n    - carol\n  api-reviewers:\n    - dave\n')
+    const set = await expandOwnersSet(octokit, context, {
+      approvers: new Set(['api-approvers']),
+      reviewers: new Set(['api-reviewers', 'alice']),
+      labels: new Set(['area/api']),
+      sources: ['api/OWNERS'],
+    }, aliases)
+
+    expect(set).toEqual({
+      approvers: new Set(['carol', 'bob']),
+      reviewers: new Set(['dave', 'alice']),
+      labels: new Set(['area/api']),
+      sources: ['api/OWNERS'],
+    })
+  })
+
   it('passes undefined through', async () => {
-    expect(await expandOwnersSet(octokit, context, undefined)).toBeUndefined()
+    expect(await expandOwnersSet(octokit, context, undefined, new Map())).toBeUndefined()
   })
 })
 
 describe('ownersInclude', () => {
   const context = { repo: { owner: 'myorg', repo: 'r' } } as never
 
-  function client(members: string[]) {
+  function client(members: string[], aliasesYaml?: string) {
     return {
       paginate: vi.fn(async () => members.map(login => ({ login }))),
       teams: { listMembersInOrg: vi.fn() },
+      repos: {
+        getContent: vi.fn(async () => {
+          if (aliasesYaml === undefined) {
+            throw Object.assign(new Error('Not Found'), { status: 404 })
+          }
+          return {
+            data: {
+              encoding: 'base64',
+              content: Buffer.from(aliasesYaml).toString('base64'),
+            },
+          }
+        }),
+      },
     }
   }
 
-  it('answers a direct listing without reading any team', async () => {
+  it('answers a direct listing without reading any team when OWNERS_ALIASES is absent', async () => {
     const octokit = client(['bob'])
 
     expect(await ownersInclude(octokit as never, context, ['alice', '@myorg/maintainers'], 'alice')).toBe(true)
+    expect(octokit.repos.getContent).toHaveBeenCalledTimes(1)
     expect(octokit.paginate).not.toHaveBeenCalled()
   })
 
-  it('reads the teams when the login is not listed directly', async () => {
+  it('replaces an alias name that collides with a GitHub login', async () => {
+    const octokit = client([], 'aliases:\n  maintainers:\n    - alice\n')
+
+    expect(await ownersInclude(octokit as never, context, ['maintainers'], 'maintainers')).toBe(false)
+    expect(await ownersInclude(octokit as never, context, ['maintainers'], 'alice')).toBe(true)
+    expect(octokit.repos.getContent).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed on a malformed OWNERS_ALIASES even when the login appears directly in OWNERS', async () => {
+    const octokit = client([], 'aliases:\n  maintainers: alice\n')
+
+    await expect(ownersInclude(octokit as never, context, ['alice'], 'alice')).rejects.toThrow(
+      'OWNERS_ALIASES: alias maintainers must be a list of GitHub usernames',
+    )
+  })
+
+  it('skips reading aliases when every entry is a @ group', async () => {
+    const octokit = client(['bob'])
+
+    expect(await ownersInclude(octokit as never, context, ['@myorg/maintainers'], 'bob')).toBe(true)
+    expect(octokit.repos.getContent).not.toHaveBeenCalled()
+    expect(octokit.paginate).toHaveBeenCalledTimes(1)
+  })
+
+  it('matches through an alias without reading any team', async () => {
+    const octokit = client(['bob'], 'aliases:\n  api-reviewers:\n    - carol\n')
+
+    expect(await ownersInclude(octokit as never, context, ['api-reviewers', '@myorg/maintainers'], 'carol')).toBe(true)
+    expect(octokit.repos.getContent).toHaveBeenCalledTimes(1)
+    expect(octokit.paginate).not.toHaveBeenCalled()
+  })
+
+  it('expands a @org/team group produced by an alias', async () => {
+    const octokit = client(['bob'], 'aliases:\n  api-reviewers:\n    - "@myorg/maintainers"\n')
+
+    expect(await ownersInclude(octokit as never, context, ['api-reviewers'], 'bob')).toBe(true)
+    expect(octokit.repos.getContent).toHaveBeenCalledTimes(1)
+    expect(octokit.paginate).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the teams when the login is not listed directly or through an alias and memoizes OWNERS_ALIASES per run', async () => {
     const octokit = client(['bob'])
 
     expect(await ownersInclude(octokit as never, context, ['alice', '@myorg/maintainers'], 'bob')).toBe(true)
     expect(await ownersInclude(octokit as never, context, ['alice', '@myorg/maintainers'], 'carol')).toBe(false)
+    expect(octokit.repos.getContent).toHaveBeenCalledTimes(1)
     expect(octokit.paginate).toHaveBeenCalledTimes(1)
   })
 })

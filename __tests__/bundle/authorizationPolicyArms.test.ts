@@ -17,6 +17,7 @@ describe('dist/index.js authorization policy arms', () => {
   const labelsRead = `GET ${repo}/labels?per_page=100`
   const labelPost = `POST ${repo}/issues/1/labels`
   const rootOwnersRead = `GET ${repo}/contents/OWNERS`
+  const rootAliasesRead = `GET ${repo}/contents/OWNERS_ALIASES`
   const prowYamlPath = `${repo}/contents/${encodeURIComponent('.github/prow.yaml')}`
   const notFound = { status: 404, body: { message: 'Not Found' } }
   let gh: FakeGithub
@@ -94,7 +95,7 @@ describe('dist/index.js authorization policy arms', () => {
       expect(result.status, result.stdout).toBe(0)
       expect(result.errors).toEqual([])
       expect(gh.requestsMatching('POST', /\/issues\/1\/labels$/)[0].body).toEqual({ labels: ['triage/accepted'] })
-      expectRequests(configReads({ repo: '.github/prow.yaml' }), [...membershipReads('rita'), rootOwnersRead, labelsRead, labelPost])
+      expectRequests(configReads({ repo: '.github/prow.yaml' }), [...membershipReads('rita'), rootOwnersRead, rootAliasesRead, labelsRead, labelPost])
     })
 
     it('under labels: collaborators, with no commenter login in the payload: refused before any read', async () => {

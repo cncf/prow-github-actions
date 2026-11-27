@@ -152,6 +152,7 @@ describe('the root OWNERS read', () => {
     server.use(
       ...membership('Alice'),
       rootOwners({ encoding: 'base64', content: Buffer.from('reviewers:\n  - alice\n').toString('base64') }),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
       http.get(`${other}/collaborators/Alice`, utils.mockResponse(404)),
       http.get(`${other}/contents/OWNERS`, utils.mockResponse(404)),
     )
@@ -159,6 +160,49 @@ describe('the root OWNERS read', () => {
 
     await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(true)
     await expect(policyAllows(octokit, otherContext, 'trusted', 'Alice', [])).resolves.toBe(false)
+  })
+
+  it('memoizes root OWNERS_ALIASES per repository: a second repository does not inherit aliases from the first', async () => {
+    const other = `${utils.api}/repos/Codertocat/Other`
+    server.use(
+      ...membership('Alice'),
+      rootOwners({ encoding: 'base64', content: Buffer.from('reviewers:\n  - triage-team\n').toString('base64') }),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(200, {
+        type: 'file',
+        encoding: 'base64',
+        content: Buffer.from('aliases:\n  triage-team:\n    - alice\n').toString('base64'),
+      })),
+      http.get(`${other}/collaborators/Alice`, utils.mockResponse(404)),
+      http.get(`${other}/contents/OWNERS`, utils.mockResponse(200, {
+        type: 'file',
+        encoding: 'base64',
+        content: Buffer.from('reviewers:\n  - triage-team\n').toString('base64'),
+      })),
+      http.get(`${other}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
+    )
+    const otherContext = new utils.MockContext({ repository: { owner: { login: 'Codertocat' }, name: 'Other' } })
+
+    await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(true)
+    await expect(policyAllows(octokit, otherContext, 'trusted', 'Alice', [])).resolves.toBe(false)
+  })
+
+  it('propagates a malformed root OWNERS_ALIASES on both issue auth and trusted policy even on direct hits', async () => {
+    server.use(
+      ...membership('Alice'),
+      rootOwners({ encoding: 'base64', content: Buffer.from('reviewers:\n  - alice\n').toString('base64') }),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(200, {
+        type: 'file',
+        encoding: 'base64',
+        content: Buffer.from('aliases:\n  triage-team: alice\n').toString('base64'),
+      })),
+    )
+
+    await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
+      .rejects
+      .toThrow('OWNERS_ALIASES: alias triage-team must be a list of GitHub usernames')
+    await expect(policyAllows(octokit, context, 'trusted', 'Alice', []))
+      .rejects
+      .toThrow('OWNERS_ALIASES: alias triage-team must be a list of GitHub usernames')
   })
 })
 
@@ -194,7 +238,10 @@ describe('the debug lines', () => {
 
   it('logs the decoded root OWNERS file it authorized against', async () => {
     const contents = 'reviewers:\n  - some-user\n'
-    server.use(rootOwners({ encoding: 'base64', content: Buffer.from(contents).toString('base64') }))
+    server.use(
+      rootOwners({ encoding: 'base64', content: Buffer.from(contents).toString('base64') }),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, utils.mockResponse(404)),
+    )
 
     await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'some-user')).resolves.toBeUndefined()
     expect(core.debug).toHaveBeenCalledWith(`OWNERS file contents: ${contents}`)

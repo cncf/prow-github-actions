@@ -408,6 +408,10 @@ describe('assertAuthorizedByOwnersOrMembership', () => {
         `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
         utils.mockResponse(200, ownersResponse('approvers:\n- Codertocat\n')),
       ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS_ALIASES`,
+        utils.mockResponse(404),
+      ),
     )
 
     await expect(
@@ -421,6 +425,10 @@ describe('assertAuthorizedByOwnersOrMembership', () => {
       http.get(
         `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS`,
         utils.mockResponse(200, ownersResponse('approvers:\n- Codertocat\n'), observeOwners),
+      ),
+      http.get(
+        `${utils.api}/repos/Codertocat/Hello-World/contents/OWNERS_ALIASES`,
+        utils.mockResponse(404),
       ),
     )
     const { issue: _issue, ...withoutIssue } = issueCommentEvent
@@ -488,8 +496,11 @@ describe('authorization policies', () => {
     ]
   }
 
-  function rootOwners(owners?: string) {
-    return http.get(`${repo}/contents/OWNERS`, owners === undefined ? utils.mockResponse(404) : utils.mockResponse(200, ownersResponse(owners)))
+  function rootOwners(owners?: string, aliases?: string) {
+    return [
+      http.get(`${repo}/contents/OWNERS`, owners === undefined ? utils.mockResponse(404) : utils.mockResponse(200, ownersResponse(owners))),
+      http.get(`${repo}/contents/OWNERS_ALIASES`, aliases === undefined ? utils.mockResponse(404) : utils.mockResponse(200, ownersResponse(aliases))),
+    ]
   }
 
   function prowYaml(text: string) {
@@ -530,7 +541,7 @@ describe('authorization policies', () => {
       ['nobody, with no root OWNERS file', {}, { anyone: true, collaborators: false, members: false, trusted: false }],
     ] as const)('%s', async (_, who, want) => {
       const fixture: { users?: readonly string[], member?: boolean, collaborator?: boolean, owners?: string } = who
-      server.use(...membership(fixture), rootOwners(fixture.owners))
+      server.use(...membership(fixture), ...rootOwners(fixture.owners))
 
       for (const [policy, allowed] of Object.entries(want)) {
         await expect(policyAllows(octokit, context, policy as keyof typeof want, 'Alice', [...(fixture.users ?? [])]), policy).resolves.toBe(allowed)
@@ -538,10 +549,22 @@ describe('authorization policies', () => {
     })
 
     it('compares users and OWNERS logins case-insensitively', async () => {
-      server.use(...membership({}, 'ALICE'), rootOwners('reviewers:\n  - Alice\n'))
+      server.use(...membership({}, 'ALICE'), ...rootOwners('reviewers:\n  - Alice\n'))
 
       await expect(policyAllows(octokit, context, 'trusted', 'aLiCe', ['alice'])).resolves.toBe(true)
       await expect(policyAllows(octokit, context, 'trusted', 'ALICE', [])).resolves.toBe(true)
+    })
+
+    it('admits a user listed through a root OWNERS_ALIASES group and reads OWNERS_ALIASES once per run', async () => {
+      server.use(
+        ...membership({}, 'Alice'),
+        ...membership({}, 'Bob'),
+        ...rootOwners('reviewers:\n  - triage-team\n', 'aliases:\n  triage-team:\n    - Alice\n'),
+      )
+
+      await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(true)
+      await expect(policyAllows(octokit, context, 'trusted', 'Bob', [])).resolves.toBe(false)
+      expect(calls.filter(call => call.endsWith('/contents/OWNERS_ALIASES'))).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS_ALIASES'])
     })
 
     it('a users hit makes no API call', async () => {
@@ -571,15 +594,16 @@ describe('authorization policies', () => {
     })
 
     it('reads the root OWNERS file once per run', async () => {
-      server.use(rootOwners('reviewers:\n  - carol\n'), ...membership(), ...membership({}, 'Bob'))
+      server.use(...rootOwners('reviewers:\n  - carol\n'), ...membership(), ...membership({}, 'Bob'))
 
       await expect(policyAllows(octokit, context, 'trusted', 'Alice', [])).resolves.toBe(false)
       await expect(policyAllows(octokit, context, 'trusted', 'Bob', [])).resolves.toBe(false)
       expect(calls.filter(call => call.endsWith('/contents/OWNERS'))).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS'])
+      expect(calls.filter(call => call.endsWith('/contents/OWNERS_ALIASES'))).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS_ALIASES'])
     })
 
     it('skips the checks the caller already ran', async () => {
-      server.use(rootOwners())
+      server.use(...rootOwners())
 
       await expect(policyAllows(octokit, context, 'trusted', 'Alice', [], { member: true, collaborator: true })).resolves.toBe(false)
       await expect(policyAllows(octokit, context, 'collaborators', 'Alice', [], { collaborator: true })).resolves.toBe(false)
@@ -640,10 +664,14 @@ describe('authorization policies', () => {
     })
 
     it('trusted tries users, then org membership, then the root OWNERS file', async () => {
-      server.use(...prowYaml('authorization:\n  close: trusted\n  users: [Bob]\n'), ...membership(), rootOwners('reviewers:\n  - alice\n'))
+      server.use(...prowYaml('authorization:\n  close: trusted\n  users: [Bob]\n'), ...membership(), ...rootOwners('reviewers:\n  - alice\n'))
 
       await expect(closePolicyAllows(octokit, context, 'Alice')).resolves.toBe(true)
-      expect(calls.slice(prowYamlReads.length)).toEqual(['GET /orgs/Codertocat/members/Alice', 'GET /repos/Codertocat/Hello-World/contents/OWNERS'])
+      expect(calls.slice(prowYamlReads.length)).toEqual([
+        'GET /orgs/Codertocat/members/Alice',
+        'GET /repos/Codertocat/Hello-World/contents/OWNERS',
+        'GET /repos/Codertocat/Hello-World/contents/OWNERS_ALIASES',
+      ])
 
       calls = []
       await expect(closePolicyAllows(octokit, context, 'BOB')).resolves.toBe(true)
@@ -656,14 +684,14 @@ describe('authorization policies', () => {
       ['an org member, without the collaborator check', { member: true }, ['GET /orgs/Codertocat/members/Alice']],
       ['a collaborator', { collaborator: true }, ['GET /orgs/Codertocat/members/Alice', 'GET /repos/Codertocat/Hello-World/collaborators/Alice']],
     ])('admits %s without reading the configuration', async (_, who, checks) => {
-      server.use(rootOwners(), ...membership(who))
+      server.use(...rootOwners(), ...membership(who))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice')).resolves.toBeUndefined()
       expect(calls).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS', ...checks])
     })
 
     it('under the default members policy reads the configuration only to refuse, with the same message', async () => {
-      server.use(rootOwners(), ...membership(), ...prowYaml('authorization:\n  users: [alice]\n'))
+      server.use(...rootOwners(), ...membership(), ...prowYaml('authorization:\n  users: [alice]\n'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
         .rejects
@@ -679,7 +707,7 @@ describe('authorization policies', () => {
     it('falls back to the members message, with a warning, when the configuration cannot be loaded', async () => {
       const warning = vi.spyOn(core, 'warning').mockImplementation(() => {})
       // end the organization tier on its first probe: its chain would otherwise outlive this test (see configFoundAt)
-      server.use(rootOwners(), ...membership(), prowYaml('authorization:\n  review: anyone\n  users: [alice]\n')[0], ...utils.configFoundAt('Codertocat/.project:prow.yaml', '.github/prow.yaml'))
+      server.use(...rootOwners(), ...membership(), prowYaml('authorization:\n  review: anyone\n  users: [alice]\n')[0], ...utils.configFoundAt('Codertocat/.project:prow.yaml', '.github/prow.yaml'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
         .rejects
@@ -689,13 +717,13 @@ describe('authorization policies', () => {
     })
 
     it('under trusted admits a users login after membership refuses', async () => {
-      server.use(rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: trusted\n  users: [ALICE]\n'))
+      server.use(...rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: trusted\n  users: [ALICE]\n'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', 'Alice')).resolves.toBeUndefined()
     })
 
     it('under trusted refuses anyone else with a message naming authorization.users', async () => {
-      server.use(rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: trusted\n  users: [bob]\n'))
+      server.use(...rootOwners(), ...membership(), ...prowYaml('authorization:\n  review: trusted\n  users: [bob]\n'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'reviewers', 'Alice'))
         .rejects
@@ -703,12 +731,15 @@ describe('authorization policies', () => {
     })
 
     it('under trusted, a repository with OWNERS files still refuses a users-only login without reading the configuration', async () => {
-      server.use(rootOwners('approvers:\n  - bob\n'))
+      server.use(...rootOwners('approvers:\n  - bob\n'))
 
       await expect(assertAuthorizedByOwnersOrMembership(octokit, context, 'approvers', 'Alice'))
         .rejects
         .toThrow('Alice is not included in the approvers role in the OWNERS file')
-      expect(calls).toEqual(['GET /repos/Codertocat/Hello-World/contents/OWNERS'])
+      expect(calls).toEqual([
+        'GET /repos/Codertocat/Hello-World/contents/OWNERS',
+        'GET /repos/Codertocat/Hello-World/contents/OWNERS_ALIASES',
+      ])
     })
   })
 })

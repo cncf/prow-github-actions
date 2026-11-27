@@ -16,7 +16,7 @@ import {
   resolveSweepLookback,
   resolveTide,
 } from '../src/utils/config'
-import { parseOwners } from '../src/utils/owners'
+import { parseOwners, parseOwnersAliases } from '../src/utils/owners'
 
 // Every fenced yaml block in the guides is one of three things a reader will
 // paste somewhere: a prow.yaml (or a fragment of one), an OWNERS file, or a
@@ -90,7 +90,7 @@ const sectionFields: Record<string, string[]> = {
 const ownersKeys = ['approvers', 'reviewers', 'emeritus_approvers', 'emeritus_reviewers', 'filters', 'labels', 'options']
 const workflowKeys = ['on', 'jobs', 'permissions', 'concurrency', 'steps', 'runs-on']
 
-type Kind = 'workflow' | 'owners' | 'prow' | 'helm'
+type Kind = 'workflow' | 'owners' | 'owners-aliases' | 'prow' | 'helm'
 
 /** a job's `steps:` list quoted on its own, e.g. `- uses: cncf/prow-github-actions@v3` */
 function isStepList(loaded: unknown): boolean {
@@ -99,6 +99,11 @@ function isStepList(loaded: unknown): boolean {
 
 // the new-form prow.yaml sections other than `labels`
 const prowSections = Object.keys(mergeProwConfig({}, {})).filter(key => key !== 'labels')
+
+function isOwnersAliases(block: Block): boolean {
+  const comment = block.text.split('\n')[0]
+  return comment.startsWith('#') && comment.includes('OWNERS_ALIASES')
+}
 
 /**
  * An OWNERS block is told apart by the prose that introduces it, or by its own
@@ -136,6 +141,9 @@ function classify(block: Block, loaded: unknown): Kind {
   if (keys.some(key => prowSections.includes(key))) {
     return 'prow'
   }
+  if (isOwnersAliases(block)) {
+    return 'owners-aliases'
+  }
   return isOwners(block) ? 'owners' : 'prow'
 }
 
@@ -170,6 +178,12 @@ describe('every fenced yaml block in the guides', () => {
       }
       const owners = parseOwners(at, text)
       expect([...owners.approvers, ...owners.reviewers].length, at).toBeGreaterThan(0)
+    })
+
+    it.runIf(kind === 'owners-aliases')('parses as an OWNERS_ALIASES file naming at least one alias', () => {
+      expect(Object.keys(doc), `${at}: unexpected OWNERS_ALIASES top-level keys`).toEqual(['aliases'])
+      const aliases = parseOwnersAliases(text)
+      expect(aliases.size, at).toBeGreaterThan(0)
     })
 
     it.runIf(kind === 'prow')('parses as a prow configuration the resolvers accept', () => {
