@@ -201,6 +201,18 @@ describe('sweep candidates', () => {
     await expect(sweep(context)).resolves.toMatchObject({ candidates: [1] })
   })
 
+  it('counts a single candidate in the singular, logs it evaluated when the gate skips it, and without blunderbuss.delay reports no delayed check', async () => {
+    servePulls([{ number: 1 }])
+    const info = vi.spyOn(core, 'info')
+
+    await expect(sweep(context)).resolves.toEqual({ candidates: [1], merged: [], enqueued: [], failures: [] })
+    expect(info).toHaveBeenCalledWith(`sweep: 1 candidate updated since ${ago(hour)}`)
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('more checked for delayed reviewers'))
+    // a skipped gate is not a result the sweep carries: the pull request is reported evaluated, not skipped
+    expect(info).toHaveBeenCalledWith('skipping pr #1: missing lgtm')
+    expect(info).toHaveBeenCalledWith('sweep: #1 evaluated')
+  })
+
   it('with no candidate makes no further call', async () => {
     servePulls([{ number: 2, updated: ago(2 * hour) }])
     const tree = new utils.ObserveRequest()
@@ -522,6 +534,25 @@ describe('sweep on a repository with OWNERS files', () => {
     await expect(merge.called()).resolves.toBe('called')
   })
 
+  it('records failing blunderbuss and approve steps under their names, in their order, and the merge path still runs', async () => {
+    serveOwners(['sdk/x.go'])
+    servePulls([{ number: 1, created: ago(60_000), updated: ago(60_000), labels: ['area/sdk'], user: 'dave' }])
+    const reviewers = new utils.ObserveRequest()
+    const info = vi.spyOn(core, 'info')
+    server.use(
+      http.get(`${repo}/issues/1`, utils.mockResponse(200, { labels: [{ name: 'area/sdk' }] })),
+      http.get(`${repo}/pulls/1/reviews`, utils.mockResponse(500, { message: 'boom' })),
+      http.post(`${repo}/pulls/1/requested_reviewers`, utils.mockResponse(201, {}, reviewers)),
+    )
+
+    const failure = await sweep(context).then(() => undefined, (e: Error) => e.message)
+
+    expect(failure).toMatch(/^sweep: 1 pull request\(s\) failed: #1 \(blunderbuss: .*boom.*; approve: .*boom.*\)$/)
+    await expect(reviewers.notCalled()).resolves.toBe('not called')
+    expect(info).toHaveBeenCalledWith('skipping pr #1: missing lgtm')
+    expect(info).toHaveBeenCalledWith('sweep: #1 evaluated with 2 error(s)')
+  })
+
   it('lists every failing step of a pull request in order, and every failing pull request', async () => {
     serveOwners(['sdk/x.go'])
     servePulls([
@@ -583,6 +614,20 @@ describe('sweep with blunderbuss.delay', () => {
 
     await expect(sweep(context)).resolves.toEqual({ candidates: [], merged: [], enqueued: [], failures: [] })
     expect(requested).toEqual([1])
+  })
+
+  it('logs how many more pull requests were checked for delayed reviewers, from the shifted window start', async () => {
+    const { requested } = serve([
+      { number: 1, created: ago(70 * 60_000), updated: ago(70 * 60_000) },
+      { number: 2, created: ago(3 * hour), updated: ago(90 * 60_000) },
+      { number: 3, updated: ago(5 * 60_000) },
+    ])
+    const info = vi.spyOn(core, 'info')
+
+    await expect(sweep(context)).resolves.toMatchObject({ candidates: [3], failures: [] })
+    expect(requested).toEqual([1])
+    expect(info).toHaveBeenCalledWith(`sweep: 1 candidate updated since ${ago(hour)}`)
+    expect(info).toHaveBeenCalledWith(`sweep: 2 more checked for delayed reviewers, updated since ${ago(2 * hour)}`)
   })
 
   it('does not request before the delay has passed, nor after the due window', async () => {
